@@ -13,8 +13,19 @@ class OfflineContractTests(unittest.TestCase):
         ast.parse(SOURCE)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.25.11"', SOURCE)
-        self.assertIn('version: "0.25.11"', CONFIG)
+        self.assertIn('APP_VERSION = "0.25.12"', SOURCE)
+        self.assertIn('version: "0.25.12"', CONFIG)
+
+    def test_hp_manual_duration_and_external_priority(self):
+        self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)
+        self.assertIn("hpManualHours", SOURCE)
+        self.assertIn("externally_started_hp_is_running", SOURCE)
+        self.assertIn('source = "OVERRIDE" if requested else "EXTERNAL_MANUAL"', SOURCE)
+        self.assertIn('requested != "FORCE_OFF"', SOURCE)
+        self.assertIn('True if value.get("external_manual_on")', SOURCE)
+        self.assertIn('datetime(9999, 12, 31, 23, 59, 59)', SOURCE)
+        self.assertIn('BLOKADA BEZTERMINOWA', SOURCE)
+        self.assertIn("hpBlocked?'danger'", SOURCE)
 
     def test_hourly_source_version_tracks_runtime(self):
         self.assertNotIn("'CORE_0_22_1',%s,%s,%s) ON DUPLICATE KEY UPDATE", SOURCE)
