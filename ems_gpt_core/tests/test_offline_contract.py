@@ -30,6 +30,14 @@ class OfflineContractTests(unittest.TestCase):
         external_position = SOURCE.index('external_manual = requested is None and observed == "RUNNING"')
         self.assertLess(observed_position, external_position)
 
+    def test_app_status_card_uses_backend_start_time(self):
+        self.assertIn('"started_at": datetime.now(timezone.utc).isoformat()', SOURCE)
+        for label in ("URUCHOMIONO", "URUCHAMIANIE", "TRYB OGRANICZONY", "BŁĄD", "BRAK POŁĄCZENIA"):
+            self.assertIn(label, SOURCE)
+        self.assertIn("s.started_at", SOURCE)
+        self.assertIn("uruchomiono:", SOURCE)
+        self.assertNotIn("Wersja: … · heartbeat: …", SOURCE)
+
     def test_hourly_source_version_tracks_runtime(self):
         self.assertNotIn("'CORE_0_22_1',%s,%s,%s) ON DUPLICATE KEY UPDATE", SOURCE)
         self.assertIn("f\"CORE_{APP_VERSION.replace('.', '_')}\"", SOURCE)
