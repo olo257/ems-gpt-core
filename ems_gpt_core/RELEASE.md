@@ -1,5 +1,5 @@
-# EMS-GPT Core 0.25.14
+# EMS-GPT Core 0.25.15
 
-- Wydanie naprawcze wymuszające zgodność wersji obrazu i kodu aplikacji po migracji ze sklepu lokalnego do GitHub.
-- Zawiera kompletne `icon.png`, `logo.png` i poprawny adres repozytorium.
-- Zachowuje czas ręcznego HP, bezterminową czerwoną blokadę oraz nadrzędność sterowania zewnętrznego z 0.25.12.
+- Naprawia `UnboundLocalError` podczas zamykania slotu: obserwowany stan HP jest wyliczany przed klasyfikacją `EXTERNAL_MANUAL`.
+- Dodaje test regresyjny kolejności obliczeń dla zewnętrznego sterowania HP.
+- Zachowuje funkcje 0.25.14 oraz wykonawcę bezpiecznie `OFF` przy pustym mapowaniu konektora.
