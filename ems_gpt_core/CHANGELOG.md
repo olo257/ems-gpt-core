@@ -1,3 +1,9 @@
+## 0.25.16
+
+- Naprawiono pobieranie godzinowej prognozy z Home Assistant: `weather.get_forecasts` jest wywoływane z wymaganym `return_response`.
+- Parametr odpowiedzi jest używany wyłącznie dla usług, które zwracają dane; wywołania skryptów wykonawcy pozostają bez zmian.
+- Wykonawca pozostaje domyślnie wyłączony.
+
 # EMS-GPT Core — changelog
 
 # 0.25.8 — poprawny kafelek stanu aplikacji
