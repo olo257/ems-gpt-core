@@ -13,8 +13,8 @@ class OfflineContractTests(unittest.TestCase):
         ast.parse(SOURCE)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.25.16"', SOURCE)
-        self.assertIn('version: "0.25.16"', CONFIG)
+        self.assertIn('APP_VERSION = "0.25.17"', SOURCE)
+        self.assertIn('version: "0.25.17"', CONFIG)
 
     def test_hp_manual_duration_and_external_priority(self):
         self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)
@@ -185,6 +185,14 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(marker, SOURCE)
         self.assertIn('"hp_min_cycle_hours": 2.0', SOURCE)
         self.assertIn('"hp_min_heating_hours": 10.0', SOURCE)
+
+    def test_hp_load_is_coupled_into_soc_and_recharge_plan(self):
+        self.assertIn("hp_load = planned_hp_kw * 0.25 if index in hp_selected_indices else 0.0", SOURCE)
+        self.assertIn("hp_load=planned_hp_kw * 0.25 if i in hp_selected_indices else 0.0", SOURCE)
+        self.assertIn("load = native_load + hp_load", SOURCE)
+        self.assertIn("load=native_load+hp_load", SOURCE)
+        self.assertIn("hp_load_kwh={hp_load:.3f}", SOURCE)
+        self.assertIn("planned_hp_kwh={hp_load:.3f}", SOURCE)
 
     def test_hp_has_only_binary_window_decision(self):
         planner = SOURCE[SOURCE.index("def run_planner"):SOURCE.index("def _wape")]
