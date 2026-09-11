@@ -7,3 +7,4 @@
 - Dzięki temu planer uwzględnia ryzyko nocnego spadku SOC i konieczności późniejszego drogiego importu.
 - Zachowano minimum 10 godzin grzania, cykl minimum 2 godziny oraz przerwy 1–3 godziny.
 - Ślad decyzji zapisuje planowaną energię HP dla slotu bez dodawania zbędnej kolumny do panelu.
+- Kafelek stanu pokazuje czytelny kolorowy stan aplikacji oraz rzeczywisty czas uruchomienia dodatku z backendu.
