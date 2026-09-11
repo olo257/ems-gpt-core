@@ -13,8 +13,8 @@ class OfflineContractTests(unittest.TestCase):
         ast.parse(SOURCE)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.25.17"', SOURCE)
-        self.assertIn('version: "0.25.17"', CONFIG)
+        self.assertIn('APP_VERSION = "0.25.18"', SOURCE)
+        self.assertIn('version: "0.25.18"', CONFIG)
 
     def test_hp_manual_duration_and_external_priority(self):
         self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)
@@ -35,6 +35,9 @@ class OfflineContractTests(unittest.TestCase):
         for label in ("URUCHOMIONO", "URUCHAMIANIE", "TRYB OGRANICZONY", "BŁĄD", "BRAK POŁĄCZENIA"):
             self.assertIn(label, SOURCE)
         self.assertIn("s.started_at", SOURCE)
+        self.assertIn("id='appStatus'", SOURCE)
+        self.assertIn("document.getElementById('appStatus')", SOURCE)
+        self.assertNotIn("id='status'", SOURCE)
         self.assertIn("uruchomiono:", SOURCE)
         self.assertNotIn("Wersja: … · heartbeat: …", SOURCE)
 
