@@ -13,8 +13,8 @@ class OfflineContractTests(unittest.TestCase):
         ast.parse(SOURCE)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.25.13"', SOURCE)
-        self.assertIn('version: "0.25.13"', CONFIG)
+        self.assertIn('APP_VERSION = "0.25.14"', SOURCE)
+        self.assertIn('version: "0.25.14"', CONFIG)
 
     def test_hp_manual_duration_and_external_priority(self):
         self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)
