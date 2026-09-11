@@ -13,8 +13,8 @@ class OfflineContractTests(unittest.TestCase):
         ast.parse(SOURCE)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.25.15"', SOURCE)
-        self.assertIn('version: "0.25.15"', CONFIG)
+        self.assertIn('APP_VERSION = "0.25.16"', SOURCE)
+        self.assertIn('version: "0.25.16"', CONFIG)
 
     def test_hp_manual_duration_and_external_priority(self):
         self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)
@@ -125,8 +125,10 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('EMS_CONNECTOR_ACCEPTED', SOURCE)
 
     def test_executor_service_adapter_and_status(self):
-        self.assertNotIn('services/{domain}/{service}?return_response', SOURCE)
-        self.assertIn('f"{HA_API}/services/{domain}/{service}"', SOURCE)
+        self.assertIn('service_url = f"{HA_API}/services/{domain}/{service}"', SOURCE)
+        self.assertIn('if return_response:', SOURCE)
+        self.assertIn('service_url += "?return_response"', SOURCE)
+        self.assertIn('return_response=True', SOURCE)
         self.assertIn('state = "DRY_RUN" if dry_run else "LIVE"', SOURCE)
         self.assertIn('STATE["executor"] = "OFF"', SOURCE)
 

@@ -21,7 +21,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.25.15"
+APP_VERSION = "0.25.16"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -600,11 +600,14 @@ def ha_state(entity_id: str) -> dict | None:
         return None
 
 
-def ha_service_response(domain: str, service: str, payload: dict) -> dict | None:
+def ha_service_response(domain: str, service: str, payload: dict, *, return_response: bool = False) -> dict | None:
     if not SUPERVISOR_TOKEN:
         return None
+    service_url = f"{HA_API}/services/{domain}/{service}"
+    if return_response:
+        service_url += "?return_response"
     req = urllib.request.Request(
-        f"{HA_API}/services/{domain}/{service}",
+        service_url,
         data=json.dumps(payload).encode(), method="POST",
         headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}", "Content-Type": "application/json"},
     )
@@ -816,7 +819,7 @@ def refresh_pv_forecast() -> dict:
 
 
 def refresh_weather_forecast() -> dict:
-    response = ha_service_response("weather", "get_forecasts", {"entity_id": "weather.dom", "type": "hourly"}) or {}
+    response = ha_service_response("weather", "get_forecasts", {"entity_id": "weather.dom", "type": "hourly"}, return_response=True) or {}
     service_response = response.get("service_response", response)
     forecast = (service_response.get("weather.dom") or {}).get("forecast", [])
     updated = 0
