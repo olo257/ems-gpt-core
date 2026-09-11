@@ -21,7 +21,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.25.14"
+APP_VERSION = "0.25.15"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -1751,13 +1751,13 @@ def close_finished_slots() -> int:
                 for process in cur.fetchall():
                     planned = "ON" if process["eligible"] else "OFF"
                     requested = process.get("requested_state")
+                    energy_value = observed_energy.get(process["process_name"])
+                    running_threshold = 0.02 if process["process_name"] == "HP_HEAT_DHW" else 0.001
+                    observed = None if energy_value is None else ("RUNNING" if energy_value > running_threshold else "IDLE_OR_DISCONNECTED")
                     external_manual = requested is None and observed == "RUNNING" and planned == "OFF"
                     effective = ("ON" if requested == "FORCE_ON" else
                                  "OFF" if requested == "FORCE_OFF" else
                                  "ON" if external_manual else planned)
-                    energy_value = observed_energy.get(process["process_name"])
-                    running_threshold = 0.02 if process["process_name"] == "HP_HEAT_DHW" else 0.001
-                    observed = None if energy_value is None else ("RUNNING" if energy_value > running_threshold else "IDLE_OR_DISCONNECTED")
                     control_origin = ("MANUAL_FORCE_ON" if requested == "FORCE_ON" else
                                       "MANUAL_BLOCK" if requested == "FORCE_OFF" else
                                       "EXTERNAL_MANUAL" if external_manual else "AUTO")
