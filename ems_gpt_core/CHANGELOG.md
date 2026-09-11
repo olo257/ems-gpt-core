@@ -1,3 +1,9 @@
+## 0.25.17
+
+- Połączono plan okna HP z bilansem energii i ścieżką SOC baterii.
+- Energia HP wpływa na floor, target, rozładowanie oraz plan taniego doładowania.
+- Dodano test regresyjny zapobiegający ponownemu rozdzieleniu planu HP od SOC.
+
 ## 0.25.16
 
 - Naprawiono pobieranie godzinowej prognozy z Home Assistant: `weather.get_forecasts` jest wywoływane z wymaganym `return_response`.
