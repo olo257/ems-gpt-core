@@ -1,0 +1,54 @@
+name: EMS-GPT Core
+version: "0.25.11"
+slug: ems_gpt_core
+description: Niezależny silnik planowania i analityki EMS-GPT
+url: https://github.com/olo257/ems-gpt-core
+arch:
+  - aarch64
+startup: application
+boot: auto
+init: false
+watchdog: http://[HOST]:[PORT:8099]/health
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:home-lightning-bolt
+panel_title: EMS-GPT Core
+homeassistant_api: true
+hassio_api: true
+auth_api: true
+services:
+  - mysql:need
+options:
+  timezone: Europe/Warsaw
+  slot_minutes: 15
+  command_ttl_seconds: 960
+  db_host: core-mariadb
+  db_port: 3306
+  db_name: ems_gpt
+  db_user: ems_gpt_app
+  db_password: __DB_PASSWORD__
+  source_db: ems_gpt
+  bootstrap_from_source: false
+  direct_battery_power_mode: discharge_positive
+  executor_enabled: false
+  executor_dry_run: true
+  executor_activation_ack: ""
+  connector_service_map_json: "{}"
+  ai_observer_enabled: true
+schema:
+  timezone: str
+  slot_minutes: int(15,15)
+  command_ttl_seconds: int(60,1800)
+  db_host: str
+  db_port: port
+  db_name: str
+  db_user: str
+  db_password: password
+  source_db: str
+  bootstrap_from_source: bool
+  direct_battery_power_mode: list(legacy_helpers|charge_positive|discharge_positive)
+  executor_enabled: bool
+  executor_dry_run: bool
+  executor_activation_ack: str
+  connector_service_map_json: str
+  ai_observer_enabled: bool
