@@ -21,7 +21,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.25.12"
+APP_VERSION = "0.25.14"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
