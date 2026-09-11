@@ -1,12 +1,11 @@
-# EMS-GPT Core 0.25.11
+# EMS-GPT Core 0.25.12
 
-- Binary HP policy: `heat_pump_window` is the only HP planner decision.
-- When the night minimum is below the configured threshold, schedule at least 10 hours of Heat+DHW per local day.
-- Prefer one continuous run; every run is at least 2 hours and internal breaks are 1–3 hours.
-- Hourly replans count elapsed effective states, including manual FORCE_ON/BLOCK overrides, and optimize only the remaining obligation.
-- HP cost uses grid purchase price, PV opportunity cost and configured planned HP power; loads never issue purchase decisions.
-- Manual control origin is persisted as AUTO, MANUAL_FORCE_ON, MANUAL_BLOCK or EXTERNAL_MANUAL.
-- Removes retired MANUAL_CIRCULATION and HP_DHW process records and legacy HP PPD columns; DHW/HP telemetry remains intact.
-- PPD contract updated to CORE_0_4_1.
+- Ręczne `FORCE_ON` procesu `HP_HEAT_DHW` przyjmuje w panelu czas od 2 do 24 godzin, z krokiem 15 minut.
+- Backend egzekwuje minimalny czas równy skonfigurowanej minimalnej długości cyklu HP.
+- Zewnętrznie uruchomiona sprężarka nie jest wyłączana przez plan `OFF`; wykonawca zachowuje sterowanie zewnętrzne.
+- Jawna ręczna blokada `FORCE_OFF` pozostaje nadrzędna wobec sterowania zewnętrznego.
+- Blokada `HP_HEAT_DHW` jest bezterminowa aż do ręcznego powrotu do `Auto`; panel pokazuje ją na czerwono.
+- Zewnętrzne grzanie jest zapisywane jako efektywny stan `ON` / `EXTERNAL_MANUAL` i wliczane do dziennego minimum ogrzewania.
+- Detekcja zewnętrznej pracy opiera się na świeżej częstotliwości sprężarki; pobór czuwania nie jest uznawany za pracę HP.
 
-Rollback source: `/share/ems-gpt-core-rollback/0.25.10-before-0.25.11`.
+Kolejność: `MANUAL_BLOCK` > dowolne aktywne wymuszenie ON (`EXTERNAL_MANUAL` lub `MANUAL_FORCE_ON`) > `AUTO`.
