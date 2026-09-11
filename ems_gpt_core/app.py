@@ -21,7 +21,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.25.11"
+APP_VERSION = "0.25.12"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -1091,12 +1091,16 @@ def run_planner(run_type: str = "scheduled") -> dict:
               (SELECT o.requested_state FROM ems_gpt_core_process_overrides o
                WHERE o.process_name=d.process_name AND o.valid_from<d.valid_until
                  AND o.valid_until>d.slot_start AND o.status IN ('ACTIVE','EXPIRED')
-               ORDER BY o.requested_at DESC LIMIT 1) requested_state
+               ORDER BY o.requested_at DESC LIMIT 1) requested_state,
+              (SELECT MAX(e.control_origin='EXTERNAL_MANUAL' AND e.effective_state='ON')
+               FROM ems_gpt_core_process_execution e
+               WHERE e.process_name=d.process_name AND e.slot_start=d.slot_start) external_manual_on
               FROM ems_gpt_core_process_decisions d
               WHERE d.process_name='HP_HEAT_DHW' AND d.slot_start>=%s AND d.slot_start<%s
               ORDER BY d.slot_start""", (day_start, min(cutoff, day_start + timedelta(days=1))))
             past_states = [True if value.get("requested_state") == "FORCE_ON" else
-                           False if value.get("requested_state") == "FORCE_OFF" else bool(value["eligible"])
+                           False if value.get("requested_state") == "FORCE_OFF" else
+                           True if value.get("external_manual_on") else bool(value["eligible"])
                            for value in cur.fetchall()]
             selected_local = optimize_hp_heating_slots(
                 [row for _, row in indexed_rows], past_states, required_slots,
@@ -1747,12 +1751,16 @@ def close_finished_slots() -> int:
                 for process in cur.fetchall():
                     planned = "ON" if process["eligible"] else "OFF"
                     requested = process.get("requested_state")
-                    effective = "ON" if requested == "FORCE_ON" else "OFF" if requested == "FORCE_OFF" else planned
+                    external_manual = requested is None and observed == "RUNNING" and planned == "OFF"
+                    effective = ("ON" if requested == "FORCE_ON" else
+                                 "OFF" if requested == "FORCE_OFF" else
+                                 "ON" if external_manual else planned)
                     energy_value = observed_energy.get(process["process_name"])
-                    observed = None if energy_value is None else ("RUNNING" if energy_value > 0.001 else "IDLE_OR_DISCONNECTED")
+                    running_threshold = 0.02 if process["process_name"] == "HP_HEAT_DHW" else 0.001
+                    observed = None if energy_value is None else ("RUNNING" if energy_value > running_threshold else "IDLE_OR_DISCONNECTED")
                     control_origin = ("MANUAL_FORCE_ON" if requested == "FORCE_ON" else
                                       "MANUAL_BLOCK" if requested == "FORCE_OFF" else
-                                      "EXTERNAL_MANUAL" if observed == "RUNNING" and planned == "OFF" else "AUTO")
+                                      "EXTERNAL_MANUAL" if external_manual else "AUTO")
                     cur.execute("""INSERT INTO ems_gpt_core_process_execution
                       (command_id,slot_start,slot_id,process_name,planned_state,effective_state,observed_state,
                        observed_energy_kwh,decision_source,reason,override_id,requested_by,override_reason,
@@ -2141,7 +2149,13 @@ def update_process_override(payload: dict, requested_by: str = "operator") -> di
     minutes = int(payload.get("minutes") or 60)
     if not 1 <= minutes <= 1440:
         raise ValueError("minutes must be between 1 and 1440")
+    if process == "HP_HEAT_DHW" and requested == "FORCE_ON":
+        minimum_hp_minutes = max(1, int(float(OPTIONS.get("hp_min_cycle_hours", 2.0)) * 60 + 0.999999))
+        if minutes < minimum_hp_minutes:
+            raise ValueError(f"HP_HEAT_DHW FORCE_ON must last at least {minimum_hp_minutes} minutes")
     now = local_now().replace(tzinfo=None)
+    indefinite_block = process == "HP_HEAT_DHW" and requested == "FORCE_OFF"
+    override_until = datetime(9999, 12, 31, 23, 59, 59) if indefinite_block else now + timedelta(minutes=minutes)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""UPDATE ems_gpt_core_process_overrides SET status='CANCELLED',cancelled_at=NOW(6)
           WHERE process_name=%s AND status='ACTIVE'""", (process,))
@@ -2152,9 +2166,10 @@ def update_process_override(payload: dict, requested_by: str = "operator") -> di
             cur.execute("""INSERT INTO ems_gpt_core_process_overrides
               (override_id,process_name,requested_state,requested_at,valid_from,valid_until,
                requested_by,reason,status) VALUES(%s,%s,%s,NOW(6),%s,%s,%s,%s,'ACTIVE')""",
-              (override_id, process, requested, now, now + timedelta(minutes=minutes), requested_by[:100], reason))
+              (override_id, process, requested, now, override_until, requested_by[:100], reason))
     result = {"process": process, "state": requested, "override_id": override_id,
-              "valid_until": now + timedelta(minutes=minutes) if override_id else None}
+              "valid_until": override_until if override_id and not indefinite_block else None,
+              "indefinite": bool(override_id and indefinite_block)}
     record_event("process_override_updated", "operator", result)
     return result
 
@@ -2167,6 +2182,29 @@ def expire_process_overrides() -> int:
     if expired:
         record_event("process_overrides_expired", "operator", {"count": expired})
     return expired
+
+
+def externally_started_hp_is_running(cur, now: datetime) -> bool:
+    """Return true only for a fresh compressor run not initiated by EMS.
+
+    A FORCE_OFF override always remains authoritative and is handled by the
+    caller.  Requiring compressor frequency avoids treating standby power as
+    an external heating cycle.  A recent EMS ON command keeps ownership with
+    EMS, so the planned end of an automatic cycle can still issue OFF.
+    """
+    cur.execute("""SELECT hp_compressor_frequency_hz,captured_at
+      FROM ems_gpt_telemetry_snapshots
+      WHERE captured_at>=%s ORDER BY captured_at DESC LIMIT 1""",
+      (now - timedelta(minutes=3),))
+    sample = cur.fetchone()
+    if not sample or float(sample.get("hp_compressor_frequency_hz") or 0) <= 0:
+        return False
+    cur.execute("""SELECT decision,created_at FROM ems_gpt_core_commands
+      WHERE process_name='HP_HEAT_DHW' AND status<>'DRY_RUN'
+      ORDER BY created_at DESC LIMIT 1""")
+    command = cur.fetchone()
+    return not (command and command.get("decision") == "ON"
+                and command.get("created_at") >= now - timedelta(minutes=30))
 
 
 def stage_executor_commands() -> dict:
@@ -2195,9 +2233,21 @@ def stage_executor_commands() -> dict:
         for row in cur.fetchall():
             planned_on = bool(row["eligible"])
             requested = row.get("requested_state")
-            effective_on = True if requested == "FORCE_ON" else False if requested == "FORCE_OFF" else planned_on
+            external_hp_on = (row["process_name"] == "HP_HEAT_DHW"
+                              and requested != "FORCE_OFF"
+                              and not planned_on
+                              and externally_started_hp_is_running(cur, now))
+            effective_on = (True if requested == "FORCE_ON" else
+                            False if requested == "FORCE_OFF" else
+                            True if external_hp_on else planned_on)
             decision = "ON" if effective_on else "OFF"
-            source = "OVERRIDE" if requested else "PLAN"
+            source = "OVERRIDE" if requested else "EXTERNAL_MANUAL" if external_hp_on else "PLAN"
+            if external_hp_on:
+                record_event("external_hp_control_preserved", "executor", {
+                    "process": "HP_HEAT_DHW", "decision": "HOLD_ON",
+                    "reason": "fresh compressor run without recent EMS ON command"
+                })
+                continue
             command_id = str(uuid.uuid4())
             safety = {"executor_enabled": True, "dry_run": dry_run, "connector_required": True,
                       "soc_programs_1_6_write_allowed": False, "override_id": row.get("override_id")}
@@ -2417,8 +2467,8 @@ function renderColumnSettings(){const view=columnView.value;const selected=new S
 function fmt(v,key){if(v===null||v===undefined)return '—';if(booleanFields.has(key)&&(v===0||v===1||v==='0'||v==='1'))return Number(v)?'TAK':'NIE';if(typeof v==='number')return v.toFixed(3);const text=String(v).replace(/^NEU\\s*RAL$/i,'NEUTRAL');return text.replace(/(\\d)T(?=\\d)/,'$1 ').slice(0,32)}
 function cellValue(row,key){if(key==='consistency'){if(!row.observed_state)return 'BRAK DANYCH';const plannedOn=row.planned_state==='ON';const observedOn=row.observed_state==='RUNNING';return plannedOn===observedOn?'ZGODNE':'ROZBIEŻNOŚĆ'}if(key==='control_origin'){return row.control_origin||(row.command_id?'AUTO':row.observed_state==='RUNNING'&&row.planned_state!=='ON'?'EXTERNAL_MANUAL':row.decision_source||'OBSERWACJA')}if(key==='data_quality_status'&&!row[key]&&row.day_date===new Date().toLocaleDateString('sv-SE'))return 'OPEN';return row[key]}
 const processNames=['BATTERY_IMPORT','BATTERY_EXPORT','PV_CWU','PV_EV','HP_HEAT_DHW'];
-async function loadProcessControls(){const r=await fetch('api/overrides?limit=30');const j=await r.json();const active={};j.rows.forEach(x=>{if(x.status==='ACTIVE')active[x.process_name]=x});processControls.innerHTML=`<div class='grid'>${processNames.map(p=>`<div class='card'><b>${p}</b><div class='label'>${active[p]?active[p].requested_state+' do '+fmt(active[p].valid_until,'valid_until'):'AUTO'}</div><p><button class='apply' onclick="setOverride('${p}','FORCE_ON')">Włącz</button> <button onclick="setOverride('${p}','FORCE_OFF')">Blokuj</button> <button onclick="setOverride('${p}','AUTO')">Auto</button></p></div>`).join('')}</div><br>`}
-async function setOverride(process,state){const r=await fetch('api/process/override',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({process,state,minutes:60,reason:'panel operatora'})});const j=await r.json();if(!r.ok)alert(j.error||'Błąd');await loadProcessControls()}
+async function loadProcessControls(){const r=await fetch('api/overrides?limit=30');const j=await r.json();const active={};j.rows.forEach(x=>{if(x.status==='ACTIVE')active[x.process_name]=x});processControls.innerHTML=`<div class='grid'>${processNames.map(p=>{const a=active[p];const hpBlocked=p==='HP_HEAT_DHW'&&a?.requested_state==='FORCE_OFF';const status=hpBlocked?'BLOKADA BEZTERMINOWA':a?a.requested_state+' do '+fmt(a.valid_until,'valid_until'):'AUTO';return `<div class='card'><b>${p}</b><div class='label ${hpBlocked?'no':''}'>${status}</div>${p==='HP_HEAT_DHW'?`<label class='label' for='hpManualHours'>Czas ręcznego włączenia [h]</label><input id='hpManualHours' type='number' min='2' max='24' step='.25' value='2'>`:''}<p><button class='apply' onclick="setOverride('${p}','FORCE_ON')">Włącz</button> <button class='${hpBlocked?'danger':''}' onclick="setOverride('${p}','FORCE_OFF')">Blokuj</button> <button onclick="setOverride('${p}','AUTO')">Auto</button></p></div>`}).join('')}</div><br>`}
+async function setOverride(process,state){let minutes=60;if(process==='HP_HEAT_DHW'&&state==='FORCE_ON'){const hours=Number(document.getElementById('hpManualHours')?.value||2);if(!Number.isFinite(hours)||hours<2||hours>24){alert('Czas HP musi wynosić od 2 do 24 godzin');return}minutes=Math.round(hours*60)}const r=await fetch('api/process/override',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({process,state,minutes,reason:'panel operatora'})});const j=await r.json();if(!r.ok)alert(j.error||'Błąd');await loadProcessControls()}
 async function loadView(view){document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));const config=view==='configuration';tablePanel.style.display=config?'none':'block';configPanel.style.display=config?'block':'none';if(config){await loadSettings();return}processControls.style.display=view==='processes'?'block':'none';if(view==='processes')await loadProcessControls();tableTitle.textContent=(viewNames[view]||view).toUpperCase();const r=await fetch('api/'+view+'?limit=96');const j=await r.json();const cols=activeLayout(view);thead.innerHTML='<tr>'+cols.map(c=>'<th>'+c[1]+'</th>').join('')+'</tr>';tbody.innerHTML=j.rows.map(row=>'<tr>'+cols.map(c=>'<td>'+fmt(cellValue(row,c[0]),c[0])+'</td>').join('')+'</tr>').join('')}
 async function loadSettings(){const r=await fetch('api/settings');const j=await r.json();const groups={};Object.entries(j.settings).forEach(([k,s])=>(groups[s.group]??=[]).push([k,s]));settings.innerHTML=Object.entries(groups).map(([group,items])=>`<section class='setting-section'><h3>${group}</h3><div class='settings'>${items.map(([k,s])=>`<div class='setting'><label>${s.label}</label><input data-key='${k}' type='number' min='${s.min}' max='${s.max}' step='0.01' value='${s.value}'></div>`).join('')}</div></section>`).join('');if(!columnView.options.length)columnView.innerHTML=customizableViews.map(v=>`<option value='${v}'>${viewNames[v]}</option>`).join('');renderColumnSettings()}
 columnView.onchange=renderColumnSettings;
