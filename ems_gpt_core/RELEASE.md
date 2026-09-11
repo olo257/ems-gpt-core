@@ -1,5 +1,9 @@
-# EMS-GPT Core 0.25.15
+# EMS-GPT Core 0.25.16
 
-- Naprawia `UnboundLocalError` podczas zamykania slotu: obserwowany stan HP jest wyliczany przed klasyfikacją `EXTERNAL_MANUAL`.
-- Dodaje test regresyjny kolejności obliczeń dla zewnętrznego sterowania HP.
-- Zachowuje funkcje 0.25.14 oraz wykonawcę bezpiecznie `OFF` przy pustym mapowaniu konektora.
+## Zmiana
+
+Naprawiono wywołanie Home Assistant `weather.get_forecasts`. Aplikacja żąda teraz odpowiedzi usługi przez `return_response`, dzięki czemu prognoza godzinowa jest poprawnie odbierana zamiast błędu HTTP 400.
+
+## Bezpieczeństwo
+
+Wykonawca pozostaje domyślnie OFF, dry-run ON, a wywołania skryptów sterujących nie korzystają z parametru odpowiedzi.
