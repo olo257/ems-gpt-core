@@ -21,7 +21,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.25.16"
+APP_VERSION = "0.25.17"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -1139,7 +1139,9 @@ def run_planner(run_type: str = "scheduled") -> dict:
         for index, row in enumerate(rows):
             start_pct = energy / capacity * 100
             pv = float(row.get("forecast_pv_total_kwh") or 0)
-            load = float(row.get("forecast_load_kwh") or 0)
+            native_load = float(row.get("forecast_load_kwh") or 0)
+            hp_load = planned_hp_kw * 0.25 if index in hp_selected_indices else 0.0
+            load = native_load + hp_load
             legacy_sell = max(0.0, float(row.get("planned_sell_kwh") or 0))
             replacement = suffix_min_buy[index]
             required_sell = replacement/(eta_c*eta_d)+degradation+min_margin if replacement is not None else None
@@ -1204,7 +1206,9 @@ def run_planner(run_type: str = "scheduled") -> dict:
             target=min(target_cap,max(0.0,targets[i]))
             item["start"] = energy/capacity*100
             pv=float(row.get("forecast_pv_total_kwh") or 0)
-            load=float(row.get("forecast_load_kwh") or 0)
+            native_load=float(row.get("forecast_load_kwh") or 0)
+            hp_load=planned_hp_kw * 0.25 if i in hp_selected_indices else 0.0
+            load=native_load+hp_load
             pv_surplus=max(0.0,pv-load)
             native_deficit=max(0.0,load-pv)
             requested_export=max(0.0,float(item.get("sell") or 0))
@@ -1242,7 +1246,7 @@ def run_planner(run_type: str = "scheduled") -> dict:
             grid_policy="BUY_ALLOWED" if buy>flow_threshold else ("NO_BUY" if row.get("sale_window") else "NEUTRAL")
             export_policy="SELL_BAT" if sell_bat else ("NO_SELL_PV" if no_sell_pv else ("SELL_PV" if item["pv_export"]>flow_threshold else "NEUTRAL"))
             recommendation="Zakup ładowanie" if buy>flow_threshold else "Sprzedaż z baterii" if sell_bat else "Sprzedaż PV" if item["pv_export"]>flow_threshold else "Ładowanie PV" if item["charge"]>flow_threshold else "Autokonsumpcja PV" if float(row.get("forecast_pv_total_kwh") or 0)>flow_threshold else "Autokonsumpcja z baterii"
-            reason=f"grid={grid_policy}; export={export_policy}; soc={item['end']:.2f}; floor={effective_floor:.2f}; target={target:.2f}"
+            reason=f"grid={grid_policy}; export={export_policy}; soc={item['end']:.2f}; floor={effective_floor:.2f}; target={target:.2f}; hp_load_kwh={hp_load:.3f}"
             if tou_block_reason:
                 reason += f"; {tou_block_reason}"
             cur.execute("""UPDATE ems_gpt_plan_stage_rows SET soc_start_plan_pct=%s,soc_end_plan_pct=%s,
@@ -1276,7 +1280,7 @@ def run_planner(run_type: str = "scheduled") -> dict:
                 ("PV_EV", pv_ev, "ALLOW" if pv_ev else "BLOCK", f"pv_flex={pv_flex:.3f}; cwu={pv_cwu}"),
                 ("HP_HEAT_DHW", heat_dhw_allowed,
                  "ON" if heat_dhw_allowed else "OFF",
-                 f"window={hp_window}; night_min={night_min}; threshold={night_threshold}; minimum_hours={OPTIONS.get('hp_min_heating_hours',10.0)}"),
+                 f"window={hp_window}; night_min={night_min}; threshold={night_threshold}; minimum_hours={OPTIONS.get('hp_min_heating_hours',10.0)}; planned_hp_kwh={hp_load:.3f}"),
             )
             for process_name, eligible, decision, process_reason in decisions:
                 cur.execute("""INSERT INTO ems_gpt_core_process_decisions
