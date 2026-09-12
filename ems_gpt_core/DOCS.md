@@ -20,6 +20,7 @@ Niezależny silnik EMS uruchamiany jako lokalna aplikacja Home Assistant.
 - `todo_service.py` — trwały cykl życia sugestii i decyzji operatora;
 - `analytics_service.py` — metryki jakości, WAPE, bias i profile uczenia;
 - `scheduler_service.py` — wyłącznie zegar i kolejność uruchamiania modułów;
+- `api_service.py` — HTTP, Ingress, endpointy odczytu i operacje operatora;
 - `webui.html` — panel Ingress niezależny od kodu serwera.
 
 Usługi otrzymują zależności przez jawne adaptery. Nie importują globalnego stanu

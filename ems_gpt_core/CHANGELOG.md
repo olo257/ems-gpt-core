@@ -1,3 +1,11 @@
+## 0.26.2
+
+- Wydzielono serwer HTTP i komplet endpointów Ingress do `api_service.py`.
+- `app.py` buduje handler z jawnych adapterów, pozostając koordynatorem uruchomienia.
+- Zachowano identyczne ścieżki GET/POST, limity odpowiedzi, kontrolę zdrowia i nagłówek użytkownika Ingress.
+- Panel nadal jest dostarczany z osobnego `webui.html`.
+- Bez zmian w harmonogramie, planerze, PPD, wykonawcy i programach SOC 1–6.
+
 ## 0.26.1
 
 - Wydzielono obliczenia analityczne do `analytics_service.py`; kontrakt metryk i zapisy SQL pozostały bez zmian.
