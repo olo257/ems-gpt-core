@@ -1,3 +1,10 @@
+## 0.26.3
+
+- Wydzielono ustawienia operatora, override'y procesów i cykl życia komend do `executor_service.py`.
+- `app.py` przekazuje wykonawcy jawne adaptery stanu, bazy, zegara, Home Assistant i audytu.
+- Zachowano dotychczasowy allowlist skryptów, potwierdzenie aktywacji, TTL komend i blokadę eksportu poniżej aktywnego floor TOU.
+- Bez zmian w harmonogramie, planerze, PPD i programach SOC 1–6. Observer pozostaje `SHADOW_READ_ONLY`.
+
 ## 0.26.2
 
 - Wydzielono serwer HTTP i komplet endpointów Ingress do `api_service.py`.

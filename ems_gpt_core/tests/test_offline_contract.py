@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.26.2"', APP_SOURCE)
-        self.assertIn('version: "0.26.2"', CONFIG)
+        self.assertIn('APP_VERSION = "0.26.3"', APP_SOURCE)
+        self.assertIn('version: "0.26.3"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -33,9 +33,12 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("from analytics_service import", APP_SOURCE)
         self.assertIn("from scheduler_service import", APP_SOURCE)
         self.assertIn("from api_service import", APP_SOURCE)
+        self.assertIn("from executor_service import", APP_SOURCE)
+        self.assertIn("_EXECUTOR = build_executor(ExecutorAdapters(", APP_SOURCE)
         self.assertIn("Handler = build_handler(ApiAdapters(", APP_SOURCE)
         self.assertNotIn("class Handler(", APP_SOURCE)
         self.assertIn("class Handler(", MODULE_SOURCES["api_service.py"])
+        self.assertIn("def build_executor(", MODULE_SOURCES["executor_service.py"])
         self.assertIn('with_name("webui.html")', APP_SOURCE)
         self.assertNotIn("<!doctype html>", APP_SOURCE)
         self.assertIn("<!doctype html>", WEBUI)
