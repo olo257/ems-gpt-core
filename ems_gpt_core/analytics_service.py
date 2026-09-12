@@ -26,8 +26,11 @@ def _mae(rows: list[dict], forecast_key: str, actual_key: str) -> float | None:
 
 
 def _is_core_quality_slot(row: dict) -> bool:
-    """Exclude legacy imports that never had a plan published by EMS-GPT Core."""
-    return bool(row.get("plan_published"))
+    """Use slots executed by Core, including explicit outage placeholders."""
+    if not row.get("plan_published"):
+        return False
+    execution_reason = str(row.get("execution_reason") or "")
+    return execution_reason.startswith("CORE_TELEMETRY_") or row.get("actual_mode") == "MISSING_OUTAGE"
 
 
 def run_analytics(*, options, db, local_now, record_event) -> dict:
