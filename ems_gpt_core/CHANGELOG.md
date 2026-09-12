@@ -1,3 +1,8 @@
+## 0.26.16
+- Wydzielono wartości domyślne i ładowanie konfiguracji do modułu `config_service.py`.
+- Zachowano kolejność nadpisywania: wartości domyślne → opcje dodatku → ustawienia runtime.
+- Dodano testy wartości domyślnych, priorytetu ustawień runtime i izolacji konfiguracji.
+
 ## 0.26.15
 - Wydzielono obliczanie czasu lokalnego i początku slotu z `app.py` do modułu `time_service.py`.
 - Zachowano dotychczasową konwersję strefy czasowej i zaokrąglanie do konfigurowalnej długości slotu.
