@@ -1,6 +1,7 @@
 """Minute scheduler for EMS-GPT Core."""
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -77,17 +78,60 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 cur.execute("SELECT MAX(published_at) last_run FROM ems_gpt_plan_runs WHERE status='PUBLISHED'")
                 last_run = cur.fetchone()["last_run"]
                 rce_key = f"RCE_{clock.date()}_{'NEXT' if hour >= 14 else 'TODAY'}"
-                cur.execute("SELECT COUNT(*) n FROM ems_gpt_core_events WHERE event_type=%s", (rce_key,))
-                rce_done = int(cur.fetchone()["n"] or 0) > 0
+                cur.execute("""SELECT created_at,payload_json FROM ems_gpt_core_events
+                  WHERE event_type=%s ORDER BY created_at DESC LIMIT 1""", (rce_key,))
+                prior_rce = cur.fetchone()
+                rce_done = prior_rce is not None
+            if rce_done and a.state.get("rce", {}).get("status") == "NOT_RUN":
+                try:
+                    prior_result = json.loads(prior_rce.get("payload_json") or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    prior_result = {}
+                with a.lock:
+                    a.state["rce"] = {
+                        "status": "ALREADY_COMPLETED",
+                        "target_day": prior_result.get("day"),
+                        "rows": prior_result.get("rows"),
+                        "expected": prior_result.get("expected"),
+                        "completed_at": prior_rce.get("created_at"),
+                    }
             rce_due = 14 <= hour <= 16 and minute % 10 == 0
             if rce_due and not rce_done:
                 target = clock.date() + timedelta(days=1)
-                result = a.refresh_rce(target)
-                a.record_event("rce_import_attempt", "core", result,
-                               "INFO" if result["status"] == "OK" else "WARNING")
-                if result["status"] == "OK":
-                    a.record_event(rce_key, "core", result)
-                    a.complete_rce_cycle(result, "rce_import")
+                with a.lock:
+                    a.state["rce"] = {
+                        "status": "RUNNING", "target_day": str(target),
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                a.log.info("RCE import started: target=%s", target)
+                try:
+                    result = a.refresh_rce(target)
+                    a.record_event("rce_import_attempt", "core", result,
+                                   "INFO" if result["status"] == "OK" else "WARNING")
+                    completed = result
+                    if result["status"] == "OK":
+                        a.record_event(rce_key, "core", result)
+                        completed = a.complete_rce_cycle(result, "rce_import")
+                    planner_status = completed.get("planner", {}).get("status")
+                    with a.lock:
+                        a.state["rce"] = {
+                            "status": result.get("status"), "target_day": str(target),
+                            "rows": result.get("rows"), "expected": result.get("expected"),
+                            "planner_status": planner_status,
+                            "completed_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    a.log.info("RCE import completed: status=%s rows=%s/%s planner=%s",
+                               result.get("status"), result.get("rows"),
+                               result.get("expected"), planner_status)
+                except Exception as exc:
+                    with a.lock:
+                        a.state["rce"] = {
+                            "status": "ERROR", "target_day": str(target),
+                            "error": str(exc),
+                            "completed_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    a.log.exception("RCE import failed: target=%s", target)
+                    raise
             due = minute in (7, 22, 37, 52) and not blackout and (
                 last_run is None or a.local_now().replace(tzinfo=None) - last_run >= timedelta(minutes=55)
             )

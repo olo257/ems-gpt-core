@@ -30,7 +30,7 @@ from observer_service import run_ai_observer as run_observer_service
 from todo_service import TodoService
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.4"
+APP_VERSION = "0.26.5"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -176,6 +176,7 @@ STATE = {
     "active_slot": None,
     "last_heartbeat": None,
     "last_error": None,
+    "rce": {"status": "NOT_RUN"},
     "migrated_tables": 0,
     "modules": {"core": "STARTING", "planner": "STARTING", "ppd": "STARTING", "analytics": "STARTING", "ai_observer": "SHADOW_READ_ONLY", "executor": "CONNECTOR_REQUIRED"},
     "recovery_contract": "CORE_RECOVERY_0_24_2_R6",

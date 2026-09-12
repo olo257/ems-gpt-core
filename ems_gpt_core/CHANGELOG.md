@@ -1,3 +1,11 @@
+## 0.26.5
+
+- Dodano jawny stan ostatniego przebiegu RCE do `/api/status`: wynik, dzień docelowy, liczba slotów i status planera.
+- Po restarcie stan RCE jest odtwarzany z dziennego zdarzenia sukcesu, bez ponawiania już zakończonego importu.
+- Log dodatku zapisuje rozpoczęcie, zakończenie albo błąd automatycznego importu RCE.
+- Niepełna doba pozostaje `PARTIAL` i nie uruchamia publikacji planu; wyjątek ustawia stan RCE na `ERROR`.
+- Bez zmian w cenach, oknach, planerze, PPD, wykonawcy i programach SOC 1–6.
+
 ## 0.26.4
 
 - Wydzielono pobieranie prognoz PV, prognozy pogody i cen RCE do `ingestion_service.py`.

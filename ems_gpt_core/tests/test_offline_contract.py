@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.26.4"', APP_SOURCE)
-        self.assertIn('version: "0.26.4"', CONFIG)
+        self.assertIn('APP_VERSION = "0.26.5"', APP_SOURCE)
+        self.assertIn('version: "0.26.5"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -56,6 +56,11 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("heartbeat_age < 180", SOURCE)
         loop = MODULE_SOURCES["scheduler_service.py"]
         self.assertEqual(loop.count("a.rebuild_recovery_materializations"), 1)
+        self.assertIn('a.state["rce"] = {', loop)
+        self.assertIn('"status": "ALREADY_COMPLETED"', loop)
+        self.assertIn('json.loads(prior_rce.get("payload_json")', loop)
+        self.assertIn('"RCE import completed: status=%s rows=%s/%s planner=%s"', loop)
+        self.assertIn('"RCE import failed: target=%s"', loop)
 
     def test_hp_manual_duration_and_external_priority(self):
         self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)
