@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.26.9"', APP_SOURCE)
-        self.assertIn('version: "0.26.9"', CONFIG)
+        self.assertIn('APP_VERSION = "0.26.10"', APP_SOURCE)
+        self.assertIn('version: "0.26.10"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -38,6 +38,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("from telemetry_service import", APP_SOURCE)
         self.assertIn("from materialization_service import", APP_SOURCE)
         self.assertIn("from slot_calendar_service import", APP_SOURCE)
+        self.assertIn("from ha_gateway_service import", APP_SOURCE)
         self.assertIn("_EXECUTOR = build_executor(ExecutorAdapters(", APP_SOURCE)
         self.assertIn("_INGESTION = build_ingestion(IngestionAdapters(", APP_SOURCE)
         self.assertIn("Handler = build_handler(ApiAdapters(", APP_SOURCE)
@@ -49,6 +50,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("def build_materializations(", MODULE_SOURCES["materialization_service.py"])
         self.assertIn("_MATERIALIZATIONS = build_materializations(MaterializationAdapters(", APP_SOURCE)
         self.assertIn("_SLOT_CALENDAR = build_slot_calendar(SlotCalendarAdapters(", APP_SOURCE)
+        self.assertIn("_HA_GATEWAY = build_home_assistant_gateway(HomeAssistantAdapters(", APP_SOURCE)
         self.assertIn('with_name("webui.html")', APP_SOURCE)
         self.assertNotIn("<!doctype html>", APP_SOURCE)
         self.assertIn("<!doctype html>", WEBUI)
@@ -207,7 +209,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('EMS_CONNECTOR_ACCEPTED', SOURCE)
 
     def test_executor_service_adapter_and_status(self):
-        self.assertIn('service_url = f"{HA_API}/services/{domain}/{service}"', SOURCE)
+        self.assertIn('service_url = f"{a.ha_api}/services/{domain}/{service}"', SOURCE)
         self.assertIn('if return_response:', SOURCE)
         self.assertIn('service_url += "?return_response"', SOURCE)
         self.assertIn('return_response=True', SOURCE)

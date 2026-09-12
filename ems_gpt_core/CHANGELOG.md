@@ -1,3 +1,10 @@
+## 0.26.10
+
+- Wydzielono komunikację z Home Assistantem do `ha_gateway_service.py`.
+- Odczyt stanów, wywołania usług i konwersja wartości zachowują dotychczasowe timeouty oraz obsługę błędów.
+- Odczyt sześciu programów Deye TOU pozostaje wyłącznie do odczytu; programy SOC 1–6 nie są modyfikowane.
+- Bez zmian w planerze, PPD, wykonawcy, analityce i obserwatorze.
+
 ## 0.26.9
 
 - Wydzielono kanoniczny kalendarz slotów i backfill relacji do `slot_calendar_service.py`.
