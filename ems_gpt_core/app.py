@@ -30,9 +30,10 @@ from recovery_service import RecoveryAdapters, build_recovery
 from runtime_service import build_runtime
 from todo_service import TodoService
 from telemetry_service import TelemetryAdapters, build_telemetry
+from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.14"
+APP_VERSION = "0.26.15"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -445,14 +446,11 @@ def ensure_runtime_schema() -> None:
                 AND {column}<>'NEUTRAL'""")
 
 
-def local_now() -> datetime:
-    return datetime.now(timezone.utc).astimezone(TZ)
-
-
-def slot_start(now: datetime | None = None) -> datetime:
-    value = (now or local_now()).astimezone(TZ)
-    minutes = int(OPTIONS["slot_minutes"])
-    return value.replace(minute=(value.minute // minutes) * minutes, second=0, microsecond=0)
+_TIME = build_time_service(TimeAdapters(
+    timezone=TZ, slot_minutes=int(OPTIONS["slot_minutes"]),
+))
+local_now = _TIME.local_now
+slot_start = _TIME.slot_start
 
 
 _SLOT_CALENDAR = build_slot_calendar(SlotCalendarAdapters(timezone=TZ, db=db))

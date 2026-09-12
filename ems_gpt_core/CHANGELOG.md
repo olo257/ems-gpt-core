@@ -1,3 +1,8 @@
+## 0.26.15
+- Wydzielono obliczanie czasu lokalnego i początku slotu z `app.py` do modułu `time_service.py`.
+- Zachowano dotychczasową konwersję strefy czasowej i zaokrąglanie do konfigurowalnej długości slotu.
+- Dodano testy granic slotów, konwersji UTC do Europe/Warsaw i walidacji długości slotu.
+
 ## 0.26.14
 
 - Spolszczono techniczne statusy w panelu: `CONNECTED` jest prezentowane jako `POŁĄCZONY`, a `LIVE` jako `PRODUKCJA`.
