@@ -1,3 +1,10 @@
+## 0.26.7
+
+- Wydzielono równoległy odczyt encji Home Assistant i zapis próbek do `telemetry_service.py`.
+- Zachowano mapowanie encji, normalizację W/kW/MW, znak mocy baterii i relację do kanonicznego slotu DST.
+- `app.py` przekazuje telemetrii jawne adaptery źródeł, zegara i bazy.
+- Bez zmian w zamykaniu slotów, planerze, PPD, wykonawcy i programach SOC 1–6.
+
 ## 0.26.6
 
 - Dodano kafelek RCE w panelu ze statusem, dniem docelowym, liczbą slotów i wynikiem planera.
