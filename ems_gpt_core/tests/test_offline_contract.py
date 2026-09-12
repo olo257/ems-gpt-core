@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.26.5"', APP_SOURCE)
-        self.assertIn('version: "0.26.5"', CONFIG)
+        self.assertIn('APP_VERSION = "0.26.6"', APP_SOURCE)
+        self.assertIn('version: "0.26.6"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -61,6 +61,9 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('json.loads(prior_rce.get("payload_json")', loop)
         self.assertIn('"RCE import completed: status=%s rows=%s/%s planner=%s"', loop)
         self.assertIn('"RCE import failed: target=%s"', loop)
+        self.assertIn('"RCE state restored: status=ALREADY_COMPLETED rows=%s/%s target=%s"', loop)
+        self.assertIn("id='rceStatus'", WEBUI)
+        self.assertIn("rs.rows??'—'", WEBUI)
 
     def test_hp_manual_duration_and_external_priority(self):
         self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)

@@ -30,7 +30,7 @@ from observer_service import run_ai_observer as run_observer_service
 from todo_service import TodoService
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.5"
+APP_VERSION = "0.26.6"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
