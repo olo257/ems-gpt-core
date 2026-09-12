@@ -1,3 +1,9 @@
+## 0.26.21
+
+- Oddzielono bazowe zużycie domu od odbiorników planowanych osobno: EV oraz pompy ciepła/CWU.
+- Profile uczenia, Load WAPE, Load bias i błąd slotu korzystają teraz z obciążenia bazowego; całkowite wykonanie i rozliczenia energii pozostają bez zmian.
+- Dodano jawny znacznik metodologii `HOUSEHOLD_EXCLUDING_EV_AND_HEAT_PUMP` do szczegółów przebiegu analityki.
+
 ## 0.26.20
 - Usunięto wyścig aktualizacji z watchdogiem: serwer HTTP startuje przed inicjalizacją i odtwarzaniem bazy.
 - Dodano lekki endpoint liveness `/live`, używany wyłącznie przez Supervisor do kontroli procesu.
