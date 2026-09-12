@@ -1,5 +1,5 @@
 name: EMS-GPT Core
-version: "0.26.19"
+version: "0.26.20"
 slug: ems_gpt_core
 description: Niezależny silnik planowania i analityki EMS-GPT
 url: https://github.com/olo257/ems-gpt-core
@@ -8,7 +8,7 @@ arch:
 startup: application
 boot: auto
 init: false
-watchdog: http://[HOST]:[PORT:8099]/health
+watchdog: http://[HOST]:[PORT:8099]/live
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:home-lightning-bolt

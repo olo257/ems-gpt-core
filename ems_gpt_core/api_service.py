@@ -63,6 +63,9 @@ def build_handler(a: ApiAdapters):
     
         def do_GET(self):
             path = self.path.split("?", 1)[0].rstrip("/")
+            if path.endswith("/live") or path == "/live":
+                return self.json({"ok": True, "app": APP_NAME, "version": APP_VERSION,
+                                  "status": "PROCESS_RUNNING"})
             if path.endswith("/health") or path == "/health":
                 with LOCK:
                     heartbeat = STATE.get("last_heartbeat")

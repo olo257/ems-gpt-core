@@ -34,7 +34,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.19"
+APP_VERSION = "0.26.20"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -1076,12 +1076,19 @@ def initialize() -> None:
 
 def main() -> None:
     startup_executor = enable_production_on_startup()
-    initialize()
-    record_event("executor_startup_mode", "executor", startup_executor,
-                 "INFO" if startup_executor["mode"] == "LIVE" else "WARNING")
-    threading.Thread(target=engine_loop, daemon=True).start()
-    LOG.info("%s %s started; executor=%s", APP_NAME, APP_VERSION, startup_executor["mode"])
-    ThreadingHTTPServer(("0.0.0.0", 8099), Handler).serve_forever()
+    server = ThreadingHTTPServer(("0.0.0.0", 8099), Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        initialize()
+        record_event("executor_startup_mode", "executor", startup_executor,
+                     "INFO" if startup_executor["mode"] == "LIVE" else "WARNING")
+        threading.Thread(target=engine_loop, daemon=True).start()
+        LOG.info("%s %s started; executor=%s", APP_NAME, APP_VERSION, startup_executor["mode"])
+        server_thread.join()
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 if __name__ == "__main__":
