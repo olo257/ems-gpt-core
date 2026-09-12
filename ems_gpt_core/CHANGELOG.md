@@ -1,3 +1,10 @@
+## 0.26.8
+
+- Wydzielono zamykanie slotów, szczegóły wykonania, agregaty i odbudowę po restarcie do `materialization_service.py`.
+- Zachowano kolejność: telemetria → zamknięcie slotu → szczegóły wykonania → agregaty godzinowe/dobowe.
+- Usługa otrzymuje jawne adaptery bazy, zegara, konfiguracji i audytu.
+- Bez zmian w planerze, PPD, wykonawcy i programach SOC 1–6.
+
 ## 0.26.7
 
 - Wydzielono równoległy odczyt encji Home Assistant i zapis próbek do `telemetry_service.py`.
