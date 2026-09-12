@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.26.14"', APP_SOURCE)
-        self.assertIn('version: "0.26.14"', CONFIG)
+        self.assertIn('APP_VERSION = "0.26.15"', APP_SOURCE)
+        self.assertIn('version: "0.26.15"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -42,6 +42,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("from runtime_service import", APP_SOURCE)
         self.assertIn("from database_service import", APP_SOURCE)
         self.assertIn("from recovery_service import", APP_SOURCE)
+        self.assertIn("from time_service import", APP_SOURCE)
         self.assertIn("_EXECUTOR = build_executor(ExecutorAdapters(", APP_SOURCE)
         self.assertIn("_INGESTION = build_ingestion(IngestionAdapters(", APP_SOURCE)
         self.assertIn("Handler = build_handler(ApiAdapters(", APP_SOURCE)
@@ -57,6 +58,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("_RUNTIME = build_runtime(APP_NAME, APP_VERSION, LOG)", APP_SOURCE)
         self.assertIn("_DATABASE = build_database(OPTIONS, TZ)", APP_SOURCE)
         self.assertIn("_RECOVERY = build_recovery(RecoveryAdapters(", APP_SOURCE)
+        self.assertIn("_TIME = build_time_service(TimeAdapters(", APP_SOURCE)
         self.assertIn('with_name("webui.html")', APP_SOURCE)
         self.assertNotIn("<!doctype html>", APP_SOURCE)
         self.assertIn("<!doctype html>", WEBUI)
