@@ -1,3 +1,10 @@
+## 0.26.12
+
+- Wydzielono połączenie z MariaDB i walidację identyfikatorów SQL do `database_service.py`.
+- Zachowano transakcje commit/rollback, timeouty oraz ustawianie strefy czasowej sesji bazy.
+- `app.py` korzysta z jednego współdzielonego adaptera bazy dla wszystkich modułów.
+- Bez zmian w schemacie, planerze, PPD, wykonawcy, obserwatorze i programach SOC 1–6.
+
 ## 0.26.11
 
 - Wydzielono współdzielony stan procesu i blokadę ciężkich zadań do `runtime_service.py`.

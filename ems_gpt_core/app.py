@@ -9,18 +9,15 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, parse_qs, urlencode
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import pymysql
-from pymysql.cursors import DictCursor
-
 from api_service import ApiAdapters, build_handler
 from analytics_service import run_analytics as run_analytics_service
+from database_service import build_database
 from diagnostics_service import generate_diagnostic_report as run_diagnostics_service
 from executor_service import ExecutorAdapters, build_executor
 from ha_gateway_service import HomeAssistantAdapters, build_home_assistant_gateway
@@ -34,7 +31,7 @@ from todo_service import TodoService
 from telemetry_service import TelemetryAdapters, build_telemetry
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.11"
+APP_VERSION = "0.26.12"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -161,35 +158,9 @@ STATE = _RUNTIME.state
 run_serialized = _RUNTIME.run_serialized
 
 
-@contextmanager
-def db(database: str | None = None):
-    conn = pymysql.connect(
-        host=OPTIONS["db_host"], port=int(OPTIONS["db_port"]),
-        user=OPTIONS["db_user"], password=OPTIONS["db_password"],
-        database=database or OPTIONS["db_name"], charset="utf8mb4",
-        autocommit=False, cursorclass=DictCursor, connect_timeout=10,
-        read_timeout=30, write_timeout=30,
-    )
-    try:
-        with conn.cursor() as cur:
-            offset = datetime.now(TZ).utcoffset() or timedelta(0)
-            minutes = int(offset.total_seconds() // 60)
-            sign = "+" if minutes >= 0 else "-"
-            hours, mins = divmod(abs(minutes), 60)
-            cur.execute("SET time_zone=%s", (f"{sign}{hours:02d}:{mins:02d}",))
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-def qname(value: str) -> str:
-    if not value.replace("_", "").isalnum():
-        raise ValueError("Invalid SQL identifier")
-    return f"`{value}`"
+_DATABASE = build_database(OPTIONS, TZ)
+db = _DATABASE.db
+qname = _DATABASE.qname
 
 
 def ensure_runtime_schema() -> None:
