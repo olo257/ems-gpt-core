@@ -35,6 +35,38 @@ def _native_load_kwh(row: dict) -> float | None:
     return round(max(0.0, total - ev - heat_pump), 6)
 
 
+def _flow_metrics(rows: list[dict], forecast_key: str, actual_key: str,
+                  threshold: float) -> dict:
+    """Score intermittent flows without letting zero-heavy WAPE dominate."""
+    pairs = [(max(0.0, float(r[forecast_key])), max(0.0, float(r[actual_key])))
+             for r in rows if r.get(forecast_key) is not None and r.get(actual_key) is not None]
+    active = [(forecast, actual) for forecast, actual in pairs
+              if forecast >= threshold or actual >= threshold]
+    if not active:
+        return {"active_slots": 0, "mae_kwh": None, "event_f1_pct": None}
+    true_positive = sum(forecast >= threshold and actual >= threshold for forecast, actual in active)
+    false_positive = sum(forecast >= threshold and actual < threshold for forecast, actual in active)
+    false_negative = sum(forecast < threshold and actual >= threshold for forecast, actual in active)
+    denominator = 2 * true_positive + false_positive + false_negative
+    return {
+        "active_slots": len(active),
+        "mae_kwh": round(sum(abs(forecast - actual) for forecast, actual in active) / len(active), 6),
+        "event_f1_pct": None if denominator == 0 else round(100 * 2 * true_positive / denominator, 2),
+    }
+
+
+def _suggested_scale(rows: list[dict], forecast_key: str, actual_key: str,
+                     minimum_forecast_kwh: float = 1.0) -> float | None:
+    """Suggest a bounded multiplier; applying it remains an operator decision."""
+    pairs = [(max(0.0, float(r[forecast_key])), max(0.0, float(r[actual_key])))
+             for r in rows if r.get(forecast_key) is not None and r.get(actual_key) is not None]
+    forecast_total = sum(forecast for forecast, _ in pairs)
+    if forecast_total < minimum_forecast_kwh:
+        return None
+    actual_total = sum(actual for _, actual in pairs)
+    return round(min(1.5, max(0.5, actual_total / forecast_total)), 4)
+
+
 def _is_core_quality_slot(row: dict) -> bool:
     """Use slots executed by Core, including explicit outage placeholders."""
     if not row.get("plan_published"):
@@ -98,18 +130,32 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
                abs(float(row.get("planned_pv_export_kwh") or 0)-float(row.get("actual_pv_export_kwh") or 0)),
                status, json.dumps(reasons)))
         metric_rows = [row for row in rows if _is_core_quality_slot(row)]
+        pv_threshold = max(0.0, float(options.get("analytics_pv_daylight_threshold_kwh", 0.02)))
+        flow_threshold = max(0.0, float(options.get("technical_flow_threshold_kwh", 0.05)))
+        pv_metric_rows = [row for row in metric_rows
+                          if max(float(row.get("forecast_pv_total_kwh") or 0),
+                                 float(row.get("actual_pv_total_kwh") or 0)) >= pv_threshold]
+        import_flow = _flow_metrics(metric_rows, "planned_buy_kwh", "actual_buy_kwh", flow_threshold)
+        export_flow = _flow_metrics(metric_rows, "planned_pv_export_kwh", "actual_pv_export_kwh", flow_threshold)
         metrics = {
-            "pv1_wape_pct": _wape(metric_rows, "forecast_pv1_kwh", "actual_pv1_kwh"),
-            "pv2_wape_pct": _wape(metric_rows, "forecast_pv2_kwh", "actual_pv2_kwh"),
-            "pv_wape_pct": _wape(metric_rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
+            "pv1_wape_pct": _wape(pv_metric_rows, "forecast_pv1_kwh", "actual_pv1_kwh"),
+            "pv2_wape_pct": _wape(pv_metric_rows, "forecast_pv2_kwh", "actual_pv2_kwh"),
+            "pv_wape_pct": _wape(pv_metric_rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
             "load_wape_pct": _wape(metric_rows, "forecast_load_kwh", "actual_native_load_kwh"),
             "import_wape_pct": _wape(metric_rows, "planned_buy_kwh", "actual_buy_kwh"),
             "export_wape_pct": _wape(metric_rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
-            "pv_bias_kwh": _bias(metric_rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
+            "pv_bias_kwh": _bias(pv_metric_rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
             "load_bias_kwh": _bias(metric_rows, "forecast_load_kwh", "actual_native_load_kwh"),
             "import_bias_kwh": _bias(metric_rows, "planned_buy_kwh", "actual_buy_kwh"),
             "export_bias_kwh": _bias(metric_rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
             "soc_mae_pct": _mae(metric_rows, "soc_end_plan_pct", "soc_end_pct"),
+            "import_active_mae_kwh": import_flow["mae_kwh"],
+            "export_active_mae_kwh": export_flow["mae_kwh"],
+            "import_event_f1_pct": import_flow["event_f1_pct"],
+            "export_event_f1_pct": export_flow["event_f1_pct"],
+            "suggested_pv1_scale": _suggested_scale(pv_metric_rows, "forecast_pv1_kwh", "actual_pv1_kwh"),
+            "suggested_pv2_scale": _suggested_scale(pv_metric_rows, "forecast_pv2_kwh", "actual_pv2_kwh"),
+            "suggested_load_scale": _suggested_scale(metric_rows, "forecast_load_kwh", "actual_native_load_kwh"),
         }
         planned_net = sum(float(r.get("planned_sell_kwh") or 0)*float(r.get("price_sell_pln_kwh") or 0)
                           - float(r.get("planned_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in metric_rows)
@@ -117,6 +163,7 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
                          - float(r.get("actual_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in metric_rows)
         metrics["net_cost_variance_pln"] = round(actual_net-planned_net, 3)
         score = round(100 * quality_complete / quality_slots, 2) if quality_slots else 0.0
+        confidence = round(score * min(1.0, len(metric_rows) / (7 * 96)), 2) if metric_rows else 0.0
         profiles = {}
         pv_days = {}
         for row in rows:
@@ -163,19 +210,28 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
           slots_scanned=%s,complete_slots=%s,pv1_wape_pct=%s,pv2_wape_pct=%s,pv_wape_pct=%s,load_wape_pct=%s,
           import_wape_pct=%s,export_wape_pct=%s,quality_score=%s,pv_bias_kwh=%s,load_bias_kwh=%s,
           import_bias_kwh=%s,export_bias_kwh=%s,soc_mae_pct=%s,net_cost_variance_pln=%s,
+          pv_daylight_slots=%s,metric_confidence_pct=%s,import_active_mae_kwh=%s,
+          export_active_mae_kwh=%s,import_event_f1_pct=%s,export_event_f1_pct=%s,
+          suggested_pv1_scale=%s,suggested_pv2_scale=%s,suggested_load_scale=%s,
           details_json=%s WHERE run_id=%s""",
           (len(rows), complete, metrics["pv1_wape_pct"], metrics["pv2_wape_pct"],
            metrics["pv_wape_pct"], metrics["load_wape_pct"],
            metrics["import_wape_pct"], metrics["export_wape_pct"], score,
            metrics["pv_bias_kwh"], metrics["load_bias_kwh"], metrics["import_bias_kwh"],
            metrics["export_bias_kwh"], metrics["soc_mae_pct"], metrics["net_cost_variance_pln"],
+           len(pv_metric_rows), confidence, metrics["import_active_mae_kwh"], metrics["export_active_mae_kwh"],
+           metrics["import_event_f1_pct"], metrics["export_event_f1_pct"],
+           metrics["suggested_pv1_scale"], metrics["suggested_pv2_scale"], metrics["suggested_load_scale"],
            json.dumps({"cutoff": str(cutoff), "metrics": metrics, "metric_slots": len(metric_rows),
-                       "quality_slots": quality_slots,
+                       "pv_daylight_slots": len(pv_metric_rows), "metric_confidence_pct": confidence,
+                       "flow_threshold_kwh": flow_threshold, "import_active_slots": import_flow["active_slots"],
+                       "export_active_slots": export_flow["active_slots"], "quality_slots": quality_slots,
                        "quality_complete": quality_complete, "load_basis": "HOUSEHOLD_EXCLUDING_EV_AND_HEAT_PUMP",
                        "load_profiles": len(profiles),
                        "pv_profiles": len(pv_profiles)}), run_id))
     result = {"run_id": run_id, "slots": len(rows), "complete": complete, "quality_score": score,
               "quality_slots": quality_slots, "quality_complete": quality_complete,
+              "pv_daylight_slots": len(pv_metric_rows), "metric_confidence_pct": confidence,
               "load_profiles": len(profiles), "pv_profiles": len(pv_profiles), **metrics}
     record_event("analytics_completed", "analytics", result)
     return result

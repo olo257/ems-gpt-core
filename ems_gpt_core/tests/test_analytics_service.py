@@ -6,10 +6,31 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from analytics_service import _is_core_quality_slot, _native_load_kwh
+from analytics_service import _flow_metrics, _is_core_quality_slot, _native_load_kwh, _suggested_scale
 
 
 class AnalyticsQualityWindowTests(unittest.TestCase):
+    def test_intermittent_flow_metrics_ignore_inactive_slots(self):
+        rows = [
+            {"plan": 0.0, "actual": 0.0},
+            {"plan": 0.4, "actual": 0.5},
+            {"plan": 0.3, "actual": 0.0},
+            {"plan": 0.0, "actual": 0.2},
+        ]
+        result = _flow_metrics(rows, "plan", "actual", 0.05)
+        self.assertEqual(result["active_slots"], 3)
+        self.assertEqual(result["mae_kwh"], 0.2)
+        self.assertEqual(result["event_f1_pct"], 50.0)
+
+    def test_intermittent_flow_without_events_is_explicitly_empty(self):
+        result = _flow_metrics([{"plan": 0.0, "actual": 0.0}], "plan", "actual", 0.05)
+        self.assertEqual(result, {"active_slots": 0, "mae_kwh": None, "event_f1_pct": None})
+
+    def test_suggested_scale_is_bounded_and_needs_energy(self):
+        self.assertEqual(_suggested_scale([{"f": 2.0, "a": 1.6}], "f", "a"), 0.8)
+        self.assertEqual(_suggested_scale([{"f": 1.0, "a": 9.0}], "f", "a"), 1.5)
+        self.assertIsNone(_suggested_scale([{"f": 0.2, "a": 0.3}], "f", "a"))
+
     def test_native_load_excludes_separately_planned_consumers(self):
         row = {
             "actual_load_kwh": 1.25,

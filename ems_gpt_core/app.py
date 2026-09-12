@@ -34,7 +34,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.21"
+APP_VERSION = "0.27.0"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -266,6 +266,14 @@ def ensure_runtime_schema() -> None:
         ):
             cur.execute(f"ALTER TABLE ems_gpt_core_analytics_runs ADD COLUMN IF NOT EXISTS {column}")
         for column in (
+            "pv_daylight_slots INT NOT NULL DEFAULT 0", "metric_confidence_pct DOUBLE NULL",
+            "import_active_mae_kwh DOUBLE NULL", "export_active_mae_kwh DOUBLE NULL",
+            "import_event_f1_pct DOUBLE NULL", "export_event_f1_pct DOUBLE NULL",
+            "suggested_pv1_scale DOUBLE NULL", "suggested_pv2_scale DOUBLE NULL",
+            "suggested_load_scale DOUBLE NULL",
+        ):
+            cur.execute(f"ALTER TABLE ems_gpt_core_analytics_runs ADD COLUMN IF NOT EXISTS {column}")
+        for column in (
             "first_seen_day DATE NULL", "last_seen_day DATE NULL",
             "occurrence_count INT NOT NULL DEFAULT 1",
             "consecutive_days INT NOT NULL DEFAULT 1",
@@ -366,6 +374,8 @@ def ensure_runtime_schema() -> None:
                     ("core_schema_0_25_11", json.dumps({"version": APP_VERSION, "scope": "binary_hp_window_cost_replan_manual_origin_cleanup"})))
         cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
                     ("core_schema_0_25_20", json.dumps({"version": APP_VERSION, "scope": "command_expiry_observer_todo_lifecycle"})))
+        cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
+                    ("core_schema_0_27_0", json.dumps({"version": APP_VERSION, "scope": "analytics_confidence_daylight_intermittent_flows"})))
         # Normalize the historical/UI typo before the 0.24 slot-id cutover.
         for table, column in (
             ("ems_gpt_slots", "grid_policy_planned"),
