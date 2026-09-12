@@ -1,3 +1,11 @@
+## 0.25.19
+
+- Ograniczono pełną odbudowę 7 dni z wykonywania co minutę do startu aplikacji i jednego przebiegu dziennie około 01:00.
+- Zserializowano ciężkie zadania bazy danych uruchamiane przez silnik i ręczne endpointy.
+- Naprawiono harmonogram analityki, który wcześniej sprawdzał minutę początku slotu i nie mógł trafić w minutę 8.
+- Watchdog HTTP uwzględnia teraz wiek heartbeat i uznaje silnik za niesprawny po 180 sekundach bez aktualizacji.
+- Bez zmian w PPD, wykonawcy i programach SOC 1–6.
+
 ## 0.25.17
 
 - Połączono plan okna HP z bilansem energii i ścieżką SOC baterii.
