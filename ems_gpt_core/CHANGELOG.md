@@ -1,3 +1,10 @@
+## 0.26.11
+
+- Wydzielono współdzielony stan procesu i blokadę ciężkich zadań do `runtime_service.py`.
+- Harmonogram, API i inicjalizacja nadal korzystają z jednego obiektu stanu i jednej blokady wykonania.
+- Zachowano kontrakt odtwarzania, statusy modułów i ostrzeganie o oczekiwaniu na blokadę.
+- Bez zmian w planerze, PPD, wykonawcy, analityce, obserwatorze i programach SOC 1–6.
+
 ## 0.26.10
 
 - Wydzielono komunikację z Home Assistantem do `ha_gateway_service.py`.
