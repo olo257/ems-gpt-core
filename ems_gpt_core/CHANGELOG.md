@@ -1,3 +1,10 @@
+## 0.26.9
+
+- Wydzielono kanoniczny kalendarz slotów i backfill relacji do `slot_calendar_service.py`.
+- Zachowano obsługę dni DST z 92, 96 albo 100 rzeczywistymi slotami oraz jednoznaczne `slot_id` w UTC.
+- Dodano testy długości doby przy zmianie czasu w Europie/Warszawie.
+- Bez zmian w telemetrii, planerze, PPD, wykonawcy i programach SOC 1–6.
+
 ## 0.26.8
 
 - Wydzielono zamykanie slotów, szczegóły wykonania, agregaty i odbudowę po restarcie do `materialization_service.py`.
