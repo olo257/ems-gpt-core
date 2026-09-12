@@ -21,7 +21,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.25.18"
+APP_VERSION = "0.25.19"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -143,6 +143,19 @@ OPERATIONAL_SETTINGS = {
 }
 TZ = ZoneInfo(OPTIONS["timezone"])
 LOCK = threading.Lock()
+HEAVY_JOB_LOCK = threading.RLock()
+
+
+def run_serialized(job_name: str, func, *args, **kwargs):
+    """Serialize heavy database jobs across engine and HTTP worker threads."""
+    started = time.monotonic()
+    with HEAVY_JOB_LOCK:
+        waited = round(time.monotonic() - started, 3)
+        if waited >= 1.0:
+            LOG.warning("heavy job %s waited %.3fs for lock", job_name, waited)
+        return func(*args, **kwargs)
+
+
 STATE = {
     "app": APP_NAME,
     "version": APP_VERSION,
@@ -2374,6 +2387,7 @@ def complete_rce_cycle(result: dict, run_type: str) -> dict:
 
 def engine_loop() -> None:
     previous = None
+    recovery_rebuild_day = None
     while True:
         clock = local_now()
         start = slot_start(clock)
@@ -2383,7 +2397,12 @@ def engine_loop() -> None:
             telemetry_ok = capture_telemetry()
             closed = close_finished_slots()
             backfill_execution_details()
-            rebuild_recovery_materializations(int(OPTIONS.get("recovery_lookback_days", 7)))
+            # Full lookback rebuild is intentionally expensive. Run once after startup,
+            # then once per local day around 01:00, away from Recorder maintenance.
+            if recovery_rebuild_day is None or (clock.hour == 1 and recovery_rebuild_day != clock.date()):
+                run_serialized("recovery_materializations", rebuild_recovery_materializations,
+                               int(OPTIONS.get("recovery_lookback_days", 7)))
+                recovery_rebuild_day = clock.date()
             learn_missing_load()
             expire_process_overrides()
             if key != previous:
@@ -2411,22 +2430,22 @@ def engine_loop() -> None:
                     complete_rce_cycle(result, "rce_import")
             due = minute in (7,22,37,52) and not blackout and (last_run is None or (now := local_now().replace(tzinfo=None))-last_run >= timedelta(minutes=55))
             if due:
-                run_planner("hourly_replan")
+                run_serialized("planner", run_planner, "hourly_replan")
             stage_executor_commands()
             dispatch_ready_commands()
-            if start.minute == 8:
+            if minute < 15:
                 with db() as conn, conn.cursor() as cur:
                     cur.execute("SELECT MAX(completed_at) v FROM ems_gpt_core_analytics_runs WHERE status='COMPLETED'")
                     last_analytics = cur.fetchone()["v"]
                 if last_analytics is None or local_now().replace(tzinfo=None)-last_analytics >= timedelta(minutes=50):
-                    analytics_result = run_analytics()
+                    analytics_result = run_serialized("analytics", run_analytics)
                     run_ai_observer(analytics_result.get("run_id"))
             if (hour, minute) in ((2, 8), (8, 8), (14, 23), (20, 8)):
                 with db() as conn, conn.cursor() as cur:
                     cur.execute("SELECT MAX(created_at) v FROM ems_gpt_core_diagnostic_reports")
                     last_diag = cur.fetchone()["v"]
                 if last_diag is None or local_now().replace(tzinfo=None)-last_diag >= timedelta(minutes=10):
-                    generate_diagnostic_report("scheduled")
+                    run_serialized("diagnostics", generate_diagnostic_report, "scheduled")
             with LOCK:
                 STATE["database"] = "CONNECTED"
                 STATE["ha_input"] = "CONNECTED" if telemetry_ok else "PARTIAL"
@@ -2499,8 +2518,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?", 1)[0].rstrip("/")
         if path.endswith("/health") or path == "/health":
-            with LOCK: healthy = STATE["database"] == "CONNECTED" and STATE["status"] in {"RUNNING", "DEGRADED"}
-            return self.json({"ok": healthy, "app": APP_NAME, "version": APP_VERSION}, HTTPStatus.OK if healthy else HTTPStatus.SERVICE_UNAVAILABLE)
+            with LOCK:
+                heartbeat = STATE.get("last_heartbeat")
+                database_ok = STATE["database"] == "CONNECTED"
+                status_ok = STATE["status"] in {"RUNNING", "DEGRADED"}
+            heartbeat_age = None
+            if heartbeat:
+                try:
+                    heartbeat_age = (datetime.now(timezone.utc) - datetime.fromisoformat(heartbeat)).total_seconds()
+                except (TypeError, ValueError):
+                    heartbeat_age = None
+            healthy = database_ok and status_ok and heartbeat_age is not None and heartbeat_age < 180
+            return self.json({"ok": healthy, "app": APP_NAME, "version": APP_VERSION,
+                              "heartbeat_age_seconds": None if heartbeat_age is None else round(heartbeat_age, 1)},
+                             HTTPStatus.OK if healthy else HTTPStatus.SERVICE_UNAVAILABLE)
         if path.endswith("/api/status") or path == "/api/status":
             with LOCK: return self.json(dict(STATE))
         if path.endswith("/api/settings") or path == "/api/settings":
@@ -2573,7 +2604,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.CONFLICT)
         if path.endswith("/api/planner/run") or path=="/api/planner/run":
             try:
-                return self.json({"status":"ACCEPTED",**run_planner("manual_api")})
+                return self.json({"status":"ACCEPTED",**run_serialized("planner", run_planner, "manual_api")})
             except Exception as exc:
                 LOG.exception("manual planner failed")
                 return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.CONFLICT)
@@ -2590,14 +2621,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc: return self.json({"status":"ERROR","error":str(exc)},HTTPStatus.INTERNAL_SERVER_ERROR)
         if path.endswith("/api/analytics/run") or path=="/api/analytics/run":
             try:
-                result=run_analytics()
+                result=run_serialized("analytics", run_analytics)
                 return self.json({"status":"ACCEPTED", **result, "observer":run_ai_observer(result.get("run_id"))})
             except Exception as exc: return self.json({"status":"ERROR","error":str(exc)},HTTPStatus.INTERNAL_SERVER_ERROR)
         if path.endswith("/api/ai-observer/run") or path=="/api/ai-observer/run":
             try: return self.json(run_ai_observer())
             except Exception as exc: return self.json({"status":"ERROR","error":str(exc)},HTTPStatus.INTERNAL_SERVER_ERROR)
         if path.endswith("/api/diagnostics/run") or path=="/api/diagnostics/run":
-            try: return self.json(generate_diagnostic_report("manual_api"))
+            try: return self.json(run_serialized("diagnostics", generate_diagnostic_report, "manual_api"))
             except Exception as exc: return self.json({"status":"ERROR","error":str(exc)},HTTPStatus.INTERNAL_SERVER_ERROR)
         return self.json({"error":"not_found"},HTTPStatus.NOT_FOUND)
 
