@@ -18,6 +18,8 @@ Niezależny silnik EMS uruchamiany jako lokalna aplikacja Home Assistant.
 - `observer_service.py` — analiza Observera w trybie `SHADOW_READ_ONLY`;
 - `diagnostics_service.py` — kontrole diagnostyczne bez zapisu do urządzeń;
 - `todo_service.py` — trwały cykl życia sugestii i decyzji operatora;
+- `analytics_service.py` — metryki jakości, WAPE, bias i profile uczenia;
+- `scheduler_service.py` — wyłącznie zegar i kolejność uruchamiania modułów;
 - `webui.html` — panel Ingress niezależny od kodu serwera.
 
 Usługi otrzymują zależności przez jawne adaptery. Nie importują globalnego stanu

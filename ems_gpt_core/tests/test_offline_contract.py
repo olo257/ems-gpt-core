@@ -23,13 +23,15 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.26.0"', APP_SOURCE)
-        self.assertIn('version: "0.26.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.26.1"', APP_SOURCE)
+        self.assertIn('version: "0.26.1"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
         self.assertIn("from diagnostics_service import", APP_SOURCE)
         self.assertIn("from todo_service import", APP_SOURCE)
+        self.assertIn("from analytics_service import", APP_SOURCE)
+        self.assertIn("from scheduler_service import", APP_SOURCE)
         self.assertIn('with_name("webui.html")', APP_SOURCE)
         self.assertNotIn("<!doctype html>", APP_SOURCE)
         self.assertIn("<!doctype html>", WEBUI)
@@ -42,8 +44,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn('if start.minute == 8:', SOURCE)
         self.assertIn("if minute < 15:", SOURCE)
         self.assertIn("heartbeat_age < 180", SOURCE)
-        loop = SOURCE[SOURCE.index("def engine_loop()"):SOURCE.index("HTML =")]
-        self.assertEqual(loop.count("rebuild_recovery_materializations"), 1)
+        loop = MODULE_SOURCES["scheduler_service.py"]
+        self.assertEqual(loop.count("a.rebuild_recovery_materializations"), 1)
 
     def test_hp_manual_duration_and_external_priority(self):
         self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)
@@ -84,7 +86,7 @@ class OfflineContractTests(unittest.TestCase):
     def test_command_expiry_covers_dispatched_and_accepted(self):
         self.assertIn("def expire_stale_commands", SOURCE)
         self.assertIn("'READY_FOR_CONNECTOR','DISPATCHED','ACCEPTED'", SOURCE)
-        loop = SOURCE[SOURCE.index("def engine_loop()"):SOURCE.index("HTML =")]
+        loop = MODULE_SOURCES["scheduler_service.py"]
         self.assertIn("expire_stale_commands()", loop)
 
     def test_observer_todo_lifecycle(self):
@@ -133,7 +135,7 @@ class OfflineContractTests(unittest.TestCase):
         for marker in ("ems_gpt_core_slot_calendar", "slot_id", "slot_start_utc",
                        "utc_offset_minutes", "local_fold", "slot_index_local"):
             self.assertIn(marker, SOURCE)
-        self.assertIn("minute%10==0", SOURCE)
+        self.assertIn("minute % 10 == 0", SOURCE)
         self.assertNotIn("hour==0 and 1<=minute<10", SOURCE)
 
     def test_rce_and_battery_import_regressions(self):
@@ -286,7 +288,7 @@ class OfflineContractTests(unittest.TestCase):
                        "terminal_slot_count", "missing_actual_slot_count", "learning_eligible"):
             self.assertIn(marker, SOURCE)
         self.assertIn("ORDER BY slot_start ASC LIMIT 2688", SOURCE)
-        self.assertIn('OPTIONS.get("recovery_lookback_days", 7)', SOURCE)
+        self.assertIn('a.options.get("recovery_lookback_days", 7)', SOURCE)
 
 
 if __name__ == "__main__":

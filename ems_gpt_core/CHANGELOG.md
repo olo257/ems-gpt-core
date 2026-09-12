@@ -1,3 +1,11 @@
+## 0.26.1
+
+- Wydzielono obliczenia analityczne do `analytics_service.py`; kontrakt metryk i zapisy SQL pozostały bez zmian.
+- Wydzielono minutowy harmonogram do `scheduler_service.py` z jawną listą adapterów operacji.
+- `app.py` koordynuje uruchomienie usług i zachowuje dotychczasowe nazwy funkcji używane przez API.
+- Zachowano częstotliwości: telemetria co minutę, replan w minutach 07/22/37/52, analityka raz na godzinę oraz diagnostyka cztery razy na dobę.
+- Bez zmian w PPD, programach SOC 1–6, oknach procesów i trybie wykonawcy.
+
 ## 0.26.0
 
 - Rozpoczęto modularizację rdzenia: panel WWW przeniesiono do osobnego zasobu, a Observer, diagnostykę i cykl życia TODO do niezależnych usług.

@@ -20,12 +20,14 @@ from zoneinfo import ZoneInfo
 import pymysql
 from pymysql.cursors import DictCursor
 
+from analytics_service import run_analytics as run_analytics_service
 from diagnostics_service import generate_diagnostic_report as run_diagnostics_service
+from scheduler_service import SchedulerAdapters, run_scheduler
 from observer_service import run_ai_observer as run_observer_service
 from todo_service import TodoService
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.0"
+APP_VERSION = "0.26.1"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -1377,146 +1379,8 @@ def run_planner(run_type: str = "scheduled") -> dict:
     return {"run_id":run_id,"rows":published}
 
 
-def _wape(rows: list[dict], forecast_key: str, actual_key: str) -> float | None:
-    pairs = [(float(r[forecast_key]), float(r[actual_key])) for r in rows
-             if r.get(forecast_key) is not None and r.get(actual_key) is not None]
-    denominator = sum(abs(actual) for _, actual in pairs)
-    return None if not pairs or denominator <= 1e-9 else round(100 * sum(abs(forecast-actual) for forecast, actual in pairs) / denominator, 3)
-
-
-def _bias(rows: list[dict], forecast_key: str, actual_key: str) -> float | None:
-    pairs = [(float(r[forecast_key]), float(r[actual_key])) for r in rows
-             if r.get(forecast_key) is not None and r.get(actual_key) is not None]
-    return None if not pairs else round(sum(forecast-actual for forecast, actual in pairs), 6)
-
-
-def _mae(rows: list[dict], forecast_key: str, actual_key: str) -> float | None:
-    pairs = [(float(r[forecast_key]), float(r[actual_key])) for r in rows
-             if r.get(forecast_key) is not None and r.get(actual_key) is not None]
-    return None if not pairs else round(sum(abs(forecast-actual) for forecast, actual in pairs)/len(pairs), 3)
-
-
 def run_analytics() -> dict:
-    """Persist slot quality, rolling WAPE and a reproducible analysis watermark."""
-    run_id = str(uuid.uuid4())
-    cutoff = local_now().replace(tzinfo=None) - timedelta(days=30)
-    minimum_samples = max(1, int(OPTIONS.get("telemetry_min_samples_per_slot", 10)))
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO ems_gpt_core_analytics_runs(run_id,started_at,status) VALUES(%s,NOW(6),'RUNNING')", (run_id,))
-        cur.execute("""SELECT s.*,
-          (SELECT COUNT(*) FROM ems_gpt_telemetry_snapshots t
-           WHERE t.slot_start=s.slot_start) sample_count
-          FROM ems_gpt_slots s WHERE s.slot_start>=%s AND s.actual_recorded_at IS NOT NULL
-          ORDER BY s.slot_start DESC LIMIT 2880""", (cutoff,))
-        rows = list(cur.fetchall())
-        complete = 0
-        for row in rows:
-            forecast_ok = all(row.get(k) is not None for k in ("forecast_pv_total_kwh", "forecast_load_kwh"))
-            actual_ok = all(row.get(k) is not None for k in ("actual_pv_total_kwh", "actual_load_kwh"))
-            price_ok = all(row.get(k) is not None for k in ("price_buy_pln_kwh", "price_sell_pln_kwh")) and row.get("price_source") == "PSE_API"
-            samples = int(row.get("sample_count") or 0)
-            present = sum((forecast_ok, actual_ok, price_ok, samples >= minimum_samples))
-            completeness = round(present * 25.0, 2)
-            reasons = []
-            if not forecast_ok: reasons.append("MISSING_FORECAST")
-            if not actual_ok: reasons.append("MISSING_ACTUAL")
-            if not price_ok: reasons.append("MISSING_OR_NON_PSE_PRICE")
-            if samples < minimum_samples: reasons.append("LOW_SAMPLE_COUNT")
-            status = "COMPLETE" if not reasons else ("PARTIAL" if present >= 2 else "INVALID")
-            complete += status == "COMPLETE"
-            cur.execute("""INSERT INTO ems_gpt_core_slot_quality
-              (slot_start,sample_count,completeness_pct,forecast_complete,actual_complete,
-               price_complete,pv_abs_error_kwh,load_abs_error_kwh,import_abs_error_kwh,
-               export_abs_error_kwh,status,checked_at,reasons_json)
-              VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(6),%s)
-              ON DUPLICATE KEY UPDATE sample_count=VALUES(sample_count),completeness_pct=VALUES(completeness_pct),
-               forecast_complete=VALUES(forecast_complete),actual_complete=VALUES(actual_complete),
-               price_complete=VALUES(price_complete),pv_abs_error_kwh=VALUES(pv_abs_error_kwh),
-               load_abs_error_kwh=VALUES(load_abs_error_kwh),import_abs_error_kwh=VALUES(import_abs_error_kwh),
-               export_abs_error_kwh=VALUES(export_abs_error_kwh),status=VALUES(status),
-               checked_at=NOW(6),reasons_json=VALUES(reasons_json)""",
-              (row["slot_start"], samples, completeness, forecast_ok, actual_ok, price_ok,
-               abs(float(row.get("forecast_pv_total_kwh") or 0)-float(row.get("actual_pv_total_kwh") or 0)) if forecast_ok and actual_ok else None,
-               abs(float(row.get("forecast_load_kwh") or 0)-float(row.get("actual_load_kwh") or 0)) if forecast_ok and actual_ok else None,
-               abs(float(row.get("planned_buy_kwh") or 0)-float(row.get("actual_buy_kwh") or 0)),
-               abs(float(row.get("planned_pv_export_kwh") or 0)-float(row.get("actual_pv_export_kwh") or 0)),
-               status, json.dumps(reasons)))
-        metrics = {
-            "pv1_wape_pct": _wape(rows, "forecast_pv1_kwh", "actual_pv1_kwh"),
-            "pv2_wape_pct": _wape(rows, "forecast_pv2_kwh", "actual_pv2_kwh"),
-            "pv_wape_pct": _wape(rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
-            "load_wape_pct": _wape(rows, "forecast_load_kwh", "actual_load_kwh"),
-            "import_wape_pct": _wape(rows, "planned_buy_kwh", "actual_buy_kwh"),
-            "export_wape_pct": _wape(rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
-            "pv_bias_kwh": _bias(rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
-            "load_bias_kwh": _bias(rows, "forecast_load_kwh", "actual_load_kwh"),
-            "import_bias_kwh": _bias(rows, "planned_buy_kwh", "actual_buy_kwh"),
-            "export_bias_kwh": _bias(rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
-            "soc_mae_pct": _mae(rows, "soc_end_plan_pct", "soc_end_pct"),
-        }
-        planned_net = sum(float(r.get("planned_sell_kwh") or 0)*float(r.get("price_sell_pln_kwh") or 0)
-                          - float(r.get("planned_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in rows)
-        actual_net = sum((float(r.get("actual_sell_kwh") or 0)+float(r.get("actual_pv_export_kwh") or 0))*float(r.get("price_sell_pln_kwh") or 0)
-                         - float(r.get("actual_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in rows)
-        metrics["net_cost_variance_pln"] = round(actual_net-planned_net, 3)
-        score = round(100 * complete / len(rows), 2) if rows else 0.0
-        profiles = {}
-        pv_days = {}
-        for row in rows:
-            if row.get("actual_load_kwh") is None:
-                continue
-            if int(row.get("sample_count") or 0) < minimum_samples or row.get("actual_mode") == "MISSING_OUTAGE":
-                continue
-            key = (row["slot_start"].weekday(), row["slot_start"].hour, row["slot_start"].minute)
-            profiles.setdefault(key, []).append(float(row["actual_load_kwh"]))
-            if row.get("actual_pv_total_kwh") is not None:
-                day_key = row["slot_start"].date()
-                pv_days.setdefault(day_key, []).append(row)
-        for (weekday, hour, minute), values in profiles.items():
-            ordered = sorted(values)
-            trim = max(0, int(len(ordered)*0.1))
-            trimmed = ordered[trim:len(ordered)-trim] if trim and len(ordered)-2*trim else ordered
-            mean = sum(ordered)/len(ordered)
-            trimmed_mean = sum(trimmed)/len(trimmed)
-            p80 = ordered[min(len(ordered)-1, int((len(ordered)-1)*0.8))]
-            denominator = sum(abs(v) for v in ordered)
-            profile_wape = None if denominator <= 1e-9 else 100*sum(abs(trimmed_mean-v) for v in ordered)/denominator
-            cur.execute("""INSERT INTO ems_gpt_core_load_profiles
-              (weekday_no,hour_no,minute_no,sample_count,mean_kwh,trimmed_mean_kwh,p80_kwh,wape_pct,updated_at)
-              VALUES(%s,%s,%s,%s,%s,%s,%s,%s,NOW(6)) ON DUPLICATE KEY UPDATE
-              sample_count=VALUES(sample_count),mean_kwh=VALUES(mean_kwh),
-              trimmed_mean_kwh=VALUES(trimmed_mean_kwh),p80_kwh=VALUES(p80_kwh),
-              wape_pct=VALUES(wape_pct),updated_at=NOW(6)""",
-              (weekday, hour, minute, len(ordered), mean, trimmed_mean, p80, profile_wape))
-        pv_profiles = {}
-        for day_rows in pv_days.values():
-            total = sum(float(r.get("actual_pv_total_kwh") or 0) for r in day_rows)
-            if total <= 0.1:
-                continue
-            for row in day_rows:
-                key = (row["slot_start"].month, row["slot_start"].hour, row["slot_start"].minute)
-                pv_profiles.setdefault(key, []).append(float(row.get("actual_pv_total_kwh") or 0)/total)
-        for (month, hour, minute), shares in pv_profiles.items():
-            cur.execute("""INSERT INTO ems_gpt_core_pv_profiles
-              (month_no,hour_no,minute_no,sample_days,mean_share,updated_at)
-              VALUES(%s,%s,%s,%s,%s,NOW(6)) ON DUPLICATE KEY UPDATE
-              sample_days=VALUES(sample_days),mean_share=VALUES(mean_share),updated_at=NOW(6)""",
-              (month, hour, minute, len(shares), sum(shares)/len(shares)))
-        cur.execute("""UPDATE ems_gpt_core_analytics_runs SET completed_at=NOW(6),status='COMPLETED',
-          slots_scanned=%s,complete_slots=%s,pv1_wape_pct=%s,pv2_wape_pct=%s,pv_wape_pct=%s,load_wape_pct=%s,
-          import_wape_pct=%s,export_wape_pct=%s,quality_score=%s,pv_bias_kwh=%s,load_bias_kwh=%s,
-          import_bias_kwh=%s,export_bias_kwh=%s,soc_mae_pct=%s,net_cost_variance_pln=%s,
-          details_json=%s WHERE run_id=%s""",
-          (len(rows), complete, metrics["pv1_wape_pct"], metrics["pv2_wape_pct"],
-           metrics["pv_wape_pct"], metrics["load_wape_pct"],
-           metrics["import_wape_pct"], metrics["export_wape_pct"], score,
-           metrics["pv_bias_kwh"], metrics["load_bias_kwh"], metrics["import_bias_kwh"],
-           metrics["export_bias_kwh"], metrics["soc_mae_pct"], metrics["net_cost_variance_pln"],
-           json.dumps({"cutoff": str(cutoff), "metrics": metrics, "load_profiles": len(profiles), "pv_profiles": len(pv_profiles)}), run_id))
-    result = {"run_id": run_id, "slots": len(rows), "complete": complete, "quality_score": score,
-              "load_profiles": len(profiles), "pv_profiles": len(pv_profiles), **metrics}
-    record_event("analytics_completed", "analytics", result)
-    return result
+    return run_analytics_service(options=OPTIONS, db=db, local_now=local_now, record_event=record_event)
 
 
 def run_ai_observer(source_ref: str | None = None) -> dict:
@@ -2319,89 +2183,20 @@ def complete_rce_cycle(result: dict, run_type: str) -> dict:
 
 
 def engine_loop() -> None:
-    previous = None
-    recovery_rebuild_day = None
-    todo_archive_day = None
-    while True:
-        clock = local_now()
-        start = slot_start(clock)
-        key = start.isoformat()
-        error = None
-        try:
-            telemetry_ok = capture_telemetry()
-            closed = close_finished_slots()
-            backfill_execution_details()
-            # Full lookback rebuild is intentionally expensive. Run once after startup,
-            # then once per local day around 01:00, away from Recorder maintenance.
-            if recovery_rebuild_day is None or (clock.hour == 1 and recovery_rebuild_day != clock.date()):
-                run_serialized("recovery_materializations", rebuild_recovery_materializations,
-                               int(OPTIONS.get("recovery_lookback_days", 7)))
-                recovery_rebuild_day = clock.date()
-            learn_missing_load()
-            expire_process_overrides()
-            expire_stale_commands()
-            if clock.hour == 0 and todo_archive_day != clock.date():
-                maintain_todo_archive()
-                todo_archive_day = clock.date()
-            if key != previous:
-                ensure_slot_calendar(clock.date(), clock.date()+timedelta(days=1))
-                refresh_pv_forecast()
-                refresh_weather_forecast()
-                record_event("slot_opened", "core", {"slot_start": key, "recovered_after_restart": previous is None})
-                previous = key
-            minute = clock.minute
-            hour = clock.hour
-            blackout = hour in (0, 14)
-            with db() as conn, conn.cursor() as cur:
-                cur.execute("SELECT MAX(published_at) last_run FROM ems_gpt_plan_runs WHERE status='PUBLISHED'")
-                last_run = cur.fetchone()["last_run"]
-                rce_key=f"RCE_{clock.date()}_{'NEXT' if hour>=14 else 'TODAY'}"
-                cur.execute("SELECT COUNT(*) n FROM ems_gpt_core_events WHERE event_type=%s",(rce_key,))
-                rce_done=int(cur.fetchone()["n"] or 0)>0
-            rce_due=14<=hour<=16 and minute%10==0
-            if rce_due and not rce_done:
-                target=clock.date()+timedelta(days=1)
-                result=refresh_rce(target)
-                record_event("rce_import_attempt", "core", result, "INFO" if result["status"]=="OK" else "WARNING")
-                if result["status"]=="OK":
-                    record_event(rce_key,"core",result)
-                    complete_rce_cycle(result, "rce_import")
-            due = minute in (7,22,37,52) and not blackout and (last_run is None or (now := local_now().replace(tzinfo=None))-last_run >= timedelta(minutes=55))
-            if due:
-                run_serialized("planner", run_planner, "hourly_replan")
-            stage_executor_commands()
-            dispatch_ready_commands()
-            if minute < 15:
-                with db() as conn, conn.cursor() as cur:
-                    cur.execute("SELECT MAX(completed_at) v FROM ems_gpt_core_analytics_runs WHERE status='COMPLETED'")
-                    last_analytics = cur.fetchone()["v"]
-                if last_analytics is None or local_now().replace(tzinfo=None)-last_analytics >= timedelta(minutes=50):
-                    analytics_result = run_serialized("analytics", run_analytics)
-                    run_ai_observer(analytics_result.get("run_id"))
-            if (hour, minute) in ((2, 8), (8, 8), (14, 23), (20, 8)):
-                with db() as conn, conn.cursor() as cur:
-                    cur.execute("SELECT MAX(created_at) v FROM ems_gpt_core_diagnostic_reports")
-                    last_diag = cur.fetchone()["v"]
-                if last_diag is None or local_now().replace(tzinfo=None)-last_diag >= timedelta(minutes=10):
-                    run_serialized("diagnostics", generate_diagnostic_report, "scheduled")
-            with LOCK:
-                STATE["database"] = "CONNECTED"
-                STATE["ha_input"] = "CONNECTED" if telemetry_ok else "PARTIAL"
-                STATE["status"] = "RUNNING"
-                STATE["modules"].update(core="RUNNING", planner="RUNNING", ppd="RUNNING", analytics="RUNNING", diagnostics="RUNNING",
-                                        ai_observer="DISABLED" if not OPTIONS.get("ai_observer_enabled") else "SHADOW_READ_ONLY")
-        except Exception as exc:
-            error = str(exc)
-            LOG.exception("engine cycle failed")
-            with LOCK:
-                STATE["database"] = "ERROR"
-                STATE["status"] = "DEGRADED"
-        with LOCK:
-            STATE["active_slot"] = key
-            STATE["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
-            STATE["last_error"] = error
-        time.sleep(60)
-
+    run_scheduler(SchedulerAdapters(
+        options=OPTIONS, state=STATE, lock=LOCK, log=LOG, db=db, local_now=local_now,
+        slot_start=slot_start, capture_telemetry=capture_telemetry,
+        close_finished_slots=close_finished_slots, backfill_execution_details=backfill_execution_details,
+        run_serialized=run_serialized, rebuild_recovery_materializations=rebuild_recovery_materializations,
+        learn_missing_load=learn_missing_load, expire_process_overrides=expire_process_overrides,
+        expire_stale_commands=expire_stale_commands, maintain_todo_archive=maintain_todo_archive,
+        ensure_slot_calendar=ensure_slot_calendar, refresh_pv_forecast=refresh_pv_forecast,
+        refresh_weather_forecast=refresh_weather_forecast, record_event=record_event,
+        refresh_rce=refresh_rce, complete_rce_cycle=complete_rce_cycle, run_planner=run_planner,
+        stage_executor_commands=stage_executor_commands, dispatch_ready_commands=dispatch_ready_commands,
+        run_analytics=run_analytics, run_ai_observer=run_ai_observer,
+        generate_diagnostic_report=generate_diagnostic_report,
+    ))
 
 HTML = Path(__file__).with_name("webui.html").read_text(encoding="utf-8")
 
