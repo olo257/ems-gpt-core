@@ -24,12 +24,13 @@ from api_service import ApiAdapters, build_handler
 from analytics_service import run_analytics as run_analytics_service
 from diagnostics_service import generate_diagnostic_report as run_diagnostics_service
 from executor_service import ExecutorAdapters, build_executor
+from ingestion_service import IngestionAdapters, build_ingestion
 from scheduler_service import SchedulerAdapters, run_scheduler
 from observer_service import run_ai_observer as run_observer_service
 from todo_service import TodoService
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.3"
+APP_VERSION = "0.26.4"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -817,131 +818,7 @@ def setting(entity_id: str, default: float) -> float:
     return default if value is None else value
 
 
-def refresh_pv_forecast() -> dict:
-    """Disaggregate Open-Meteo daily PV energy using an actual-production profile."""
-    today = local_now().date()
-    results = {}
-    with db() as conn, conn.cursor() as cur:
-        for label, target in (("today", today), ("tomorrow", today+timedelta(days=1))):
-            pv1 = number(ha_state(PV_FORECAST_ENTITIES[label][0]))
-            pv2 = number(ha_state(PV_FORECAST_ENTITIES[label][1]))
-            if pv1 is None or pv2 is None:
-                results[label] = {"status": "WAITING_SOURCE"}
-                continue
-            lower = max(slot_start().replace(tzinfo=None), datetime.combine(target, datetime.min.time())) if label == "today" else datetime.combine(target, datetime.min.time())
-            upper = datetime.combine(target+timedelta(days=1), datetime.min.time())
-            cur.execute("""SELECT s.slot_start,p.mean_share FROM ems_gpt_slots s
-              LEFT JOIN ems_gpt_core_pv_profiles p ON p.month_no=MONTH(s.slot_start)
-               AND p.hour_no=HOUR(s.slot_start) AND p.minute_no=MINUTE(s.slot_start)
-              WHERE s.slot_start>=%s AND s.slot_start<%s AND s.actual_recorded_at IS NULL
-              ORDER BY s.slot_start""", (lower, upper))
-            slots = list(cur.fetchall())
-            weight_sum = sum(float(r.get("mean_share") or 0) for r in slots)
-            if not slots or weight_sum <= 0:
-                results[label] = {"status": "WAITING_PROFILE", "slots": len(slots)}
-                continue
-            for row in slots:
-                share = float(row.get("mean_share") or 0)/weight_sum
-                a, b = pv1*share, pv2*share
-                cur.execute("""UPDATE ems_gpt_slots SET forecast_pv1_kwh=%s,forecast_pv2_kwh=%s,
-                  forecast_pv_total_kwh=%s,forecast_pv_source='OPEN_METEO_PROFILE_V1',
-                  pv_correction=1 WHERE slot_start=%s AND actual_recorded_at IS NULL""",
-                  (round(a, 6), round(b, 6), round(a+b, 6), row["slot_start"]))
-            results[label] = {"status": "OK", "slots": len(slots), "pv1_kwh": pv1, "pv2_kwh": pv2}
-    record_event("pv_forecast_refreshed", "analytics", results)
-    return results
-
-
-def refresh_weather_forecast() -> dict:
-    response = ha_service_response("weather", "get_forecasts", {"entity_id": "weather.dom", "type": "hourly"}, return_response=True) or {}
-    service_response = response.get("service_response", response)
-    forecast = (service_response.get("weather.dom") or {}).get("forecast", [])
-    updated = 0
-    with db() as conn, conn.cursor() as cur:
-        for item in forecast:
-            try:
-                hour = datetime.fromisoformat(str(item["datetime"]).replace("Z", "+00:00")).astimezone(TZ).replace(tzinfo=None)
-                cur.execute("""UPDATE ems_gpt_slots SET forecast_temperature_c=%s,
-                  forecast_cloud_coverage_pct=%s,forecast_precipitation_mm=%s
-                  WHERE slot_start>=%s AND slot_start<%s AND actual_recorded_at IS NULL""",
-                  (item.get("temperature"), item.get("cloud_coverage"), item.get("precipitation"),
-                   hour, hour+timedelta(hours=1)))
-                updated += cur.rowcount
-            except (KeyError, TypeError, ValueError):
-                continue
-    result = {"status": "OK" if forecast else "WAITING_SOURCE", "hours": len(forecast), "slots_updated": updated, "source": "OPEN_METEO"}
-    record_event("weather_forecast_refreshed", "analytics", result, "INFO" if forecast else "WARNING")
-    return result
-
-
-def refresh_rce(day=None) -> dict:
-    target = day or (local_now().date()+timedelta(days=1))
-    calendar = canonical_slots_for_day(target)
-    calendar_by_local = {r["slot_start_local"]: r for r in calendar if not r["local_fold"]}
-    expected = len(calendar)
-    margin=max(0.0,float(OPTIONS.get("purchase_margin_pln_kwh", 0.59)))
-    params={"$select":"dtime,period,rce_pln,business_date,publication_ts",
-            "$filter":f"business_date eq '{target:%Y-%m-%d}'","$first":200}
-    req=urllib.request.Request("https://api.raporty.pse.pl/api/rce-pln?"+urlencode(params),
-                               headers={"Accept":"application/json","User-Agent":"EMS-GPT-Core/0.4"})
-    with urllib.request.urlopen(req,timeout=30) as response: payload=json.load(response)
-    unique={}
-    for item in payload.get("value",[]):
-        try:
-            end=datetime.fromisoformat(str(item["dtime"]).replace("Z","+00:00"))
-            if end.tzinfo is None: end=end.replace(tzinfo=TZ)
-            start=end.astimezone(TZ)-timedelta(minutes=15)
-            if start.date()!=target: continue
-            raw=float(item["rce_pln"])/1000
-            pub=item.get("publication_ts")
-            unique[start.replace(tzinfo=None)]={"sell":raw,"buy":raw+margin,"publication":pub}
-        except Exception:
-            continue
-    ordered=sorted(unique)
-    eta_c=max(.01,min(1.0,float(OPTIONS.get("battery_charge_efficiency",.90))))
-    eta_d=max(.01,min(1.0,float(OPTIONS.get("battery_discharge_efficiency",.95))))
-    degradation=max(0,float(OPTIONS.get("battery_degradation_cost_pln_kwh",.08)))
-    min_margin=max(0,float(OPTIONS.get("minimum_arbitrage_margin_pln_kwh",.05)))
-    buy_tolerance=max(0.0,float(OPTIONS.get("buy_window_tolerance_pln_kwh",.05)))
-    morning_start=float(OPTIONS.get("sale_morning_start_hour",6.0)); morning_end=float(OPTIONS.get("sale_morning_end_hour",10.0))
-    evening_start=float(OPTIONS.get("sale_evening_start_hour",17.0)); evening_end=float(OPTIONS.get("sale_evening_end_hour",23.0))
-    def decimal_hour(s): return s.hour+s.minute/60.0
-    def sale_session(s):
-        hour=decimal_hour(s)
-        return morning_start<=hour<morning_end or evening_start<=hour<evening_end
-    for s in ordered:
-        peers=[q for q in ordered if sale_session(q) and ((q.hour<12)==(s.hour<12))]
-        peak=max(peers,key=lambda q:unique[q]["sell"]) if peers else None
-        threshold=unique[peak]["sell"]*.8 if peak else float("inf")
-        unique[s]["sale_window"]=bool(sale_session(s) and unique[s]["sell"]>=threshold and unique[s]["sell"]>degradation+min_margin)
-        later=[unique[q]["sell"] for q in ordered if q>s]
-        unique[s]["buy_window"]=bool(not sale_session(s) and later and unique[s]["sell"]<=min(later)+buy_tolerance and max(later)*eta_d-unique[s]["buy"]/eta_c-degradation>=min_margin)
-    with db() as conn,conn.cursor() as cur:
-        for s,v in unique.items():
-            canonical=calendar_by_local.get(s)
-            cur.execute("""INSERT INTO ems_gpt_slots(slot_start,slot_end,price_sell_pln_kwh,price_buy_pln_kwh,
-              sale_window,buy_window,price_source,price_fetched_at,price_publication_at,
-              slot_id,slot_start_utc,slot_start_local,utc_offset_minutes,local_fold,local_day,slot_index_local)
-              VALUES(%s,%s,%s,%s,%s,%s,'PSE_API',NOW(6),%s,%s,%s,%s,%s,%s,%s,%s)
-              ON DUPLICATE KEY UPDATE price_sell_pln_kwh=IF(actual_recorded_at IS NULL,VALUES(price_sell_pln_kwh),price_sell_pln_kwh),
-              price_buy_pln_kwh=IF(actual_recorded_at IS NULL,VALUES(price_buy_pln_kwh),price_buy_pln_kwh),
-              sale_window=IF(actual_recorded_at IS NULL,VALUES(sale_window),sale_window),
-              buy_window=IF(actual_recorded_at IS NULL,VALUES(buy_window),buy_window),
-              price_fetched_at=IF(actual_recorded_at IS NULL,NOW(6),price_fetched_at),
-              price_publication_at=IF(actual_recorded_at IS NULL,VALUES(price_publication_at),price_publication_at),
-              price_source=IF(actual_recorded_at IS NULL,'PSE_API',price_source),
-              slot_id=COALESCE(slot_id,VALUES(slot_id)),slot_start_utc=COALESCE(slot_start_utc,VALUES(slot_start_utc)),
-              slot_start_local=COALESCE(slot_start_local,VALUES(slot_start_local)),
-              utc_offset_minutes=COALESCE(utc_offset_minutes,VALUES(utc_offset_minutes)),
-              local_day=COALESCE(local_day,VALUES(local_day)),slot_index_local=COALESCE(slot_index_local,VALUES(slot_index_local))""",
-              (s,s+timedelta(minutes=15),v["sell"],v["buy"],v["sale_window"],v["buy_window"],v["publication"],
-               canonical["slot_id"] if canonical else None,canonical["slot_start_utc"] if canonical else None,s,
-               canonical["utc_offset_minutes"] if canonical else None,canonical["local_fold"] if canonical else 0,
-               target,canonical["slot_index_local"] if canonical else None))
-    result={"day":str(target),"rows":len(unique),"expected":expected,
-            "status":"OK" if len(unique)==expected else "PARTIAL","margin":margin}
-    record_event("rce_refreshed","core",result)
-    return result
+# Data-ingestion functions are wired after record_event is defined.
 
 
 def audit_stage(cur, run_id: str, stage: str, status: str, rows: int, details: str = "") -> None:
@@ -1825,6 +1702,24 @@ def record_event(event_type: str, module: str, payload: dict, severity: str = "I
                          json.dumps(payload, ensure_ascii=False, default=str)))
     except Exception as exc:
         LOG.error("event write failed: %s", exc)
+
+
+_INGESTION = build_ingestion(IngestionAdapters(
+    options=OPTIONS,
+    timezone=TZ,
+    pv_forecast_entities=PV_FORECAST_ENTITIES,
+    db=db,
+    local_now=local_now,
+    slot_start=slot_start,
+    canonical_slots_for_day=canonical_slots_for_day,
+    number=number,
+    ha_state=ha_state,
+    ha_service_response=ha_service_response,
+    record_event=record_event,
+))
+refresh_pv_forecast = _INGESTION.refresh_pv_forecast
+refresh_weather_forecast = _INGESTION.refresh_weather_forecast
+refresh_rce = _INGESTION.refresh_rce
 
 
 _EXECUTOR = build_executor(ExecutorAdapters(
