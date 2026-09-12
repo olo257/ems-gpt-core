@@ -21,7 +21,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.25.19"
+APP_VERSION = "0.25.20"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -371,6 +371,16 @@ def ensure_runtime_schema() -> None:
             "soc_mae_pct DOUBLE NULL", "net_cost_variance_pln DOUBLE NULL",
         ):
             cur.execute(f"ALTER TABLE ems_gpt_core_analytics_runs ADD COLUMN IF NOT EXISTS {column}")
+        for column in (
+            "first_seen_day DATE NULL", "last_seen_day DATE NULL",
+            "occurrence_count INT NOT NULL DEFAULT 1",
+            "consecutive_days INT NOT NULL DEFAULT 1",
+            "reviewed_at DATETIME(6) NULL", "reviewed_by VARCHAR(100) NULL",
+            "review_note VARCHAR(1000) NULL", "archived_at DATETIME(6) NULL",
+        ):
+            cur.execute(f"ALTER TABLE ems_gpt_core_todo ADD COLUMN IF NOT EXISTS {column}")
+        cur.execute("""UPDATE ems_gpt_core_todo SET first_seen_day=COALESCE(first_seen_day,local_day),
+          last_seen_day=COALESCE(last_seen_day,local_day)""")
         ppd_columns = (
             "grid_buy_allowed TINYINT(1) NOT NULL DEFAULT 0",
             "grid_no_buy TINYINT(1) NOT NULL DEFAULT 0",
@@ -460,6 +470,8 @@ def ensure_runtime_schema() -> None:
                     ("core_schema_0_25_0", json.dumps({"version": APP_VERSION, "scope": "v3_analytics_ai_observer_multi_slot_rce_horizon"})))
         cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
                     ("core_schema_0_25_11", json.dumps({"version": APP_VERSION, "scope": "binary_hp_window_cost_replan_manual_origin_cleanup"})))
+        cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
+                    ("core_schema_0_25_20", json.dumps({"version": APP_VERSION, "scope": "command_expiry_observer_todo_lifecycle"})))
         # Normalize the historical/UI typo before the 0.24 slot-id cutover.
         for table, column in (
             ("ems_gpt_slots", "grid_policy_planned"),
@@ -1552,9 +1564,13 @@ def run_ai_observer(source_ref: str | None = None) -> dict:
           VALUES(%s,'EMS_OBSERVER',%s,NOW(6),NOW(6),'COMPLETED',%s,%s,%s,%s)""",
           (run_id, source_ref, json.dumps(prompt, ensure_ascii=False, default=str),
            json.dumps(result, ensure_ascii=False, default=str), str(round(auto_score, 2)), decision))
+    active_titles = []
     for item in suggestions:
-        create_todo("ai_observer", f"Obserwator: {item['metric']}",
-                    json.dumps(item, ensure_ascii=False), item["severity"], run_id)
+        title = f"Obserwator: {item['metric']}"
+        active_titles.append(title)
+        create_todo("ai_observer", title, json.dumps(item, ensure_ascii=False),
+                    item["severity"], run_id, require_consecutive_days=True)
+    reconcile_observer_todos(active_titles)
     record_event("ai_observer_completed", "ai_observer",
                  {"run_id": run_id, "source_ref": source_ref, "decision": decision, "suggestions": len(suggestions)})
     return {"status": "COMPLETED", "run_id": run_id, "source_ref": source_ref,
@@ -1599,7 +1615,7 @@ def generate_diagnostic_report(trigger_name: str = "scheduled") -> dict:
             int(coverage["low_coverage"] or 0), "<=4")
         cur.execute("SELECT COUNT(*) n FROM ems_gpt_slots GROUP BY slot_start HAVING COUNT(*)>1")
         add("no_duplicate_slots", cur.fetchone() is None, "checked", 0)
-        cur.execute("SELECT COUNT(*) n FROM ems_gpt_core_commands WHERE status IN ('READY_FOR_CONNECTOR','DISPATCHED') AND expires_at<=NOW(6)")
+        cur.execute("SELECT COUNT(*) n FROM ems_gpt_core_commands WHERE status IN ('READY_FOR_CONNECTOR','DISPATCHED','ACCEPTED') AND expires_at<=NOW(6)")
         expired_commands = int(cur.fetchone()["n"] or 0)
         add("no_expired_active_commands", expired_commands == 0, expired_commands, 0)
         cur.execute("""SELECT process_name,COUNT(*) n FROM ems_gpt_core_process_overrides
@@ -1622,22 +1638,109 @@ def generate_diagnostic_report(trigger_name: str = "scheduled") -> dict:
     for alert in alerts:
         create_todo("diagnostics", f"Diagnostyka: {alert['name']}",
                     json.dumps(alert, ensure_ascii=False, default=str), "WARNING", report_id)
+    reconcile_diagnostic_todos([f"Diagnostyka: {alert['name']}" for alert in alerts])
     return result
 
 
-def create_todo(module: str, title: str, details: str, severity: str = "INFO", source_ref: str | None = None) -> str:
+def create_todo(module: str, title: str, details: str, severity: str = "INFO",
+                source_ref: str | None = None, require_consecutive_days: bool = False) -> str:
+    """Create or refresh one durable issue; Observer promotes it after three consecutive days."""
     todo_id = str(uuid.uuid4())
+    today = local_now().date()
     with db() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT todo_id FROM ems_gpt_core_todo WHERE local_day=%s AND module_name=%s
-          AND title=%s AND status='OPEN' LIMIT 1""", (local_now().date(), module[:32], title[:300]))
+        cur.execute("""SELECT * FROM ems_gpt_core_todo WHERE module_name=%s AND title=%s
+          AND status IN ('WATCHING','OPEN','SUGGESTED') ORDER BY created_at DESC LIMIT 1 FOR UPDATE""",
+                    (module[:32], title[:300]))
         existing = cur.fetchone()
         if existing:
+            last_seen = existing.get("last_seen_day") or existing.get("local_day")
+            consecutive = int(existing.get("consecutive_days") or 1)
+            if last_seen != today:
+                consecutive = consecutive + 1 if last_seen == today - timedelta(days=1) else 1
+            status = "SUGGESTED" if require_consecutive_days and consecutive >= 3 else \
+                     "WATCHING" if require_consecutive_days else "OPEN"
+            cur.execute("""UPDATE ems_gpt_core_todo SET local_day=%s,last_seen_day=%s,
+              occurrence_count=occurrence_count+1,consecutive_days=%s,severity=%s,details=%s,
+              source_ref=%s,status=%s WHERE todo_id=%s""",
+                        (today, today, consecutive, severity[:12], details, source_ref,
+                         status, existing["todo_id"]))
             return existing["todo_id"]
+        status = "WATCHING" if require_consecutive_days else "OPEN"
         cur.execute("""INSERT INTO ems_gpt_core_todo
-          (todo_id,created_at,local_day,severity,module_name,title,details,status,source_ref)
-          VALUES(%s,NOW(6),%s,%s,%s,%s,%s,'OPEN',%s)""",
-          (todo_id, local_now().date(), severity[:12], module[:32], title[:300], details, source_ref))
+          (todo_id,created_at,local_day,severity,module_name,title,details,status,source_ref,
+           first_seen_day,last_seen_day,occurrence_count,consecutive_days)
+          VALUES(%s,NOW(6),%s,%s,%s,%s,%s,%s,%s,%s,%s,1,1)""",
+          (todo_id, today, severity[:12], module[:32], title[:300], details, status,
+           source_ref, today, today))
     return todo_id
+
+
+def reconcile_observer_todos(active_titles: list[str]) -> int:
+    """Archive unresolved Observer findings that disappeared from a newer daily analysis."""
+    today = local_now().date()
+    with db() as conn, conn.cursor() as cur:
+        if active_titles:
+            placeholders = ",".join(["%s"] * len(active_titles))
+            cur.execute(f"""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
+              WHERE module_name='ai_observer' AND status IN ('WATCHING','OPEN','SUGGESTED')
+                AND last_seen_day<%s AND title NOT IN ({placeholders})""", (today, *active_titles))
+        else:
+            cur.execute("""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
+              WHERE module_name='ai_observer' AND status IN ('WATCHING','OPEN','SUGGESTED')
+                AND last_seen_day<%s""", (today,))
+        return cur.rowcount
+
+
+def reconcile_diagnostic_todos(active_titles: list[str]) -> int:
+    """Resolve diagnostic alerts which are absent from the newest report."""
+    with db() as conn, conn.cursor() as cur:
+        if active_titles:
+            placeholders = ",".join(["%s"] * len(active_titles))
+            cur.execute(f"""UPDATE ems_gpt_core_todo SET status='RESOLVED',resolved_at=NOW(6)
+              WHERE module_name='diagnostics' AND status IN ('OPEN','SUGGESTED')
+                AND title NOT IN ({placeholders})""", tuple(active_titles))
+        else:
+            cur.execute("""UPDATE ems_gpt_core_todo SET status='RESOLVED',resolved_at=NOW(6)
+              WHERE module_name='diagnostics' AND status IN ('OPEN','SUGGESTED')""")
+        return cur.rowcount
+
+
+def maintain_todo_archive() -> dict:
+    """Nightly retention: archive reviewed items and stale unconfirmed observations."""
+    today = local_now().date()
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
+          WHERE status IN ('ACCEPTED','REJECTED','RESOLVED') AND local_day<%s""", (today,))
+        reviewed = cur.rowcount
+        cur.execute("""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
+          WHERE status='WATCHING' AND last_seen_day<%s""", (today-timedelta(days=1),))
+        stale = cur.rowcount
+    if reviewed or stale:
+        record_event("todo_nightly_archive", "ai_observer", {"reviewed": reviewed, "stale": stale})
+    return {"reviewed": reviewed, "stale": stale}
+
+
+def review_todo(payload: dict, actor: str) -> dict:
+    todo_id = str(payload.get("todo_id") or "")
+    decision = str(payload.get("decision") or "").upper()
+    note = str(payload.get("note") or "")[:1000]
+    if not todo_id:
+        raise ValueError("todo_id is required")
+    if decision not in {"ACCEPTED", "REJECTED", "RESOLVED"}:
+        raise ValueError("decision must be ACCEPTED, REJECTED or RESOLVED")
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT status FROM ems_gpt_core_todo WHERE todo_id=%s FOR UPDATE", (todo_id,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError("unknown todo_id")
+        if row["status"] == "ARCHIVED":
+            raise ValueError("archived todo cannot be reviewed")
+        cur.execute("""UPDATE ems_gpt_core_todo SET status=%s,reviewed_at=NOW(6),reviewed_by=%s,
+          review_note=%s,resolved_at=CASE WHEN %s='RESOLVED' THEN NOW(6) ELSE resolved_at END
+          WHERE todo_id=%s""", (decision, actor[:100], note, decision, todo_id))
+    result = {"todo_id": todo_id, "status": decision, "reviewed_by": actor[:100]}
+    record_event("todo_reviewed", "ai_observer", result)
+    return result
 
 
 def close_finished_slots() -> int:
@@ -2205,6 +2308,18 @@ def expire_process_overrides() -> int:
     return expired
 
 
+def expire_stale_commands() -> int:
+    """Close every unacknowledged command after TTL, including already dispatched rows."""
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""UPDATE ems_gpt_core_commands SET status='EXPIRED',
+          acknowledgement_json=COALESCE(acknowledgement_json,JSON_OBJECT('reason','TTL_EXPIRED'))
+          WHERE status IN ('READY_FOR_CONNECTOR','DISPATCHED','ACCEPTED') AND expires_at<=NOW(6)""")
+        expired = cur.rowcount
+    if expired:
+        record_event("commands_expired", "executor", {"count": expired})
+    return expired
+
+
 def externally_started_hp_is_running(cur, now: datetime) -> bool:
     """Return true only for a fresh compressor run not initiated by EMS.
 
@@ -2299,7 +2414,9 @@ def dispatch_ready_commands() -> dict:
     current_slot = slot_start().replace(tzinfo=None)
     dispatched = 0
     with db() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE ems_gpt_core_commands SET status='EXPIRED' WHERE status='READY_FOR_CONNECTOR' AND expires_at<=%s", (now,))
+        cur.execute("""UPDATE ems_gpt_core_commands SET status='EXPIRED',
+          acknowledgement_json=COALESCE(acknowledgement_json,JSON_OBJECT('reason','TTL_EXPIRED'))
+          WHERE status IN ('READY_FOR_CONNECTOR','DISPATCHED','ACCEPTED') AND expires_at<=%s""", (now,))
         cur.execute("""SELECT * FROM ems_gpt_core_commands WHERE status='READY_FOR_CONNECTOR'
           AND slot_start=%s AND expires_at>%s ORDER BY created_at""", (current_slot, now))
         for command in cur.fetchall():
@@ -2388,6 +2505,7 @@ def complete_rce_cycle(result: dict, run_type: str) -> dict:
 def engine_loop() -> None:
     previous = None
     recovery_rebuild_day = None
+    todo_archive_day = None
     while True:
         clock = local_now()
         start = slot_start(clock)
@@ -2405,6 +2523,10 @@ def engine_loop() -> None:
                 recovery_rebuild_day = clock.date()
             learn_missing_load()
             expire_process_overrides()
+            expire_stale_commands()
+            if clock.hour == 0 and todo_archive_day != clock.date():
+                maintain_todo_archive()
+                todo_archive_day = clock.date()
             if key != previous:
                 ensure_slot_calendar(clock.date(), clock.date()+timedelta(days=1))
                 refresh_pv_forecast()
@@ -2470,7 +2592,7 @@ HTML = """<!doctype html><html lang='pl'><head><meta charset='utf-8'><meta name=
 <body><div class='wrap'><header><img src='icon.png'><div><h1>EMS-GPT Core</h1><div style='color:#8ea7c4'>Niezależny silnik planowania i analityki energii</div></div></header><br><div class='grid'>
 <div class='card'><div class='label'>Stan aplikacji</div><div id='appStatus' class='value warn'>URUCHAMIANIE</div><div id='applicationStatus' class='hint'>Wersja: … · uruchomiono: oczekiwanie</div></div><div class='card'><div class='label'>MariaDB</div><div id='db' class='value'>…</div></div><div class='card'><div class='label'>Dane z HA</div><div id='ha' class='value'>…</div></div><div id='executorCard' class='card clickable'><div class='label'>Wykonawca · kliknij, aby sterować</div><div id='executor' class='value warn'>…</div><div id='executorActions' class='executor-actions'><button id='executorLive' class='apply'>Włącz LIVE</button> <button id='executorOff' class='danger'>Wyłącz</button><div id='executorMessage' class='hint'></div></div></div></div><br>
 <div class='card'><div class='label'>Moduły</div><div id='modules'></div></div><br><div class='card'><div class='label'>Aktywny slot</div><div id='slot' class='value'>…</div><pre id='error'>Brak błędów</pre></div><br>
-<div class='card'><div class='tabs'><button data-view='plan' class='active'>Planer</button><button data-view='execution'>Wykonanie</button><button data-view='hourly'>Godzinowe</button><button data-view='daily'>Dobowe</button><button data-view='processes'>Procesy</button><button data-view='process-execution'>Przebiegi</button><button data-view='analytics'>Analityka</button><button data-view='ai-runs'>AI Observer</button><button data-view='diagnostics'>Diagnostyka</button><button data-view='configuration'>Konfiguracja</button></div><br><div id='tablePanel'><div id='processControls' style='display:none'></div><div id='tableTitle' class='label'>PLANER</div><div class='tablebox'><table><thead id='thead'></thead><tbody id='tbody'></tbody></table></div></div><div id='configPanel' style='display:none'><div class='label'>Konfiguracja aplikacji</div><div id='settings'></div><br><button id='applySettings' class='apply'>Zastosuj parametry</button> <span id='settingsStatus'></span><section class='setting-section'><h3>Kolumny tabel</h3><p class='hint'>Wybierz widok i zaznacz dane, które mają być widoczne. Ustawienie jest zapisywane lokalnie w tej przeglądarce.</p><select id='columnView'></select> <button id='resetColumns'>Przywróć domyślne</button><div id='columnSettings' class='column-settings'></div></section></div></div></div>
+<div class='card'><div class='tabs'><button data-view='plan' class='active'>Planer</button><button data-view='execution'>Wykonanie</button><button data-view='hourly'>Godzinowe</button><button data-view='daily'>Dobowe</button><button data-view='processes'>Procesy</button><button data-view='process-execution'>Przebiegi</button><button data-view='analytics'>Analityka</button><button data-view='ai-runs'>AI Observer</button><button data-view='todo'>Sugestie / TODO</button><button data-view='diagnostics'>Diagnostyka</button><button data-view='configuration'>Konfiguracja</button></div><br><div id='tablePanel'><div id='processControls' style='display:none'></div><div id='tableTitle' class='label'>PLANER</div><div class='tablebox'><table><thead id='thead'></thead><tbody id='tbody'></tbody></table></div></div><div id='configPanel' style='display:none'><div class='label'>Konfiguracja aplikacji</div><div id='settings'></div><br><button id='applySettings' class='apply'>Zastosuj parametry</button> <span id='settingsStatus'></span><section class='setting-section'><h3>Kolumny tabel</h3><p class='hint'>Wybierz widok i zaznacz dane, które mają być widoczne. Ustawienie jest zapisywane lokalnie w tej przeglądarce.</p><select id='columnView'></select> <button id='resetColumns'>Przywróć domyślne</button><div id='columnSettings' class='column-settings'></div></section></div></div></div>
 <script>
 const layouts={
 plan:[['slot_start','Slot'],['recommendation','Rekomendacja'],['soc_start_plan_pct','SOC przed'],['soc_end_plan_pct','SOC po'],['soc_floor_pct','SOC floor'],['soc_target_pct','SOC target'],['forecast_pv1_kwh','PV1 plan'],['forecast_pv2_kwh','PV2 plan'],['forecast_pv_total_kwh','PV razem'],['forecast_load_kwh','Zużycie'],['price_buy_pln_kwh','Zakup PLN/kWh'],['price_sell_pln_kwh','Sprzedaż PLN/kWh'],['buy_window','Okno BUY'],['sale_window','Okno SELL'],['grid_policy_planned','Polityka sieci'],['grid_buy_allowed','BUY_ALLOWED'],['grid_no_buy','NO_BUY'],['grid_neutral','GRID_NEUTRAL'],['export_policy_planned','Polityka eksportu'],['sell_bat_allowed','SELL_BAT'],['no_sell_bat','NO_SELL_BAT'],['sell_pv_allowed','SELL_PV'],['no_sell_pv','NO_SELL_PV'],['planned_battery_charge_kwh','Ład. BAT'],['planned_battery_discharge_kwh','Rozł. BAT'],['planned_buy_kwh','Import'],['planned_sell_kwh','BAT→sieć'],['planned_pv_to_bat_kwh','PV→BAT kWh'],['planned_pv_to_cwu_kwh','PV→CWU kWh'],['planned_pv_to_ev_kwh','PV→EV kWh'],['planned_pv_export_kwh','PV→sieć kWh'],['planned_pv_curtail_kwh','PV ogranicz. kWh'],['pv_export_planned','Eksport PV plan'],['pv_curtail_planned','Redukcja PV'],['pv_to_bat_planned','PV→BAT'],['pv_to_cwu_planned','PV→CWU'],['pv_to_ev_planned','PV→EV'],['heat_pump_window','Okno HP'],['ppd_reason','Powód PPD']],
@@ -2479,12 +2601,13 @@ hourly:[['hour_start','Godzina'],['completion_status','Zamknięcie'],['quality_s
 daily:[['day_date','Dzień'],['completion_status','Zamknięcie'],['data_quality_status','Jakość'],['expected_slot_count','Sloty oczek.'],['terminal_slot_count','Sloty terminalne'],['valid_actual_slot_count','Sloty ważne'],['missing_actual_slot_count','Sloty brak'],['recovered_slot_count','Sloty odtw.'],['learning_eligible','Do uczenia'],['forecast_pv_kwh','PV plan'],['actual_pv_kwh','PV wykon.'],['planned_pv_to_bat_kwh','PV→BAT'],['planned_pv_to_cwu_kwh','PV→CWU'],['planned_pv_to_ev_kwh','PV→EV'],['planned_pv_curtail_kwh','PV ogranicz.'],['forecast_load_kwh','Zuż. plan'],['actual_load_kwh','Zuż. wykon.'],['forecast_import_kwh','Import plan'],['actual_import_kwh','Import wykon.'],['forecast_export_kwh','Eksport plan'],['actual_export_kwh','Eksport wykon.'],['forecast_battery_charge_kwh','Ład. BAT plan'],['actual_battery_charge_kwh','Ład. BAT wykon.'],['forecast_battery_discharge_kwh','Rozł. BAT plan'],['actual_battery_discharge_kwh','Rozł. BAT wykon.'],['forecast_pv_export_kwh','PV eksport plan'],['actual_pv_export_kwh','PV eksport wykon.'],['actual_heat_pump_electric_kwh','HP pobrana'],['actual_heat_pump_thermal_kwh','HP użytkowa'],['actual_heat_pump_cop','HP COP'],['actual_dhw_generated_kwh','CWU wytw.'],['actual_heating_generated_kwh','CO wytw.'],['planned_net_pln','PLN plan'],['actual_net_pln','PLN wykon.'],['pv_production_start_time','PV start'],['pv_production_end_time','PV koniec'],['heating_production_start_time','CO start'],['heating_production_end_time','CO koniec'],['dhw_production_start_time','CWU start'],['dhw_production_end_time','CWU koniec'],['closed_at','Zamknięto'],['data_quality_reason','Powód jakości']],
 analytics:[['completed_at','Zakończono'],['status','Status'],['slots_scanned','Sloty'],['complete_slots','Kompletne'],['quality_score','Jakość %'],['pv1_wape_pct','PV1 WAPE'],['pv2_wape_pct','PV2 WAPE'],['pv_wape_pct','PV razem WAPE'],['load_wape_pct','Load WAPE'],['import_wape_pct','Import WAPE'],['export_wape_pct','Eksport WAPE'],['pv_bias_kwh','PV bias kWh'],['load_bias_kwh','Load bias kWh'],['import_bias_kwh','Import bias kWh'],['export_bias_kwh','Eksport bias kWh'],['soc_mae_pct','SOC MAE %'],['net_cost_variance_pln','Odchylenie PLN']],
 'ai-runs':[['completed_at','Zakończono'],['status','Status'],['role_name','Rola'],['source_ref','Analiza źródłowa'],['auto_score','Autoocena'],['decision','Decyzja'],['result_json','Sugestie i wynik']],
+todo:[['created_at','Utworzono'],['title','Rekomendacja'],['status','Status'],['severity','Ważność'],['consecutive_days','Dni z rzędu'],['occurrence_count','Wystąpienia'],['last_seen_day','Ostatnio'],['details','Szczegóły'],['_actions','Decyzja']],
 diagnostics:[['created_at','Utworzono'],['status','Status'],['alert_count','Alarmy'],['trigger_name','Wyzwalacz'],['summary','Podsumowanie']],
 processes:[['slot_start','Slot'],['process_name','Proces'],['decision','Decyzja'],['eligible','Zgoda'],['valid_until','Ważna do'],['connector_required','Konektor'],['reason','Przyczyna']],
 'process-execution':[['slot_start','Slot'],['process_name','Proces'],['planned_state','Plan'],['effective_state','Efektywnie'],['observed_state','Obserwacja'],['consistency','Zgodność'],['control_origin','Źródło sterowania'],['observed_energy_kwh','Energia kWh'],['recorded_at','Zapisano'],['reason','Przyczyna']],
 };
-const customizableViews=['plan','execution','hourly','daily','processes','process-execution','analytics','ai-runs','diagnostics'];
-const viewNames={plan:'Planer',execution:'Wykonanie',hourly:'Godzinowe',daily:'Dobowe',processes:'Procesy','process-execution':'Przebiegi',analytics:'Analityka','ai-runs':'AI Observer',diagnostics:'Diagnostyka'};
+const customizableViews=['plan','execution','hourly','daily','processes','process-execution','analytics','ai-runs','todo','diagnostics'];
+const viewNames={plan:'Planer',execution:'Wykonanie',hourly:'Godzinowe',daily:'Dobowe',processes:'Procesy','process-execution':'Przebiegi',analytics:'Analityka','ai-runs':'AI Observer',todo:'Sugestie / TODO',diagnostics:'Diagnostyka'};
 const defaultColumns=Object.fromEntries(customizableViews.map(v=>[v,layouts[v].map(c=>c[0])]));
 const booleanFields=new Set(['eligible','connector_required','learning_eligible','buy_window','sale_window','heat_pump_window','pv_to_cwu_planned','pv_to_ev_planned','pv_to_bat_planned','pv_export_planned','pv_curtail_planned','grid_buy_allowed','grid_no_buy','grid_neutral','sell_bat_allowed','no_sell_bat','sell_pv_allowed','no_sell_pv','actual_heat_pump_is_running']);
 function columnPrefs(){try{return JSON.parse(localStorage.getItem('ems-gpt-columns-v1')||'{}')}catch(e){return {}}}
@@ -2493,10 +2616,12 @@ function saveColumns(view,keys){const prefs=columnPrefs();prefs[view]=keys;local
 function renderColumnSettings(){const view=columnView.value;const selected=new Set(activeLayout(view).map(c=>c[0]));columnSettings.innerHTML=layouts[view].map(c=>`<label class='column-option'><input type='checkbox' data-column='${c[0]}' ${selected.has(c[0])?'checked':''}>${c[1]}</label>`).join('');columnSettings.querySelectorAll('input').forEach(i=>i.onchange=()=>{const keys=[...columnSettings.querySelectorAll('input:checked')].map(x=>x.dataset.column);if(!keys.length){i.checked=true;return}saveColumns(view,keys)})}
 function fmt(v,key){if(v===null||v===undefined)return '—';if(booleanFields.has(key)&&(v===0||v===1||v==='0'||v==='1'))return Number(v)?'TAK':'NIE';if(typeof v==='number')return v.toFixed(3);const text=String(v).replace(/^NEU\\s*RAL$/i,'NEUTRAL');return text.replace(/(\\d)T(?=\\d)/,'$1 ').slice(0,32)}
 function cellValue(row,key){if(key==='consistency'){if(!row.observed_state)return 'BRAK DANYCH';const plannedOn=row.planned_state==='ON';const observedOn=row.observed_state==='RUNNING';return plannedOn===observedOn?'ZGODNE':'ROZBIEŻNOŚĆ'}if(key==='control_origin'){return row.control_origin||(row.command_id?'AUTO':row.observed_state==='RUNNING'&&row.planned_state!=='ON'?'EXTERNAL_MANUAL':row.decision_source||'OBSERWACJA')}if(key==='data_quality_status'&&!row[key]&&row.day_date===new Date().toLocaleDateString('sv-SE'))return 'OPEN';return row[key]}
+function actionCell(row){if(['ARCHIVED','ACCEPTED','REJECTED','RESOLVED'].includes(row.status))return fmt(row.status,'status');return `<button onclick="reviewTodo('${row.todo_id}','ACCEPTED')">Akceptuj</button> <button class='danger' onclick="reviewTodo('${row.todo_id}','REJECTED')">Odrzuć</button> <button onclick="reviewTodo('${row.todo_id}','RESOLVED')">Rozwiązane</button>`}
+async function reviewTodo(todoId,decision){const note=prompt('Notatka operatora (opcjonalna)','')??'';const r=await fetch('api/todo/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({todo_id:todoId,decision,note})});const j=await r.json();if(!r.ok)alert(j.error||'Błąd');await loadView('todo')}
 const processNames=['BATTERY_IMPORT','BATTERY_EXPORT','PV_CWU','PV_EV','HP_HEAT_DHW'];
 async function loadProcessControls(){const r=await fetch('api/overrides?limit=30');const j=await r.json();const active={};j.rows.forEach(x=>{if(x.status==='ACTIVE')active[x.process_name]=x});processControls.innerHTML=`<div class='grid'>${processNames.map(p=>{const a=active[p];const hpBlocked=p==='HP_HEAT_DHW'&&a?.requested_state==='FORCE_OFF';const status=hpBlocked?'BLOKADA BEZTERMINOWA':a?a.requested_state+' do '+fmt(a.valid_until,'valid_until'):'AUTO';return `<div class='card'><b>${p}</b><div class='label ${hpBlocked?'no':''}'>${status}</div>${p==='HP_HEAT_DHW'?`<label class='label' for='hpManualHours'>Czas ręcznego włączenia [h]</label><input id='hpManualHours' type='number' min='2' max='24' step='.25' value='2'>`:''}<p><button class='apply' onclick="setOverride('${p}','FORCE_ON')">Włącz</button> <button class='${hpBlocked?'danger':''}' onclick="setOverride('${p}','FORCE_OFF')">Blokuj</button> <button onclick="setOverride('${p}','AUTO')">Auto</button></p></div>`}).join('')}</div><br>`}
 async function setOverride(process,state){let minutes=60;if(process==='HP_HEAT_DHW'&&state==='FORCE_ON'){const hours=Number(document.getElementById('hpManualHours')?.value||2);if(!Number.isFinite(hours)||hours<2||hours>24){alert('Czas HP musi wynosić od 2 do 24 godzin');return}minutes=Math.round(hours*60)}const r=await fetch('api/process/override',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({process,state,minutes,reason:'panel operatora'})});const j=await r.json();if(!r.ok)alert(j.error||'Błąd');await loadProcessControls()}
-async function loadView(view){document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));const config=view==='configuration';tablePanel.style.display=config?'none':'block';configPanel.style.display=config?'block':'none';if(config){await loadSettings();return}processControls.style.display=view==='processes'?'block':'none';if(view==='processes')await loadProcessControls();tableTitle.textContent=(viewNames[view]||view).toUpperCase();const r=await fetch('api/'+view+'?limit=96');const j=await r.json();const cols=activeLayout(view);thead.innerHTML='<tr>'+cols.map(c=>'<th>'+c[1]+'</th>').join('')+'</tr>';tbody.innerHTML=j.rows.map(row=>'<tr>'+cols.map(c=>'<td>'+fmt(cellValue(row,c[0]),c[0])+'</td>').join('')+'</tr>').join('')}
+async function loadView(view){document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));const config=view==='configuration';tablePanel.style.display=config?'none':'block';configPanel.style.display=config?'block':'none';if(config){await loadSettings();return}processControls.style.display=view==='processes'?'block':'none';if(view==='processes')await loadProcessControls();tableTitle.textContent=(viewNames[view]||view).toUpperCase();const r=await fetch('api/'+view+'?limit=96');const j=await r.json();const cols=activeLayout(view);thead.innerHTML='<tr>'+cols.map(c=>'<th>'+c[1]+'</th>').join('')+'</tr>';tbody.innerHTML=j.rows.map(row=>'<tr>'+cols.map(c=>'<td>'+(c[0]==='_actions'?actionCell(row):fmt(cellValue(row,c[0]),c[0]))+'</td>').join('')+'</tr>').join('')}
 async function loadSettings(){const r=await fetch('api/settings');const j=await r.json();const groups={};Object.entries(j.settings).forEach(([k,s])=>(groups[s.group]??=[]).push([k,s]));settings.innerHTML=Object.entries(groups).map(([group,items])=>`<section class='setting-section'><h3>${group}</h3><div class='settings'>${items.map(([k,s])=>`<div class='setting'><label>${s.label}</label><input data-key='${k}' type='number' min='${s.min}' max='${s.max}' step='0.01' value='${s.value}'></div>`).join('')}</div></section>`).join('');if(!columnView.options.length)columnView.innerHTML=customizableViews.map(v=>`<option value='${v}'>${viewNames[v]}</option>`).join('');renderColumnSettings()}
 columnView.onchange=renderColumnSettings;
 resetColumns.onclick=()=>{saveColumns(columnView.value,defaultColumns[columnView.value]);renderColumnSettings()};
@@ -2630,6 +2755,14 @@ class Handler(BaseHTTPRequestHandler):
         if path.endswith("/api/diagnostics/run") or path=="/api/diagnostics/run":
             try: return self.json(run_serialized("diagnostics", generate_diagnostic_report, "manual_api"))
             except Exception as exc: return self.json({"status":"ERROR","error":str(exc)},HTTPStatus.INTERNAL_SERVER_ERROR)
+        if path.endswith("/api/todo/review") or path=="/api/todo/review":
+            try:
+                length=min(65536,int(self.headers.get("Content-Length","0") or 0))
+                payload=json.loads(self.rfile.read(length) or b"{}")
+                actor=self.headers.get("X-Ingress-User") or "operator"
+                return self.json({"status":"OK", **review_todo(payload, actor)})
+            except (ValueError,TypeError,json.JSONDecodeError) as exc:
+                return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.BAD_REQUEST)
         return self.json({"error":"not_found"},HTTPStatus.NOT_FOUND)
 
     def log_message(self, fmt, *args):

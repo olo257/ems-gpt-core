@@ -18,7 +18,9 @@ Niezależny silnik EMS uruchamiany jako lokalna aplikacja Home Assistant.
 - PLANER: transakcyjny przebieg RCE → FORECAST → WINDOWS → SOC → PPD → VALIDATE.
 - PPD: polityki sieci, eksportu oraz dostępność PV→CWU i PV→EV.
 - ANALYTICS: agregaty godzinowe i dobowe oraz profil zużycia.
-- EXECUTOR: celowo nieaktywny do czasu wdrożenia konektora wykonawczego.
+- AI OBSERVER: analiza progowa w trybie `SHADOW_READ_ONLY`, potwierdzanie sugestii po 3 kolejnych dniach i audyt decyzji operatora.
+- DIAGNOSTICS: cykliczne kontrole danych, planera, wykonania i komend.
+- EXECUTOR: chronione sterowanie przez jawnie zaakceptowaną mapę skryptów Home Assistant.
 
 ## Dane
 
@@ -28,7 +30,8 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
 
 ## Bezpieczeństwo
 
-- aplikacja nie wywołuje usług urządzeń;
+- aplikacja wywołuje wyłącznie jawnie dopuszczone skrypty, gdy wykonawca ma potwierdzony tryb LIVE;
+- Observer nie wywołuje usług urządzeń i nie zapisuje planu ani PPD;
 - aktywny i zamknięte sloty nie są nadpisywane przez replan;
 - publikacja planu następuje atomowo dopiero po pełnej walidacji;
 - brak cen RCE nie jest zastępowany zerem ani stałą ceną;
@@ -37,7 +40,7 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
 ## Panel
 
 Panel Ingress zawiera status modułów oraz widoki Planer, Wykonanie,
-Godzinowe i Dobowe.
+Godzinowe, Dobowe, Analityka, AI Observer, Sugestie / TODO i Diagnostyka.
 
 ## Operacje
 
@@ -59,6 +62,7 @@ Nowe endpointy:
 - `POST /api/connector/ack`;
 - `GET /api/process-execution`;
 - `GET /api/todo`.
+- `POST /api/todo/review` z decyzją `ACCEPTED`, `REJECTED` albo `RESOLVED`.
 
 Bez potwierdzonego trybu znaku `sensor.inverter_battery_power` należy pozostawić
 Domyślnie `direct_battery_power_mode=discharge_positive`, zgodnie ze znakiem mocy Deye
