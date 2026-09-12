@@ -13,8 +13,18 @@ class OfflineContractTests(unittest.TestCase):
         ast.parse(SOURCE)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.25.18"', SOURCE)
-        self.assertIn('version: "0.25.18"', CONFIG)
+        self.assertIn('APP_VERSION = "0.25.19"', SOURCE)
+        self.assertIn('version: "0.25.19"', CONFIG)
+
+    def test_stability_scheduler_and_health_contract(self):
+        self.assertIn("HEAVY_JOB_LOCK = threading.RLock()", SOURCE)
+        self.assertIn('run_serialized("recovery_materializations"', SOURCE)
+        self.assertIn("recovery_rebuild_day != clock.date()", SOURCE)
+        self.assertNotIn('if start.minute == 8:', SOURCE)
+        self.assertIn("if minute < 15:", SOURCE)
+        self.assertIn("heartbeat_age < 180", SOURCE)
+        loop = SOURCE[SOURCE.index("def engine_loop()"):SOURCE.index("HTML =")]
+        self.assertEqual(loop.count("rebuild_recovery_materializations"), 1)
 
     def test_hp_manual_duration_and_external_priority(self):
         self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)
