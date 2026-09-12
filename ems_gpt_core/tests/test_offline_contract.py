@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.26.18"', APP_SOURCE)
-        self.assertIn('version: "0.26.18"', CONFIG)
+        self.assertIn('APP_VERSION = "0.26.19"', APP_SOURCE)
+        self.assertIn('version: "0.26.19"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -144,6 +144,10 @@ class OfflineContractTests(unittest.TestCase):
         for metric in ("pv_bias_kwh", "load_bias_kwh", "import_bias_kwh",
                        "export_bias_kwh", "soc_mae_pct", "net_cost_variance_pln"):
             self.assertIn(metric, SOURCE)
+        analytics = MODULE_SOURCES["analytics_service.py"]
+        self.assertIn("metric_rows = [row for row in rows if _is_core_quality_slot(row)]", analytics)
+        self.assertIn('_wape(metric_rows, "forecast_pv_total_kwh", "actual_pv_total_kwh")', analytics)
+        self.assertIn('for r in metric_rows)', analytics)
 
     def test_planner_uses_all_available_rce_slots(self):
         planner = SOURCE[SOURCE.index("def run_planner"):SOURCE.index("def _wape")]

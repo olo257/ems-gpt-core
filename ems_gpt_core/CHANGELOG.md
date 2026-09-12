@@ -1,3 +1,8 @@
+## 0.26.19
+- Ujednolicono zakres WAPE, bias, SOC MAE i odchylenia finansowego z oknem jakości EMS-GPT Core.
+- Obserwator nie miesza już bieżących wyników Core ze starszymi planami i wykonaniami V3.
+- Dane historyczne nadal służą do budowy profili zużycia i PV; liczba slotów metryk jest zapisywana w szczegółach przebiegu.
+
 ## 0.26.18
 - Doprecyzowano okno jakości analityki do slotów opublikowanych i wykonanych przez telemetrię EMS-GPT Core.
 - Jawne sloty `MISSING_OUTAGE` pozostają w oknie jakości, więc przerwy i awarie nadal obniżają wynik.
