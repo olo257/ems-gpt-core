@@ -7,7 +7,6 @@ import os
 import threading
 import time
 import uuid
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, parse_qs, urlencode
 from contextlib import contextmanager
@@ -24,6 +23,7 @@ from api_service import ApiAdapters, build_handler
 from analytics_service import run_analytics as run_analytics_service
 from diagnostics_service import generate_diagnostic_report as run_diagnostics_service
 from executor_service import ExecutorAdapters, build_executor
+from ha_gateway_service import HomeAssistantAdapters, build_home_assistant_gateway
 from ingestion_service import IngestionAdapters, build_ingestion
 from materialization_service import MaterializationAdapters, build_materializations
 from scheduler_service import SchedulerAdapters, run_scheduler
@@ -33,7 +33,7 @@ from todo_service import TodoService
 from telemetry_service import TelemetryAdapters, build_telemetry
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.9"
+APP_VERSION = "0.26.10"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -557,79 +557,14 @@ ensure_slot_calendar = _SLOT_CALENDAR.ensure_slot_calendar
 backfill_slot_relations = _SLOT_CALENDAR.backfill_slot_relations
 
 
-def ha_state(entity_id: str) -> dict | None:
-    if not SUPERVISOR_TOKEN:
-        return None
-    req = urllib.request.Request(f"{HA_API}/states/{entity_id}", headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"})
-    try:
-        with urllib.request.urlopen(req, timeout=5) as response:
-            return json.load(response)
-    except Exception:
-        return None
-
-
-def ha_service_response(domain: str, service: str, payload: dict, *, return_response: bool = False) -> dict | None:
-    if not SUPERVISOR_TOKEN:
-        return None
-    service_url = f"{HA_API}/services/{domain}/{service}"
-    if return_response:
-        service_url += "?return_response"
-    req = urllib.request.Request(
-        service_url,
-        data=json.dumps(payload).encode(), method="POST",
-        headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}", "Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            return json.load(response)
-    except Exception as exc:
-        LOG.warning("HA service response failed: %s.%s: %s", domain, service, exc)
-        return None
-
-
-def number(state: dict | None, attribute: str | None = None) -> float | None:
-    if not isinstance(state, dict):
-        return None
-    try:
-        value = state.get("attributes", {}).get(attribute) if attribute else state.get("state")
-        return float(value) if value not in (None, "unknown", "unavailable", "") else None
-    except (TypeError, ValueError):
-        return None
-
-
-def tou_program_snapshot() -> list[dict] | None:
-    """Read the six Deye TOU boundaries and SOC floors without writing them."""
-    programs = []
-    for index in range(1, 7):
-        time_state = ha_state(f"time.inverter_program_{index}_time")
-        soc_state = ha_state(f"number.inverter_program_{index}_soc")
-        raw_time = str((time_state or {}).get("state") or "")
-        try:
-            hour, minute = [int(value) for value in raw_time.split(":")[:2]]
-            if not (0 <= hour <= 23 and 0 <= minute <= 59):
-                raise ValueError
-        except (TypeError, ValueError):
-            return None
-        soc = number(soc_state)
-        if soc is None or not 0 <= soc <= 100:
-            return None
-        programs.append({"program": index, "minute": hour * 60 + minute, "soc": float(soc)})
-    programs.sort(key=lambda item: (item["minute"], item["program"]))
-    return programs
-
-
-def active_tou_program(moment: datetime, programs: list[dict] | None) -> dict | None:
-    """Resolve the Deye wall-clock TOU program for a local slot or live instant."""
-    if not programs:
-        return None
-    minute = moment.hour * 60 + moment.minute
-    active = programs[-1]
-    for program in programs:
-        if program["minute"] <= minute:
-            active = program
-        else:
-            break
-    return active
+_HA_GATEWAY = build_home_assistant_gateway(HomeAssistantAdapters(
+    supervisor_token=SUPERVISOR_TOKEN, ha_api=HA_API, log=LOG,
+))
+ha_state = _HA_GATEWAY.ha_state
+ha_service_response = _HA_GATEWAY.ha_service_response
+number = _HA_GATEWAY.number
+tou_program_snapshot = _HA_GATEWAY.tou_program_snapshot
+active_tou_program = _HA_GATEWAY.active_tou_program
 
 
 ENTITIES = {
