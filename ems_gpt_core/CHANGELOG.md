@@ -1,3 +1,8 @@
+## 0.26.17
+- Naprawiono zaniżoną ocenę jakości analityki: mianownik obejmuje teraz sloty z planem opublikowanym przez EMS-GPT Core.
+- Historyczne sloty importowane bez planu Core nadal uczestniczą w dostępnych metrykach, ale nie są błędnie traktowane jako braki Core.
+- Brak danych w opublikowanym slocie nadal obniża wynik; liczebność okna jakości jest zapisywana w szczegółach przebiegu.
+
 ## 0.26.16
 - Wydzielono wartości domyślne i ładowanie konfiguracji do modułu `config_service.py`.
 - Zachowano kolejność nadpisywania: wartości domyślne → opcje dodatku → ustawienia runtime.
