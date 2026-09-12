@@ -1,3 +1,9 @@
+## 0.26.6
+
+- Dodano kafelek RCE w panelu ze statusem, dniem docelowym, liczbą slotów i wynikiem planera.
+- Odtworzenie dziennego wyniku RCE po restarcie jest teraz widoczne także w logu dodatku.
+- Bez zmian w przebiegu RCE, cenach, planerze, PPD, wykonawcy i programach SOC 1–6.
+
 ## 0.26.5
 
 - Dodano jawny stan ostatniego przebiegu RCE do `/api/status`: wynik, dzień docelowy, liczba slotów i status planera.

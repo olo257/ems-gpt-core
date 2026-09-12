@@ -95,6 +95,9 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                         "expected": prior_result.get("expected"),
                         "completed_at": prior_rce.get("created_at"),
                     }
+                a.log.info("RCE state restored: status=ALREADY_COMPLETED rows=%s/%s target=%s",
+                           prior_result.get("rows"), prior_result.get("expected"),
+                           prior_result.get("day"))
             rce_due = 14 <= hour <= 16 and minute % 10 == 0
             if rce_due and not rce_done:
                 target = clock.date() + timedelta(days=1)
