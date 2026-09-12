@@ -25,6 +25,11 @@ def _mae(rows: list[dict], forecast_key: str, actual_key: str) -> float | None:
     return None if not pairs else round(sum(abs(forecast-actual) for forecast, actual in pairs)/len(pairs), 3)
 
 
+def _is_core_quality_slot(row: dict) -> bool:
+    """Exclude legacy imports that never had a plan published by EMS-GPT Core."""
+    return bool(row.get("plan_published"))
+
+
 def run_analytics(*, options, db, local_now, record_event) -> dict:
     """Persist slot quality, rolling WAPE and a reproducible analysis watermark."""
     run_id = str(uuid.uuid4())
@@ -39,6 +44,8 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
           ORDER BY s.slot_start DESC LIMIT 2880""", (cutoff,))
         rows = list(cur.fetchall())
         complete = 0
+        quality_slots = 0
+        quality_complete = 0
         for row in rows:
             forecast_ok = all(row.get(k) is not None for k in ("forecast_pv_total_kwh", "forecast_load_kwh"))
             actual_ok = all(row.get(k) is not None for k in ("actual_pv_total_kwh", "actual_load_kwh"))
@@ -53,6 +60,9 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
             if samples < minimum_samples: reasons.append("LOW_SAMPLE_COUNT")
             status = "COMPLETE" if not reasons else ("PARTIAL" if present >= 2 else "INVALID")
             complete += status == "COMPLETE"
+            if _is_core_quality_slot(row):
+                quality_slots += 1
+                quality_complete += status == "COMPLETE"
             cur.execute("""INSERT INTO ems_gpt_core_slot_quality
               (slot_start,sample_count,completeness_pct,forecast_complete,actual_complete,
                price_complete,pv_abs_error_kwh,load_abs_error_kwh,import_abs_error_kwh,
@@ -88,7 +98,7 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
         actual_net = sum((float(r.get("actual_sell_kwh") or 0)+float(r.get("actual_pv_export_kwh") or 0))*float(r.get("price_sell_pln_kwh") or 0)
                          - float(r.get("actual_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in rows)
         metrics["net_cost_variance_pln"] = round(actual_net-planned_net, 3)
-        score = round(100 * complete / len(rows), 2) if rows else 0.0
+        score = round(100 * quality_complete / quality_slots, 2) if quality_slots else 0.0
         profiles = {}
         pv_days = {}
         for row in rows:
@@ -141,9 +151,11 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
            metrics["import_wape_pct"], metrics["export_wape_pct"], score,
            metrics["pv_bias_kwh"], metrics["load_bias_kwh"], metrics["import_bias_kwh"],
            metrics["export_bias_kwh"], metrics["soc_mae_pct"], metrics["net_cost_variance_pln"],
-           json.dumps({"cutoff": str(cutoff), "metrics": metrics, "load_profiles": len(profiles), "pv_profiles": len(pv_profiles)}), run_id))
+           json.dumps({"cutoff": str(cutoff), "metrics": metrics, "quality_slots": quality_slots,
+                       "quality_complete": quality_complete, "load_profiles": len(profiles),
+                       "pv_profiles": len(pv_profiles)}), run_id))
     result = {"run_id": run_id, "slots": len(rows), "complete": complete, "quality_score": score,
+              "quality_slots": quality_slots, "quality_complete": quality_complete,
               "load_profiles": len(profiles), "pv_profiles": len(pv_profiles), **metrics}
     record_event("analytics_completed", "analytics", result)
     return result
-
