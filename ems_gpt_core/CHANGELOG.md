@@ -1,3 +1,12 @@
+## 0.25.20
+
+- Wszystkie komendy `READY_FOR_CONNECTOR`, `DISPATCHED` i `ACCEPTED` po przekroczeniu TTL są atomowo zamykane jako `EXPIRED`; diagnostyka nie raportuje już historycznych komend jako aktywnych.
+- Sugestie Observera mają trwały cykl życia. Pierwsze dwa kolejne dni mają status `WATCHING`, a dopiero trzeci kolejny dzień tego samego problemu podnosi wpis do `SUGGESTED`.
+- Znikające obserwacje są archiwizowane, a po północy archiwizowane są również rozpatrzone i nieaktualne wpisy.
+- Nieaktualne alarmy diagnostyczne są automatycznie oznaczane jako `RESOLVED` po pierwszym raporcie, w którym problem już nie występuje.
+- Dodano audytowalne decyzje operatora `ACCEPTED`, `REJECTED` i `RESOLVED` przez endpoint `/api/todo/review`.
+- Observer pozostaje `SHADOW_READ_ONLY`; nie zapisuje planu, PPD, komend ani usług Home Assistant. Programy SOC 1–6 pozostają chronione.
+
 ## 0.25.19
 
 - Ograniczono pełną odbudowę 7 dni z wykonywania co minutę do startu aplikacji i jednego przebiegu dziennie około 01:00.

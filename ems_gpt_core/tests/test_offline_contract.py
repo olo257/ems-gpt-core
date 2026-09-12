@@ -13,8 +13,8 @@ class OfflineContractTests(unittest.TestCase):
         ast.parse(SOURCE)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.25.19"', SOURCE)
-        self.assertIn('version: "0.25.19"', CONFIG)
+        self.assertIn('APP_VERSION = "0.25.20"', SOURCE)
+        self.assertIn('version: "0.25.20"', CONFIG)
 
     def test_stability_scheduler_and_health_contract(self):
         self.assertIn("HEAVY_JOB_LOCK = threading.RLock()", SOURCE)
@@ -62,6 +62,20 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("INSERT INTO ems_gpt_core_ai_runs", SOURCE)
         self.assertIn("run_ai_observer(analytics_result.get(\"run_id\"))", SOURCE)
 
+    def test_command_expiry_covers_dispatched_and_accepted(self):
+        self.assertIn("def expire_stale_commands", SOURCE)
+        self.assertIn("'READY_FOR_CONNECTOR','DISPATCHED','ACCEPTED'", SOURCE)
+        loop = SOURCE[SOURCE.index("def engine_loop()"):SOURCE.index("HTML =")]
+        self.assertIn("expire_stale_commands()", loop)
+
+    def test_observer_todo_lifecycle(self):
+        self.assertIn("require_consecutive_days=True", SOURCE)
+        self.assertIn("consecutive >= 3", SOURCE)
+        self.assertIn("def maintain_todo_archive", SOURCE)
+        self.assertIn("def reconcile_diagnostic_todos", SOURCE)
+        self.assertIn("def review_todo", SOURCE)
+        self.assertIn('path.endswith("/api/todo/review")', SOURCE)
+
     def test_v3_analytics_metrics_are_migrated(self):
         for metric in ("pv_bias_kwh", "load_bias_kwh", "import_bias_kwh",
                        "export_bias_kwh", "soc_mae_pct", "net_cost_variance_pln"):
@@ -75,7 +89,8 @@ class OfflineContractTests(unittest.TestCase):
     def test_migration_audit_closure(self):
         self.assertIn('\"ai_observer\": \"SHADOW_READ_ONLY\"', SOURCE)
         self.assertIn('battery_charge >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05))', SOURCE)
-        self.assertIn('local_day=%s AND module_name=%s', SOURCE)
+        self.assertIn("module_name=%s AND title=%s", SOURCE)
+        self.assertIn("status IN ('WATCHING','OPEN','SUGGESTED')", SOURCE)
         self.assertIn('(command_id,slot_start,slot_id,process_name', SOURCE)
 
     def test_allocator_is_materialized_in_hour_and_daily(self):
