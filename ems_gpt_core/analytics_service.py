@@ -83,23 +83,24 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
                abs(float(row.get("planned_buy_kwh") or 0)-float(row.get("actual_buy_kwh") or 0)),
                abs(float(row.get("planned_pv_export_kwh") or 0)-float(row.get("actual_pv_export_kwh") or 0)),
                status, json.dumps(reasons)))
+        metric_rows = [row for row in rows if _is_core_quality_slot(row)]
         metrics = {
-            "pv1_wape_pct": _wape(rows, "forecast_pv1_kwh", "actual_pv1_kwh"),
-            "pv2_wape_pct": _wape(rows, "forecast_pv2_kwh", "actual_pv2_kwh"),
-            "pv_wape_pct": _wape(rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
-            "load_wape_pct": _wape(rows, "forecast_load_kwh", "actual_load_kwh"),
-            "import_wape_pct": _wape(rows, "planned_buy_kwh", "actual_buy_kwh"),
-            "export_wape_pct": _wape(rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
-            "pv_bias_kwh": _bias(rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
-            "load_bias_kwh": _bias(rows, "forecast_load_kwh", "actual_load_kwh"),
-            "import_bias_kwh": _bias(rows, "planned_buy_kwh", "actual_buy_kwh"),
-            "export_bias_kwh": _bias(rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
-            "soc_mae_pct": _mae(rows, "soc_end_plan_pct", "soc_end_pct"),
+            "pv1_wape_pct": _wape(metric_rows, "forecast_pv1_kwh", "actual_pv1_kwh"),
+            "pv2_wape_pct": _wape(metric_rows, "forecast_pv2_kwh", "actual_pv2_kwh"),
+            "pv_wape_pct": _wape(metric_rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
+            "load_wape_pct": _wape(metric_rows, "forecast_load_kwh", "actual_load_kwh"),
+            "import_wape_pct": _wape(metric_rows, "planned_buy_kwh", "actual_buy_kwh"),
+            "export_wape_pct": _wape(metric_rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
+            "pv_bias_kwh": _bias(metric_rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
+            "load_bias_kwh": _bias(metric_rows, "forecast_load_kwh", "actual_load_kwh"),
+            "import_bias_kwh": _bias(metric_rows, "planned_buy_kwh", "actual_buy_kwh"),
+            "export_bias_kwh": _bias(metric_rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
+            "soc_mae_pct": _mae(metric_rows, "soc_end_plan_pct", "soc_end_pct"),
         }
         planned_net = sum(float(r.get("planned_sell_kwh") or 0)*float(r.get("price_sell_pln_kwh") or 0)
-                          - float(r.get("planned_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in rows)
+                          - float(r.get("planned_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in metric_rows)
         actual_net = sum((float(r.get("actual_sell_kwh") or 0)+float(r.get("actual_pv_export_kwh") or 0))*float(r.get("price_sell_pln_kwh") or 0)
-                         - float(r.get("actual_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in rows)
+                         - float(r.get("actual_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in metric_rows)
         metrics["net_cost_variance_pln"] = round(actual_net-planned_net, 3)
         score = round(100 * quality_complete / quality_slots, 2) if quality_slots else 0.0
         profiles = {}
@@ -154,7 +155,8 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
            metrics["import_wape_pct"], metrics["export_wape_pct"], score,
            metrics["pv_bias_kwh"], metrics["load_bias_kwh"], metrics["import_bias_kwh"],
            metrics["export_bias_kwh"], metrics["soc_mae_pct"], metrics["net_cost_variance_pln"],
-           json.dumps({"cutoff": str(cutoff), "metrics": metrics, "quality_slots": quality_slots,
+           json.dumps({"cutoff": str(cutoff), "metrics": metrics, "metric_slots": len(metric_rows),
+                       "quality_slots": quality_slots,
                        "quality_complete": quality_complete, "load_profiles": len(profiles),
                        "pv_profiles": len(pv_profiles)}), run_id))
     result = {"run_id": run_id, "slots": len(rows), "complete": complete, "quality_score": score,
