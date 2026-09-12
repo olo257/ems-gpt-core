@@ -1,8 +1,8 @@
 # EMS-GPT Core
 
-Prywatne repozytorium dodatku Home Assistant EMS-GPT Core.
+Repozytorium dodatku Home Assistant EMS-GPT Core.
 
-Aktualna wersja: **0.25.11**.
+Aktualna wersja: **0.27.0**.
 
 Dodaj adres repozytorium w sklepie dodatków Home Assistant:
 

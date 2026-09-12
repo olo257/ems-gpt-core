@@ -57,6 +57,24 @@ def generate_diagnostic_report(trigger_name: str = "scheduled", *, options, db, 
             {"enabled": bool(options.get('executor_enabled', False)), "dry_run": bool(options.get('executor_dry_run', True)),
              "activation_ack": options.get('executor_activation_ack') == 'EMS_CONNECTOR_ACCEPTED'},
             "disabled, dry-run, or explicitly accepted")
+        cur.execute("""SELECT run_id,completed_at,quality_score,metric_confidence_pct
+          FROM ems_gpt_core_analytics_runs WHERE status='COMPLETED'
+          ORDER BY completed_at DESC LIMIT 1""")
+        analytics = cur.fetchone()
+        analytics_age = (now-analytics["completed_at"]).total_seconds() if analytics and analytics.get("completed_at") else None
+        add("analytics_fresh", analytics_age is not None and analytics_age <= 5400,
+            None if analytics_age is None else round(analytics_age, 1), "<=5400s")
+        minimum_quality = float(options.get("observer_min_quality_score_pct", 80.0))
+        add("analytics_quality", analytics is not None and float(analytics.get("quality_score") or 0) >= minimum_quality,
+            None if not analytics else analytics.get("quality_score"), f">={minimum_quality}%")
+        if bool(options.get("ai_observer_enabled", False)) and analytics:
+            cur.execute("""SELECT source_ref,completed_at FROM ems_gpt_core_ai_runs
+              WHERE role_name='EMS_OBSERVER' AND status='COMPLETED'
+              ORDER BY completed_at DESC LIMIT 1""")
+            observer = cur.fetchone()
+            add("observer_tracks_latest_analytics",
+                observer is not None and observer.get("source_ref") == analytics.get("run_id"),
+                None if not observer else observer.get("source_ref"), analytics.get("run_id"))
         alerts = [c for c in checks if not c["ok"]]
         status = "OK" if not alerts else ("WARNING" if len(alerts) <= 2 else "ERROR")
         summary = "Wszystkie kontrole zakończone poprawnie" if not alerts else "; ".join(c["name"] for c in alerts)
@@ -69,4 +87,3 @@ def generate_diagnostic_report(trigger_name: str = "scheduled", *, options, db, 
                     json.dumps(alert, ensure_ascii=False, default=str), "WARNING", report_id)
     reconcile_diagnostic_todos([f"Diagnostyka: {alert['name']}" for alert in alerts])
     return result
-

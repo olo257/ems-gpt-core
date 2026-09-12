@@ -45,6 +45,7 @@ DEFAULT_OPTIONS = {
     "observer_soc_mae_warn_pct": 8.0,
     "observer_cost_variance_warn_pln": 10.0,
     "observer_min_quality_score_pct": 80.0,
+    "analytics_pv_daylight_threshold_kwh": 0.02,
     "recovery_lookback_days": 7.0,
     "db_host": "core-mariadb",
     "db_port": 3306,

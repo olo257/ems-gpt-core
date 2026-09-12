@@ -1,3 +1,13 @@
+## 0.27.0
+
+- Skomasowano kolejny etap analityki w jednym wydaniu: PV WAPE jest liczone wyłącznie dla aktywnych slotów produkcji, z jawną liczbą slotów PV.
+- Dla sporadycznych przepływów importu i eksportu dodano MAE aktywnych slotów oraz F1 wykrycia zdarzenia; historyczne WAPE pozostaje dla ciągłości porównań.
+- Dodano ocenę wiarygodności metryk narastającą do pełnego siedmiodniowego okna Core.
+- Analityka wylicza ograniczone rekomendowane mnożniki korekty PV1, PV2 i zużycia; wartości są obserwacyjne i nie zmieniają planu automatycznie.
+- Diagnostyka kontroluje świeżość i jakość analityki oraz zgodność najnowszego przebiegu Observera z analizą źródłową.
+- Panel Analityka pokazuje nowe metryki, a Observer otrzymuje je w trwałym, wyłącznie odczytowym wejściu.
+- Brak zmian w PPD, planerze, wykonawcy i programach SOC Deye 1–6; Observer pozostaje `SHADOW_READ_ONLY`.
+
 ## 0.26.21
 
 - Oddzielono bazowe zużycie domu od odbiorników planowanych osobno: EV oraz pompy ciepła/CWU.

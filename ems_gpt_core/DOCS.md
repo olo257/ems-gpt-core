@@ -58,6 +58,20 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
 Panel Ingress zawiera status modułów oraz widoki Planer, Wykonanie,
 Godzinowe, Dobowe, Analityka, AI Observer, Sugestie / TODO i Diagnostyka.
 
+### Metryki analityczne 0.27
+
+- `quality_score` mierzy kompletność slotów wykonanych przez EMS-GPT Core.
+- `metric_confidence_pct` łączy kompletność z długością zebranego okna; pełną
+  wiarygodność osiąga po siedmiu dobach danych Core.
+- PV WAPE jest liczone tylko w aktywnych slotach produkcji PV, wskazanych przez
+  `pv_daylight_slots`.
+- Load WAPE i Load bias dotyczą bazowego zużycia domu po odjęciu EV oraz energii
+  elektrycznej pompy ciepła/CWU, ponieważ te odbiorniki planer uwzględnia osobno.
+- Dla importu i eksportu miarodajne są przede wszystkim `active_mae_kwh` oraz
+  `event_f1_pct`; WAPE pozostaje wyłącznie dla ciągłości historycznej.
+- `suggested_*_scale` to obserwacyjne, ograniczone do zakresu 0,5–1,5 mnożniki.
+  Nie są automatycznie stosowane do planu, PPD ani sterowania.
+
 ## Operacje
 
 Zmiana kodu wymaga przebudowania lub restartu wyłącznie aplikacji EMS-GPT Core.

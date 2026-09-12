@@ -28,7 +28,11 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
                       "slots_scanned", "complete_slots", "quality_score", "pv1_wape_pct", "pv2_wape_pct",
                       "pv_wape_pct", "load_wape_pct", "import_wape_pct", "export_wape_pct",
                       "pv_bias_kwh", "load_bias_kwh", "import_bias_kwh", "export_bias_kwh",
-                      "soc_mae_pct", "net_cost_variance_pln")}}
+                      "soc_mae_pct", "net_cost_variance_pln", "pv_daylight_slots",
+                      "metric_confidence_pct", "import_active_mae_kwh", "export_active_mae_kwh",
+                      "import_event_f1_pct", "export_event_f1_pct")}}
+        prompt["analytics"].update({k: analytics.get(k) for k in (
+            "suggested_pv1_scale", "suggested_pv2_scale", "suggested_load_scale")})
         suggestions = []
         def flag(metric, value, threshold, message, severity="WARNING"):
             if value is not None and abs(float(value)) > threshold:
@@ -65,4 +69,3 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
                  {"run_id": run_id, "source_ref": source_ref, "decision": decision, "suggestions": len(suggestions)})
     return {"status": "COMPLETED", "run_id": run_id, "source_ref": source_ref,
             "decision": decision, "auto_score": auto_score, "suggestions": suggestions}
-
