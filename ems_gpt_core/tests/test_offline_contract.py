@@ -4,17 +4,36 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / "app.py").read_text(encoding="utf-8")
+APP_SOURCE = (ROOT / "app.py").read_text(encoding="utf-8")
+MODULE_SOURCES = {
+    path.name: path.read_text(encoding="utf-8")
+    for path in ROOT.glob("*_service.py")
+}
+WEBUI = (ROOT / "webui.html").read_text(encoding="utf-8")
+PYTHON_SOURCE = "\n".join([APP_SOURCE, *MODULE_SOURCES.values()])
+SOURCE = PYTHON_SOURCE + "\n" + WEBUI
 CONFIG = (ROOT / "config.yaml").read_text(encoding="utf-8")
 
 
 class OfflineContractTests(unittest.TestCase):
     def test_python_parses(self):
-        ast.parse(SOURCE)
+        ast.parse(APP_SOURCE)
+        for name, source in MODULE_SOURCES.items():
+            with self.subTest(module=name):
+                ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.25.20"', SOURCE)
-        self.assertIn('version: "0.25.20"', CONFIG)
+        self.assertIn('APP_VERSION = "0.26.0"', APP_SOURCE)
+        self.assertIn('version: "0.26.0"', CONFIG)
+
+    def test_modular_runtime_boundaries(self):
+        self.assertIn("from observer_service import", APP_SOURCE)
+        self.assertIn("from diagnostics_service import", APP_SOURCE)
+        self.assertIn("from todo_service import", APP_SOURCE)
+        self.assertIn('with_name("webui.html")', APP_SOURCE)
+        self.assertNotIn("<!doctype html>", APP_SOURCE)
+        self.assertIn("<!doctype html>", WEBUI)
+        self.assertIn("SHADOW_READ_ONLY", MODULE_SOURCES["observer_service.py"])
 
     def test_stability_scheduler_and_health_contract(self):
         self.assertIn("HEAVY_JOB_LOCK = threading.RLock()", SOURCE)

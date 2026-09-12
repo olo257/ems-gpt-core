@@ -1,3 +1,11 @@
+## 0.26.0
+
+- Rozpoczęto modularizację rdzenia: panel WWW przeniesiono do osobnego zasobu, a Observer, diagnostykę i cykl życia TODO do niezależnych usług.
+- `app.py` pozostaje koordynatorem zgodności dla harmonogramu i API; publiczne endpointy oraz wywołania nie zmieniły nazw.
+- Usługi otrzymują jawne adaptery bazy, zegara i audytu, co ogranicza sprzężenie z serwerem HTTP i ułatwia osobne testowanie.
+- Obraz dodatku kopiuje wszystkie moduły Pythona i plik panelu.
+- Bez zmian w PPD, planerze, programach SOC 1–6 i wykonawcy. Observer nadal działa wyłącznie jako `SHADOW_READ_ONLY`.
+
 ## 0.25.20
 
 - Wszystkie komendy `READY_FOR_CONNECTOR`, `DISPATCHED` i `ACCEPTED` po przekroczeniu TTL są atomowo zamykane jako `EXPIRED`; diagnostyka nie raportuje już historycznych komend jako aktywnych.
