@@ -1,3 +1,10 @@
+## 0.26.13
+
+- Wydzielono bootstrap starszych tabel i odtwarzanie przerwanych przebiegów do `recovery_service.py`.
+- Zachowano idempotentne oznaczanie starych przebiegów jako `ABORTED_RECOVERED` oraz audyt diagnostyczny.
+- Migracja ze źródłowej bazy pozostaje domyślnie wyłączona i korzysta z walidowanych nazw SQL.
+- Bez zmian w planerze, PPD, wykonawcy, obserwatorze i programach SOC 1–6.
+
 ## 0.26.12
 
 - Wydzielono połączenie z MariaDB i walidację identyfikatorów SQL do `database_service.py`.
