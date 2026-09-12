@@ -29,11 +29,12 @@ from materialization_service import MaterializationAdapters, build_materializati
 from scheduler_service import SchedulerAdapters, run_scheduler
 from slot_calendar_service import SlotCalendarAdapters, build_slot_calendar
 from observer_service import run_ai_observer as run_observer_service
+from runtime_service import build_runtime
 from todo_service import TodoService
 from telemetry_service import TelemetryAdapters, build_telemetry
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.10"
+APP_VERSION = "0.26.11"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -154,36 +155,10 @@ OPERATIONAL_SETTINGS = {
     "observer_min_quality_score_pct": (0.0, 100.0, "Observer: minimalna jakość [%]", "AI Observer"),
 }
 TZ = ZoneInfo(OPTIONS["timezone"])
-LOCK = threading.Lock()
-HEAVY_JOB_LOCK = threading.RLock()
-
-
-def run_serialized(job_name: str, func, *args, **kwargs):
-    """Serialize heavy database jobs across engine and HTTP worker threads."""
-    started = time.monotonic()
-    with HEAVY_JOB_LOCK:
-        waited = round(time.monotonic() - started, 3)
-        if waited >= 1.0:
-            LOG.warning("heavy job %s waited %.3fs for lock", job_name, waited)
-        return func(*args, **kwargs)
-
-
-STATE = {
-    "app": APP_NAME,
-    "version": APP_VERSION,
-    "status": "STARTING",
-    "started_at": datetime.now(timezone.utc).isoformat(),
-    "database": "CONNECTING",
-    "ha_input": "CONNECTING",
-    "executor": "CONNECTOR_REQUIRED",
-    "active_slot": None,
-    "last_heartbeat": None,
-    "last_error": None,
-    "rce": {"status": "NOT_RUN"},
-    "migrated_tables": 0,
-    "modules": {"core": "STARTING", "planner": "STARTING", "ppd": "STARTING", "analytics": "STARTING", "ai_observer": "SHADOW_READ_ONLY", "executor": "CONNECTOR_REQUIRED"},
-    "recovery_contract": "CORE_RECOVERY_0_24_2_R6",
-}
+_RUNTIME = build_runtime(APP_NAME, APP_VERSION, LOG)
+LOCK = _RUNTIME.lock
+STATE = _RUNTIME.state
+run_serialized = _RUNTIME.run_serialized
 
 
 @contextmanager
