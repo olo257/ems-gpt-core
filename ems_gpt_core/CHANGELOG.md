@@ -1,3 +1,9 @@
+## 0.26.14
+
+- Spolszczono techniczne statusy w panelu: `CONNECTED` jest prezentowane jako `POŁĄCZONY`, a `LIVE` jako `PRODUKCJA`.
+- Zmieniono etykietę i potwierdzenie przycisku wykonawcy na tryb `PRODUKCJA`.
+- Wartości kontraktu API pozostają bez zmian dla zgodności wykonawcy i diagnostyki.
+
 ## 0.26.13
 
 - Wydzielono bootstrap starszych tabel i odtwarzanie przerwanych przebiegów do `recovery_service.py`.

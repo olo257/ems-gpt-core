@@ -32,7 +32,7 @@ from todo_service import TodoService
 from telemetry_service import TelemetryAdapters, build_telemetry
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.13"
+APP_VERSION = "0.26.14"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"

@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.26.13"', APP_SOURCE)
-        self.assertIn('version: "0.26.13"', CONFIG)
+        self.assertIn('APP_VERSION = "0.26.14"', APP_SOURCE)
+        self.assertIn('version: "0.26.14"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -104,6 +104,12 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("id='status'", SOURCE)
         self.assertIn("uruchomiono:", SOURCE)
         self.assertNotIn("Wersja: … · heartbeat: …", SOURCE)
+
+    def test_panel_translates_technical_connection_and_executor_states(self):
+        self.assertIn("CONNECTED:'POŁĄCZONY'", WEBUI)
+        self.assertIn("LIVE:'PRODUKCJA'", WEBUI)
+        self.assertIn("db.textContent=displayStatus(s.database)", WEBUI)
+        self.assertIn("executor.textContent=displayStatus(s.executor)", WEBUI)
 
     def test_hourly_source_version_tracks_runtime(self):
         self.assertNotIn("'CORE_0_22_1',%s,%s,%s) ON DUPLICATE KEY UPDATE", SOURCE)
