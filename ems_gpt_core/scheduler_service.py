@@ -1,0 +1,130 @@
+"""Minute scheduler for EMS-GPT Core."""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable
+
+
+@dataclass(frozen=True)
+class SchedulerAdapters:
+    options: dict
+    state: dict
+    lock: Any
+    log: Any
+    db: Callable
+    local_now: Callable
+    slot_start: Callable
+    capture_telemetry: Callable
+    close_finished_slots: Callable
+    backfill_execution_details: Callable
+    run_serialized: Callable
+    rebuild_recovery_materializations: Callable
+    learn_missing_load: Callable
+    expire_process_overrides: Callable
+    expire_stale_commands: Callable
+    maintain_todo_archive: Callable
+    ensure_slot_calendar: Callable
+    refresh_pv_forecast: Callable
+    refresh_weather_forecast: Callable
+    record_event: Callable
+    refresh_rce: Callable
+    complete_rce_cycle: Callable
+    run_planner: Callable
+    stage_executor_commands: Callable
+    dispatch_ready_commands: Callable
+    run_analytics: Callable
+    run_ai_observer: Callable
+    generate_diagnostic_report: Callable
+
+
+def run_scheduler(a: SchedulerAdapters) -> None:
+    """Run scheduling only; all domain operations arrive through explicit adapters."""
+    previous = None
+    recovery_rebuild_day = None
+    todo_archive_day = None
+    while True:
+        clock = a.local_now()
+        start = a.slot_start(clock)
+        key = start.isoformat()
+        error = None
+        try:
+            telemetry_ok = a.capture_telemetry()
+            a.close_finished_slots()
+            a.backfill_execution_details()
+            if recovery_rebuild_day is None or (clock.hour == 1 and recovery_rebuild_day != clock.date()):
+                a.run_serialized("recovery_materializations", a.rebuild_recovery_materializations,
+                                 int(a.options.get("recovery_lookback_days", 7)))
+                recovery_rebuild_day = clock.date()
+            a.learn_missing_load()
+            a.expire_process_overrides()
+            a.expire_stale_commands()
+            if clock.hour == 0 and todo_archive_day != clock.date():
+                a.maintain_todo_archive()
+                todo_archive_day = clock.date()
+            if key != previous:
+                a.ensure_slot_calendar(clock.date(), clock.date() + timedelta(days=1))
+                a.refresh_pv_forecast()
+                a.refresh_weather_forecast()
+                a.record_event("slot_opened", "core",
+                               {"slot_start": key, "recovered_after_restart": previous is None})
+                previous = key
+            minute = clock.minute
+            hour = clock.hour
+            blackout = hour in (0, 14)
+            with a.db() as conn, conn.cursor() as cur:
+                cur.execute("SELECT MAX(published_at) last_run FROM ems_gpt_plan_runs WHERE status='PUBLISHED'")
+                last_run = cur.fetchone()["last_run"]
+                rce_key = f"RCE_{clock.date()}_{'NEXT' if hour >= 14 else 'TODAY'}"
+                cur.execute("SELECT COUNT(*) n FROM ems_gpt_core_events WHERE event_type=%s", (rce_key,))
+                rce_done = int(cur.fetchone()["n"] or 0) > 0
+            rce_due = 14 <= hour <= 16 and minute % 10 == 0
+            if rce_due and not rce_done:
+                target = clock.date() + timedelta(days=1)
+                result = a.refresh_rce(target)
+                a.record_event("rce_import_attempt", "core", result,
+                               "INFO" if result["status"] == "OK" else "WARNING")
+                if result["status"] == "OK":
+                    a.record_event(rce_key, "core", result)
+                    a.complete_rce_cycle(result, "rce_import")
+            due = minute in (7, 22, 37, 52) and not blackout and (
+                last_run is None or a.local_now().replace(tzinfo=None) - last_run >= timedelta(minutes=55)
+            )
+            if due:
+                a.run_serialized("planner", a.run_planner, "hourly_replan")
+            a.stage_executor_commands()
+            a.dispatch_ready_commands()
+            if minute < 15:
+                with a.db() as conn, conn.cursor() as cur:
+                    cur.execute("SELECT MAX(completed_at) v FROM ems_gpt_core_analytics_runs WHERE status='COMPLETED'")
+                    last_analytics = cur.fetchone()["v"]
+                if last_analytics is None or a.local_now().replace(tzinfo=None) - last_analytics >= timedelta(minutes=50):
+                    analytics_result = a.run_serialized("analytics", a.run_analytics)
+                    a.run_ai_observer(analytics_result.get("run_id"))
+            if (hour, minute) in ((2, 8), (8, 8), (14, 23), (20, 8)):
+                with a.db() as conn, conn.cursor() as cur:
+                    cur.execute("SELECT MAX(created_at) v FROM ems_gpt_core_diagnostic_reports")
+                    last_diag = cur.fetchone()["v"]
+                if last_diag is None or a.local_now().replace(tzinfo=None) - last_diag >= timedelta(minutes=10):
+                    a.run_serialized("diagnostics", a.generate_diagnostic_report, "scheduled")
+            with a.lock:
+                a.state["database"] = "CONNECTED"
+                a.state["ha_input"] = "CONNECTED" if telemetry_ok else "PARTIAL"
+                a.state["status"] = "RUNNING"
+                a.state["modules"].update(
+                    core="RUNNING", planner="RUNNING", ppd="RUNNING", analytics="RUNNING",
+                    diagnostics="RUNNING",
+                    ai_observer="DISABLED" if not a.options.get("ai_observer_enabled") else "SHADOW_READ_ONLY",
+                )
+        except Exception as exc:
+            error = str(exc)
+            a.log.exception("engine cycle failed")
+            with a.lock:
+                a.state["database"] = "ERROR"
+                a.state["status"] = "DEGRADED"
+        with a.lock:
+            a.state["active_slot"] = key
+            a.state["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
+            a.state["last_error"] = error
+        time.sleep(60)
