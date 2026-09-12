@@ -6,10 +6,26 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from analytics_service import _is_core_quality_slot
+from analytics_service import _is_core_quality_slot, _native_load_kwh
 
 
 class AnalyticsQualityWindowTests(unittest.TestCase):
+    def test_native_load_excludes_separately_planned_consumers(self):
+        row = {
+            "actual_load_kwh": 1.25,
+            "detail_actual_ev_kwh": 0.50,
+            "actual_heat_pump_electric_kwh": 0.25,
+        }
+        self.assertEqual(_native_load_kwh(row), 0.5)
+
+    def test_native_load_never_becomes_negative(self):
+        self.assertEqual(_native_load_kwh({
+            "actual_load_kwh": 0.2,
+            "detail_actual_ev_kwh": 0.4,
+            "actual_heat_pump_electric_kwh": 0.1,
+        }), 0.0)
+        self.assertIsNone(_native_load_kwh({"actual_load_kwh": None}))
+
     def test_core_telemetry_slot_is_in_quality_window(self):
         self.assertTrue(_is_core_quality_slot({
             "plan_published": 1,
