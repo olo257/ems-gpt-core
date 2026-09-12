@@ -1,3 +1,8 @@
+## 0.26.18
+- Doprecyzowano okno jakości analityki do slotów opublikowanych i wykonanych przez telemetrię EMS-GPT Core.
+- Jawne sloty `MISSING_OUTAGE` pozostają w oknie jakości, więc przerwy i awarie nadal obniżają wynik.
+- Wykluczono starsze opublikowane rekordy V3 bez wykonania Core, które w 0.26.17 nadal zaniżały ocenę.
+
 ## 0.26.17
 - Naprawiono zaniżoną ocenę jakości analityki: mianownik obejmuje teraz sloty z planem opublikowanym przez EMS-GPT Core.
 - Historyczne sloty importowane bez planu Core nadal uczestniczą w dostępnych metrykach, ale nie są błędnie traktowane jako braki Core.
