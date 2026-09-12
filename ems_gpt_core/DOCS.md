@@ -12,6 +12,17 @@ danych w MariaDB ani algorytmu planowania.
 
 Niezależny silnik EMS uruchamiany jako lokalna aplikacja Home Assistant.
 
+## Architektura 0.26
+
+- `app.py` — koordynator procesu, harmonogramu i zgodności API;
+- `observer_service.py` — analiza Observera w trybie `SHADOW_READ_ONLY`;
+- `diagnostics_service.py` — kontrole diagnostyczne bez zapisu do urządzeń;
+- `todo_service.py` — trwały cykl życia sugestii i decyzji operatora;
+- `webui.html` — panel Ingress niezależny od kodu serwera.
+
+Usługi otrzymują zależności przez jawne adaptery. Nie importują globalnego stanu
+aplikacji i nie mają samodzielnego dostępu do Home Assistant.
+
 ## Odpowiedzialność
 
 - CORE: zegar 15-minutowy, telemetria, wznowienie i zamykanie slotów.

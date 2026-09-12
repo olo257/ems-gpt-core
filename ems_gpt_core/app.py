@@ -20,8 +20,12 @@ from zoneinfo import ZoneInfo
 import pymysql
 from pymysql.cursors import DictCursor
 
+from diagnostics_service import generate_diagnostic_report as run_diagnostics_service
+from observer_service import run_ai_observer as run_observer_service
+from todo_service import TodoService
+
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.25.20"
+APP_VERSION = "0.26.0"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -1516,231 +1520,43 @@ def run_analytics() -> dict:
 
 
 def run_ai_observer(source_ref: str | None = None) -> dict:
-    """Read-only shadow observer: persist evidence and suggestions, never mutate plan or controls."""
-    if not bool(OPTIONS.get("ai_observer_enabled", False)):
-        return {"status": "DISABLED"}
-    with db() as conn, conn.cursor() as cur:
-        if source_ref:
-            cur.execute("SELECT * FROM ems_gpt_core_analytics_runs WHERE run_id=%s AND status='COMPLETED'", (source_ref,))
-        else:
-            cur.execute("SELECT * FROM ems_gpt_core_analytics_runs WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 1")
-        analytics = cur.fetchone()
-        if not analytics:
-            return {"status": "WAITING_FOR_ANALYTICS"}
-        source_ref = analytics["run_id"]
-        cur.execute("SELECT * FROM ems_gpt_core_ai_runs WHERE role_name='EMS_OBSERVER' AND source_ref=%s", (source_ref,))
-        existing = cur.fetchone()
-        if existing:
-            return {"status": existing["status"], "run_id": existing["run_id"], "source_ref": source_ref, "deduplicated": True}
-        prompt = {"contract": "EMS_AI_OBSERVER_0_25_0", "mode": "SHADOW_READ_ONLY",
-                  "forbidden": ["PLAN_WRITE", "PPD_WRITE", "COMMAND_WRITE", "HA_SERVICE_CALL"],
-                  "analytics": {k: analytics.get(k) for k in (
-                      "slots_scanned", "complete_slots", "quality_score", "pv1_wape_pct", "pv2_wape_pct",
-                      "pv_wape_pct", "load_wape_pct", "import_wape_pct", "export_wape_pct",
-                      "pv_bias_kwh", "load_bias_kwh", "import_bias_kwh", "export_bias_kwh",
-                      "soc_mae_pct", "net_cost_variance_pln")}}
-        suggestions = []
-        def flag(metric, value, threshold, message, severity="WARNING"):
-            if value is not None and abs(float(value)) > threshold:
-                suggestions.append({"metric": metric, "value": float(value), "threshold": threshold,
-                                    "severity": severity, "suggestion": message})
-        flag("pv_wape_pct", analytics.get("pv_wape_pct"), float(OPTIONS.get("observer_pv_wape_warn_pct", 30.0)), "Sprawdź profil rozdziału prognozy PV i różnice PV1/PV2.")
-        flag("load_wape_pct", analytics.get("load_wape_pct"), float(OPTIONS.get("observer_load_wape_warn_pct", 35.0)), "Zwiększ liczbę próbek profilu zużycia przed zmianą planera.")
-        flag("soc_mae_pct", analytics.get("soc_mae_pct"), float(OPTIONS.get("observer_soc_mae_warn_pct", 8.0)), "Zweryfikuj sprawności baterii oraz znak i źródło mocy baterii.")
-        flag("net_cost_variance_pln", analytics.get("net_cost_variance_pln"), float(OPTIONS.get("observer_cost_variance_warn_pln", 10.0)), "Przeanalizuj koszt planowany względem wykonania bez automatycznej korekty PPD.")
-        quality_threshold = float(OPTIONS.get("observer_min_quality_score_pct", 80.0))
-        if float(analytics.get("quality_score") or 0) < quality_threshold:
-            suggestions.append({"metric": "quality_score", "value": float(analytics.get("quality_score") or 0),
-                                "threshold": quality_threshold, "severity": "WARNING",
-                                "suggestion": "Nie używaj tego przebiegu do uczenia; popraw kompletność telemetrii."})
-        decision = "WATCH" if suggestions else "ACCEPT"
-        auto_score = max(0.0, min(100.0, float(analytics.get("quality_score") or 0)))
-        result = {"contract": "EMS_AI_OBSERVER_0_25_0", "mode": "SHADOW_READ_ONLY",
-                  "decision": decision, "auto_score": auto_score, "suggestions": suggestions,
-                  "external_model_called": False}
-        run_id = str(uuid.uuid4())
-        cur.execute("""INSERT INTO ems_gpt_core_ai_runs
-          (run_id,role_name,source_ref,started_at,completed_at,status,prompt_json,result_json,auto_score,decision)
-          VALUES(%s,'EMS_OBSERVER',%s,NOW(6),NOW(6),'COMPLETED',%s,%s,%s,%s)""",
-          (run_id, source_ref, json.dumps(prompt, ensure_ascii=False, default=str),
-           json.dumps(result, ensure_ascii=False, default=str), str(round(auto_score, 2)), decision))
-    active_titles = []
-    for item in suggestions:
-        title = f"Obserwator: {item['metric']}"
-        active_titles.append(title)
-        create_todo("ai_observer", title, json.dumps(item, ensure_ascii=False),
-                    item["severity"], run_id, require_consecutive_days=True)
-    reconcile_observer_todos(active_titles)
-    record_event("ai_observer_completed", "ai_observer",
-                 {"run_id": run_id, "source_ref": source_ref, "decision": decision, "suggestions": len(suggestions)})
-    return {"status": "COMPLETED", "run_id": run_id, "source_ref": source_ref,
-            "decision": decision, "auto_score": auto_score, "suggestions": suggestions}
+    return run_observer_service(
+        source_ref, options=OPTIONS, db=db, create_todo=create_todo,
+        reconcile_observer_todos=reconcile_observer_todos, record_event=record_event,
+    )
 
 
 def generate_diagnostic_report(trigger_name: str = "scheduled") -> dict:
-    """Check freshness, completeness, stuck runs and module/database health without device writes."""
-    report_id = str(uuid.uuid4())
-    now = local_now().replace(tzinfo=None)
-    checks = []
-    def add(name, ok, value, expected):
-        checks.append({"name": name, "ok": bool(ok), "value": value, "expected": expected})
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT MAX(captured_at) v FROM ems_gpt_telemetry_snapshots")
-        telemetry_at = cur.fetchone()["v"]
-        age = (now-telemetry_at).total_seconds() if telemetry_at else None
-        add("telemetry_fresh", age is not None and age <= 90, age, "<=90s")
-        cutoff = slot_start().replace(tzinfo=None) + timedelta(minutes=15)
-        horizon_end = datetime.combine(now.date() + timedelta(days=2 if now.hour >= 14 else 1), datetime.min.time())
-        cur.execute("""SELECT COUNT(*) n, SUM(price_source='PSE_API' AND price_buy_pln_kwh IS NOT NULL
-          AND price_sell_pln_kwh IS NOT NULL) prices FROM ems_gpt_slots
-          WHERE slot_start>=%s AND slot_start<%s AND actual_recorded_at IS NULL""", (cutoff,horizon_end))
-        horizon = cur.fetchone()
-        expected_horizon = sum(1 for day_offset in range(2 if now.hour >= 14 else 1)
-                               for item in canonical_slots_for_day(now.date()+timedelta(days=day_offset))
-                               if cutoff <= item["slot_start_local"] < horizon_end)
-        add("planner_horizon", int(horizon["n"] or 0) >= expected_horizon, int(horizon["n"] or 0), f">={expected_horizon}")
-        add("pse_prices", int(horizon["prices"] or 0) >= expected_horizon, int(horizon["prices"] or 0), f">={expected_horizon}")
-        cur.execute("SELECT COUNT(*) n FROM ems_gpt_plan_runs WHERE status='RUNNING' AND updated_at<%s", (now-timedelta(minutes=10),))
-        add("no_stuck_plan_runs", int(cur.fetchone()["n"] or 0) == 0, "checked", 0)
-        cur.execute("SELECT COUNT(*) n FROM ems_gpt_slots WHERE actual_recorded_at IS NOT NULL AND slot_start>=%s", (now-timedelta(hours=24),))
-        actual_count = int(cur.fetchone()["n"] or 0)
-        add("execution_24h", actual_count >= 92, actual_count, ">=92")
-        cur.execute("""SELECT AVG(coverage_pct) avg_coverage,
-          SUM(coverage_pct<80) low_coverage FROM ems_gpt_core_execution_details
-          WHERE slot_start>=%s""", (now-timedelta(hours=24),))
-        coverage = cur.fetchone()
-        average_coverage = float(coverage["avg_coverage"] or 0)
-        add("telemetry_coverage_24h", average_coverage >= 90, round(average_coverage, 2), ">=90%")
-        add("low_coverage_slots_24h", int(coverage["low_coverage"] or 0) <= 4,
-            int(coverage["low_coverage"] or 0), "<=4")
-        cur.execute("SELECT COUNT(*) n FROM ems_gpt_slots GROUP BY slot_start HAVING COUNT(*)>1")
-        add("no_duplicate_slots", cur.fetchone() is None, "checked", 0)
-        cur.execute("SELECT COUNT(*) n FROM ems_gpt_core_commands WHERE status IN ('READY_FOR_CONNECTOR','DISPATCHED','ACCEPTED') AND expires_at<=NOW(6)")
-        expired_commands = int(cur.fetchone()["n"] or 0)
-        add("no_expired_active_commands", expired_commands == 0, expired_commands, 0)
-        cur.execute("""SELECT process_name,COUNT(*) n FROM ems_gpt_core_process_overrides
-          WHERE status='ACTIVE' AND valid_from<=NOW(6) AND valid_until>NOW(6)
-          GROUP BY process_name HAVING COUNT(*)>1""")
-        add("single_active_override_per_process", cur.fetchone() is None, "checked", 1)
-        executor_guard = (not bool(OPTIONS.get('executor_enabled', False))) or bool(OPTIONS.get('executor_dry_run', True)) or \
-            OPTIONS.get('executor_activation_ack') == 'EMS_CONNECTOR_ACCEPTED'
-        add("executor_guard", executor_guard,
-            {"enabled": bool(OPTIONS.get('executor_enabled', False)), "dry_run": bool(OPTIONS.get('executor_dry_run', True)),
-             "activation_ack": OPTIONS.get('executor_activation_ack') == 'EMS_CONNECTOR_ACCEPTED'},
-            "disabled, dry-run, or explicitly accepted")
-        alerts = [c for c in checks if not c["ok"]]
-        status = "OK" if not alerts else ("WARNING" if len(alerts) <= 2 else "ERROR")
-        summary = "Wszystkie kontrole zakończone poprawnie" if not alerts else "; ".join(c["name"] for c in alerts)
-        cur.execute("INSERT INTO ems_gpt_core_diagnostic_reports VALUES(%s,NOW(6),%s,%s,%s,%s,%s)",
-                    (report_id, trigger_name, status, len(alerts), summary[:500], json.dumps(checks, ensure_ascii=False, default=str)))
-    result = {"report_id": report_id, "status": status, "alert_count": len(alerts), "summary": summary, "checks": checks}
-    record_event("diagnostic_report", "diagnostics", result, "INFO" if not alerts else "WARNING")
-    for alert in alerts:
-        create_todo("diagnostics", f"Diagnostyka: {alert['name']}",
-                    json.dumps(alert, ensure_ascii=False, default=str), "WARNING", report_id)
-    reconcile_diagnostic_todos([f"Diagnostyka: {alert['name']}" for alert in alerts])
-    return result
+    return run_diagnostics_service(
+        trigger_name, options=OPTIONS, db=db, local_now=local_now, slot_start=slot_start,
+        canonical_slots_for_day=canonical_slots_for_day, create_todo=create_todo,
+        reconcile_diagnostic_todos=reconcile_diagnostic_todos, record_event=record_event,
+    )
+
+
+def _todo_service() -> TodoService:
+    return TodoService(db=db, local_now=local_now, record_event=record_event)
 
 
 def create_todo(module: str, title: str, details: str, severity: str = "INFO",
                 source_ref: str | None = None, require_consecutive_days: bool = False) -> str:
-    """Create or refresh one durable issue; Observer promotes it after three consecutive days."""
-    todo_id = str(uuid.uuid4())
-    today = local_now().date()
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT * FROM ems_gpt_core_todo WHERE module_name=%s AND title=%s
-          AND status IN ('WATCHING','OPEN','SUGGESTED') ORDER BY created_at DESC LIMIT 1 FOR UPDATE""",
-                    (module[:32], title[:300]))
-        existing = cur.fetchone()
-        if existing:
-            last_seen = existing.get("last_seen_day") or existing.get("local_day")
-            consecutive = int(existing.get("consecutive_days") or 1)
-            if last_seen != today:
-                consecutive = consecutive + 1 if last_seen == today - timedelta(days=1) else 1
-            status = "SUGGESTED" if require_consecutive_days and consecutive >= 3 else \
-                     "WATCHING" if require_consecutive_days else "OPEN"
-            cur.execute("""UPDATE ems_gpt_core_todo SET local_day=%s,last_seen_day=%s,
-              occurrence_count=occurrence_count+1,consecutive_days=%s,severity=%s,details=%s,
-              source_ref=%s,status=%s WHERE todo_id=%s""",
-                        (today, today, consecutive, severity[:12], details, source_ref,
-                         status, existing["todo_id"]))
-            return existing["todo_id"]
-        status = "WATCHING" if require_consecutive_days else "OPEN"
-        cur.execute("""INSERT INTO ems_gpt_core_todo
-          (todo_id,created_at,local_day,severity,module_name,title,details,status,source_ref,
-           first_seen_day,last_seen_day,occurrence_count,consecutive_days)
-          VALUES(%s,NOW(6),%s,%s,%s,%s,%s,%s,%s,%s,%s,1,1)""",
-          (todo_id, today, severity[:12], module[:32], title[:300], details, status,
-           source_ref, today, today))
-    return todo_id
+    return _todo_service().create(module, title, details, severity, source_ref, require_consecutive_days)
 
 
 def reconcile_observer_todos(active_titles: list[str]) -> int:
-    """Archive unresolved Observer findings that disappeared from a newer daily analysis."""
-    today = local_now().date()
-    with db() as conn, conn.cursor() as cur:
-        if active_titles:
-            placeholders = ",".join(["%s"] * len(active_titles))
-            cur.execute(f"""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
-              WHERE module_name='ai_observer' AND status IN ('WATCHING','OPEN','SUGGESTED')
-                AND last_seen_day<%s AND title NOT IN ({placeholders})""", (today, *active_titles))
-        else:
-            cur.execute("""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
-              WHERE module_name='ai_observer' AND status IN ('WATCHING','OPEN','SUGGESTED')
-                AND last_seen_day<%s""", (today,))
-        return cur.rowcount
+    return _todo_service().reconcile_observer(active_titles)
 
 
 def reconcile_diagnostic_todos(active_titles: list[str]) -> int:
-    """Resolve diagnostic alerts which are absent from the newest report."""
-    with db() as conn, conn.cursor() as cur:
-        if active_titles:
-            placeholders = ",".join(["%s"] * len(active_titles))
-            cur.execute(f"""UPDATE ems_gpt_core_todo SET status='RESOLVED',resolved_at=NOW(6)
-              WHERE module_name='diagnostics' AND status IN ('OPEN','SUGGESTED')
-                AND title NOT IN ({placeholders})""", tuple(active_titles))
-        else:
-            cur.execute("""UPDATE ems_gpt_core_todo SET status='RESOLVED',resolved_at=NOW(6)
-              WHERE module_name='diagnostics' AND status IN ('OPEN','SUGGESTED')""")
-        return cur.rowcount
+    return _todo_service().reconcile_diagnostics(active_titles)
 
 
 def maintain_todo_archive() -> dict:
-    """Nightly retention: archive reviewed items and stale unconfirmed observations."""
-    today = local_now().date()
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
-          WHERE status IN ('ACCEPTED','REJECTED','RESOLVED') AND local_day<%s""", (today,))
-        reviewed = cur.rowcount
-        cur.execute("""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
-          WHERE status='WATCHING' AND last_seen_day<%s""", (today-timedelta(days=1),))
-        stale = cur.rowcount
-    if reviewed or stale:
-        record_event("todo_nightly_archive", "ai_observer", {"reviewed": reviewed, "stale": stale})
-    return {"reviewed": reviewed, "stale": stale}
+    return _todo_service().maintain_archive()
 
 
 def review_todo(payload: dict, actor: str) -> dict:
-    todo_id = str(payload.get("todo_id") or "")
-    decision = str(payload.get("decision") or "").upper()
-    note = str(payload.get("note") or "")[:1000]
-    if not todo_id:
-        raise ValueError("todo_id is required")
-    if decision not in {"ACCEPTED", "REJECTED", "RESOLVED"}:
-        raise ValueError("decision must be ACCEPTED, REJECTED or RESOLVED")
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT status FROM ems_gpt_core_todo WHERE todo_id=%s FOR UPDATE", (todo_id,))
-        row = cur.fetchone()
-        if not row:
-            raise ValueError("unknown todo_id")
-        if row["status"] == "ARCHIVED":
-            raise ValueError("archived todo cannot be reviewed")
-        cur.execute("""UPDATE ems_gpt_core_todo SET status=%s,reviewed_at=NOW(6),reviewed_by=%s,
-          review_note=%s,resolved_at=CASE WHEN %s='RESOLVED' THEN NOW(6) ELSE resolved_at END
-          WHERE todo_id=%s""", (decision, actor[:100], note, decision, todo_id))
-    result = {"todo_id": todo_id, "status": decision, "reviewed_by": actor[:100]}
-    record_event("todo_reviewed", "ai_observer", result)
-    return result
+    return _todo_service().review(payload, actor)
 
 
 def close_finished_slots() -> int:
@@ -2587,52 +2403,7 @@ def engine_loop() -> None:
         time.sleep(60)
 
 
-HTML = """<!doctype html><html lang='pl'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<title>EMS-GPT Core</title><style>body{font-family:system-ui;margin:0;background:#071426;color:#eaf2ff}.wrap{max-width:1400px;margin:auto;padding:24px}header{display:flex;gap:16px;align-items:center}header img{width:72px;height:72px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}.card{background:#10243d;border:1px solid #173657;border-radius:16px;padding:16px}.clickable{cursor:pointer}.clickable:hover{border-color:#15c987}.executor-actions{display:none;margin-top:12px}.executor-actions.open{display:block}.danger{background:#d94a64;color:white;border:0;padding:10px 14px;border-radius:10px;cursor:pointer}.label{color:#8ea7c4;font-size:12px;text-transform:uppercase}.value{font-size:20px;font-weight:750;margin-top:6px}.ok{color:#23e88f}.warn{color:#ffbd3f}pre{white-space:pre-wrap}.tag{display:inline-block;padding:5px 9px;border-radius:20px;background:#163454;margin:3px}.tabs{display:flex;gap:8px;flex-wrap:wrap}.tabs button,.apply{background:#163454;color:#dcecff;border:0;padding:10px 14px;border-radius:10px;cursor:pointer}.tabs button.active,.apply{background:#15c987;color:#03150e}.settings,.column-settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.setting-section{border:1px solid #1d3b5b;border-radius:12px;padding:14px;margin:12px 0}.setting-section h3{margin:0 0 12px}.setting label{display:block;color:#8ea7c4;font-size:12px;margin-bottom:5px}.setting input{box-sizing:border-box;width:100%;padding:9px;border:1px solid #275277;border-radius:9px;background:#071426;color:#eaf2ff}.column-option{display:flex;gap:8px;align-items:center;padding:7px;border-radius:8px;background:#0b1c31}.column-option input{width:auto}.hint{color:#8ea7c4;font-size:13px}.tablebox{overflow-x:scroll;overflow-y:auto;scrollbar-gutter:stable;max-height:58vh;border-radius:12px}table{width:100%;min-width:max-content;border-collapse:separate;border-spacing:0;font-size:13px}th,td{padding:9px 10px;border-bottom:1px solid #1d3b5b;white-space:nowrap;text-align:right}th{position:sticky;top:0;background:#10243d;color:#8ea7c4;z-index:2}th:first-child,td:first-child{position:sticky;left:0;background:#10243d;text-align:left;z-index:1}th:first-child{z-index:3}.yes{color:#23e88f}.no{color:#ff647c}@media(max-width:600px){.wrap{padding:12px}header img{width:56px;height:56px}h1{font-size:22px}}</style></head>
-<body><div class='wrap'><header><img src='icon.png'><div><h1>EMS-GPT Core</h1><div style='color:#8ea7c4'>Niezależny silnik planowania i analityki energii</div></div></header><br><div class='grid'>
-<div class='card'><div class='label'>Stan aplikacji</div><div id='appStatus' class='value warn'>URUCHAMIANIE</div><div id='applicationStatus' class='hint'>Wersja: … · uruchomiono: oczekiwanie</div></div><div class='card'><div class='label'>MariaDB</div><div id='db' class='value'>…</div></div><div class='card'><div class='label'>Dane z HA</div><div id='ha' class='value'>…</div></div><div id='executorCard' class='card clickable'><div class='label'>Wykonawca · kliknij, aby sterować</div><div id='executor' class='value warn'>…</div><div id='executorActions' class='executor-actions'><button id='executorLive' class='apply'>Włącz LIVE</button> <button id='executorOff' class='danger'>Wyłącz</button><div id='executorMessage' class='hint'></div></div></div></div><br>
-<div class='card'><div class='label'>Moduły</div><div id='modules'></div></div><br><div class='card'><div class='label'>Aktywny slot</div><div id='slot' class='value'>…</div><pre id='error'>Brak błędów</pre></div><br>
-<div class='card'><div class='tabs'><button data-view='plan' class='active'>Planer</button><button data-view='execution'>Wykonanie</button><button data-view='hourly'>Godzinowe</button><button data-view='daily'>Dobowe</button><button data-view='processes'>Procesy</button><button data-view='process-execution'>Przebiegi</button><button data-view='analytics'>Analityka</button><button data-view='ai-runs'>AI Observer</button><button data-view='todo'>Sugestie / TODO</button><button data-view='diagnostics'>Diagnostyka</button><button data-view='configuration'>Konfiguracja</button></div><br><div id='tablePanel'><div id='processControls' style='display:none'></div><div id='tableTitle' class='label'>PLANER</div><div class='tablebox'><table><thead id='thead'></thead><tbody id='tbody'></tbody></table></div></div><div id='configPanel' style='display:none'><div class='label'>Konfiguracja aplikacji</div><div id='settings'></div><br><button id='applySettings' class='apply'>Zastosuj parametry</button> <span id='settingsStatus'></span><section class='setting-section'><h3>Kolumny tabel</h3><p class='hint'>Wybierz widok i zaznacz dane, które mają być widoczne. Ustawienie jest zapisywane lokalnie w tej przeglądarce.</p><select id='columnView'></select> <button id='resetColumns'>Przywróć domyślne</button><div id='columnSettings' class='column-settings'></div></section></div></div></div>
-<script>
-const layouts={
-plan:[['slot_start','Slot'],['recommendation','Rekomendacja'],['soc_start_plan_pct','SOC przed'],['soc_end_plan_pct','SOC po'],['soc_floor_pct','SOC floor'],['soc_target_pct','SOC target'],['forecast_pv1_kwh','PV1 plan'],['forecast_pv2_kwh','PV2 plan'],['forecast_pv_total_kwh','PV razem'],['forecast_load_kwh','Zużycie'],['price_buy_pln_kwh','Zakup PLN/kWh'],['price_sell_pln_kwh','Sprzedaż PLN/kWh'],['buy_window','Okno BUY'],['sale_window','Okno SELL'],['grid_policy_planned','Polityka sieci'],['grid_buy_allowed','BUY_ALLOWED'],['grid_no_buy','NO_BUY'],['grid_neutral','GRID_NEUTRAL'],['export_policy_planned','Polityka eksportu'],['sell_bat_allowed','SELL_BAT'],['no_sell_bat','NO_SELL_BAT'],['sell_pv_allowed','SELL_PV'],['no_sell_pv','NO_SELL_PV'],['planned_battery_charge_kwh','Ład. BAT'],['planned_battery_discharge_kwh','Rozł. BAT'],['planned_buy_kwh','Import'],['planned_sell_kwh','BAT→sieć'],['planned_pv_to_bat_kwh','PV→BAT kWh'],['planned_pv_to_cwu_kwh','PV→CWU kWh'],['planned_pv_to_ev_kwh','PV→EV kWh'],['planned_pv_export_kwh','PV→sieć kWh'],['planned_pv_curtail_kwh','PV ogranicz. kWh'],['pv_export_planned','Eksport PV plan'],['pv_curtail_planned','Redukcja PV'],['pv_to_bat_planned','PV→BAT'],['pv_to_cwu_planned','PV→CWU'],['pv_to_ev_planned','PV→EV'],['heat_pump_window','Okno HP'],['ppd_reason','Powód PPD']],
-execution:[['slot_start','Slot'],['recommendation','Rekomendacja planu'],['actual_pv1_kwh','PV1'],['actual_pv2_kwh','PV2'],['actual_pv_total_kwh','PV razem'],['actual_load_kwh','Zużycie'],['actual_buy_kwh','Import'],['actual_grid_export_kwh','Eksport sieć'],['actual_battery_charge_kwh','Ład. BAT'],['actual_battery_discharge_kwh','Rozł. BAT'],['actual_ev_kwh','EV'],['soc_start_pct','SOC start'],['soc_min_pct','SOC min'],['soc_end_pct','SOC koniec'],['soc_delta_pct','ΔSOC'],['actual_temperature_c','Temp. ogród'],['actual_dhw_temperature_c','CWU °C'],['actual_heat_pump_mode','Tryb HP'],['actual_heat_pump_electric_kwh','HP pobrana'],['actual_heat_pump_thermal_kwh','HP użytkowa'],['actual_heat_pump_cop','COP'],['actual_heat_pump_outlet_temperature_c','HP zasilanie'],['actual_heat_pump_inlet_temperature_c','HP powrót'],['actual_heat_pump_delta_t_c','HP ΔT'],['actual_heat_pump_compressor_frequency_hz','Sprężarka Hz'],['actual_heat_pump_flow_l_min','Przepływ'],['actual_heat_pump_is_running','HP pracuje'],['sample_count','Próbki'],['coverage_pct','Pokrycie %'],['export_attribution','Źródło eksportu']],
-hourly:[['hour_start','Godzina'],['completion_status','Zamknięcie'],['quality_status','Jakość'],['expected_slot_count','Sloty oczek.'],['terminal_slot_count','Sloty terminalne'],['recovered_slot_count','Odtworzone'],['missing_slot_count','Brak danych'],['coverage_pct','Pokrycie %'],['learning_eligible','Do uczenia'],['forecast_pv_kwh','PV plan'],['actual_pv_kwh','PV wykon.'],['planned_pv_to_bat_kwh','PV→BAT'],['planned_pv_to_cwu_kwh','PV→CWU'],['planned_pv_to_ev_kwh','PV→EV'],['planned_pv_export_kwh','PV→sieć'],['planned_pv_curtail_kwh','PV ogranicz.'],['forecast_load_kwh','Zuż. plan'],['actual_load_kwh','Zuż. wykon.'],['planned_import_kwh','Import plan'],['actual_import_kwh','Import wykon.'],['planned_export_kwh','Eksport plan'],['actual_export_kwh','Eksport wykon.'],['soc_end_pct','SOC koniec'],['planned_net_pln','PLN plan'],['actual_net_pln','PLN wykon.'],['slot_count','Sloty'],['closed_at','Zamknięto'],['updated_at','Aktualizacja']],
-daily:[['day_date','Dzień'],['completion_status','Zamknięcie'],['data_quality_status','Jakość'],['expected_slot_count','Sloty oczek.'],['terminal_slot_count','Sloty terminalne'],['valid_actual_slot_count','Sloty ważne'],['missing_actual_slot_count','Sloty brak'],['recovered_slot_count','Sloty odtw.'],['learning_eligible','Do uczenia'],['forecast_pv_kwh','PV plan'],['actual_pv_kwh','PV wykon.'],['planned_pv_to_bat_kwh','PV→BAT'],['planned_pv_to_cwu_kwh','PV→CWU'],['planned_pv_to_ev_kwh','PV→EV'],['planned_pv_curtail_kwh','PV ogranicz.'],['forecast_load_kwh','Zuż. plan'],['actual_load_kwh','Zuż. wykon.'],['forecast_import_kwh','Import plan'],['actual_import_kwh','Import wykon.'],['forecast_export_kwh','Eksport plan'],['actual_export_kwh','Eksport wykon.'],['forecast_battery_charge_kwh','Ład. BAT plan'],['actual_battery_charge_kwh','Ład. BAT wykon.'],['forecast_battery_discharge_kwh','Rozł. BAT plan'],['actual_battery_discharge_kwh','Rozł. BAT wykon.'],['forecast_pv_export_kwh','PV eksport plan'],['actual_pv_export_kwh','PV eksport wykon.'],['actual_heat_pump_electric_kwh','HP pobrana'],['actual_heat_pump_thermal_kwh','HP użytkowa'],['actual_heat_pump_cop','HP COP'],['actual_dhw_generated_kwh','CWU wytw.'],['actual_heating_generated_kwh','CO wytw.'],['planned_net_pln','PLN plan'],['actual_net_pln','PLN wykon.'],['pv_production_start_time','PV start'],['pv_production_end_time','PV koniec'],['heating_production_start_time','CO start'],['heating_production_end_time','CO koniec'],['dhw_production_start_time','CWU start'],['dhw_production_end_time','CWU koniec'],['closed_at','Zamknięto'],['data_quality_reason','Powód jakości']],
-analytics:[['completed_at','Zakończono'],['status','Status'],['slots_scanned','Sloty'],['complete_slots','Kompletne'],['quality_score','Jakość %'],['pv1_wape_pct','PV1 WAPE'],['pv2_wape_pct','PV2 WAPE'],['pv_wape_pct','PV razem WAPE'],['load_wape_pct','Load WAPE'],['import_wape_pct','Import WAPE'],['export_wape_pct','Eksport WAPE'],['pv_bias_kwh','PV bias kWh'],['load_bias_kwh','Load bias kWh'],['import_bias_kwh','Import bias kWh'],['export_bias_kwh','Eksport bias kWh'],['soc_mae_pct','SOC MAE %'],['net_cost_variance_pln','Odchylenie PLN']],
-'ai-runs':[['completed_at','Zakończono'],['status','Status'],['role_name','Rola'],['source_ref','Analiza źródłowa'],['auto_score','Autoocena'],['decision','Decyzja'],['result_json','Sugestie i wynik']],
-todo:[['created_at','Utworzono'],['title','Rekomendacja'],['status','Status'],['severity','Ważność'],['consecutive_days','Dni z rzędu'],['occurrence_count','Wystąpienia'],['last_seen_day','Ostatnio'],['details','Szczegóły'],['_actions','Decyzja']],
-diagnostics:[['created_at','Utworzono'],['status','Status'],['alert_count','Alarmy'],['trigger_name','Wyzwalacz'],['summary','Podsumowanie']],
-processes:[['slot_start','Slot'],['process_name','Proces'],['decision','Decyzja'],['eligible','Zgoda'],['valid_until','Ważna do'],['connector_required','Konektor'],['reason','Przyczyna']],
-'process-execution':[['slot_start','Slot'],['process_name','Proces'],['planned_state','Plan'],['effective_state','Efektywnie'],['observed_state','Obserwacja'],['consistency','Zgodność'],['control_origin','Źródło sterowania'],['observed_energy_kwh','Energia kWh'],['recorded_at','Zapisano'],['reason','Przyczyna']],
-};
-const customizableViews=['plan','execution','hourly','daily','processes','process-execution','analytics','ai-runs','todo','diagnostics'];
-const viewNames={plan:'Planer',execution:'Wykonanie',hourly:'Godzinowe',daily:'Dobowe',processes:'Procesy','process-execution':'Przebiegi',analytics:'Analityka','ai-runs':'AI Observer',todo:'Sugestie / TODO',diagnostics:'Diagnostyka'};
-const defaultColumns=Object.fromEntries(customizableViews.map(v=>[v,layouts[v].map(c=>c[0])]));
-const booleanFields=new Set(['eligible','connector_required','learning_eligible','buy_window','sale_window','heat_pump_window','pv_to_cwu_planned','pv_to_ev_planned','pv_to_bat_planned','pv_export_planned','pv_curtail_planned','grid_buy_allowed','grid_no_buy','grid_neutral','sell_bat_allowed','no_sell_bat','sell_pv_allowed','no_sell_pv','actual_heat_pump_is_running']);
-function columnPrefs(){try{return JSON.parse(localStorage.getItem('ems-gpt-columns-v1')||'{}')}catch(e){return {}}}
-function activeLayout(view){const selected=columnPrefs()[view];if(!Array.isArray(selected)||!selected.length)return layouts[view];return selected.map(k=>layouts[view].find(c=>c[0]===k)).filter(Boolean)}
-function saveColumns(view,keys){const prefs=columnPrefs();prefs[view]=keys;localStorage.setItem('ems-gpt-columns-v1',JSON.stringify(prefs))}
-function renderColumnSettings(){const view=columnView.value;const selected=new Set(activeLayout(view).map(c=>c[0]));columnSettings.innerHTML=layouts[view].map(c=>`<label class='column-option'><input type='checkbox' data-column='${c[0]}' ${selected.has(c[0])?'checked':''}>${c[1]}</label>`).join('');columnSettings.querySelectorAll('input').forEach(i=>i.onchange=()=>{const keys=[...columnSettings.querySelectorAll('input:checked')].map(x=>x.dataset.column);if(!keys.length){i.checked=true;return}saveColumns(view,keys)})}
-function fmt(v,key){if(v===null||v===undefined)return '—';if(booleanFields.has(key)&&(v===0||v===1||v==='0'||v==='1'))return Number(v)?'TAK':'NIE';if(typeof v==='number')return v.toFixed(3);const text=String(v).replace(/^NEU\\s*RAL$/i,'NEUTRAL');return text.replace(/(\\d)T(?=\\d)/,'$1 ').slice(0,32)}
-function cellValue(row,key){if(key==='consistency'){if(!row.observed_state)return 'BRAK DANYCH';const plannedOn=row.planned_state==='ON';const observedOn=row.observed_state==='RUNNING';return plannedOn===observedOn?'ZGODNE':'ROZBIEŻNOŚĆ'}if(key==='control_origin'){return row.control_origin||(row.command_id?'AUTO':row.observed_state==='RUNNING'&&row.planned_state!=='ON'?'EXTERNAL_MANUAL':row.decision_source||'OBSERWACJA')}if(key==='data_quality_status'&&!row[key]&&row.day_date===new Date().toLocaleDateString('sv-SE'))return 'OPEN';return row[key]}
-function actionCell(row){if(['ARCHIVED','ACCEPTED','REJECTED','RESOLVED'].includes(row.status))return fmt(row.status,'status');return `<button onclick="reviewTodo('${row.todo_id}','ACCEPTED')">Akceptuj</button> <button class='danger' onclick="reviewTodo('${row.todo_id}','REJECTED')">Odrzuć</button> <button onclick="reviewTodo('${row.todo_id}','RESOLVED')">Rozwiązane</button>`}
-async function reviewTodo(todoId,decision){const note=prompt('Notatka operatora (opcjonalna)','')??'';const r=await fetch('api/todo/review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({todo_id:todoId,decision,note})});const j=await r.json();if(!r.ok)alert(j.error||'Błąd');await loadView('todo')}
-const processNames=['BATTERY_IMPORT','BATTERY_EXPORT','PV_CWU','PV_EV','HP_HEAT_DHW'];
-async function loadProcessControls(){const r=await fetch('api/overrides?limit=30');const j=await r.json();const active={};j.rows.forEach(x=>{if(x.status==='ACTIVE')active[x.process_name]=x});processControls.innerHTML=`<div class='grid'>${processNames.map(p=>{const a=active[p];const hpBlocked=p==='HP_HEAT_DHW'&&a?.requested_state==='FORCE_OFF';const status=hpBlocked?'BLOKADA BEZTERMINOWA':a?a.requested_state+' do '+fmt(a.valid_until,'valid_until'):'AUTO';return `<div class='card'><b>${p}</b><div class='label ${hpBlocked?'no':''}'>${status}</div>${p==='HP_HEAT_DHW'?`<label class='label' for='hpManualHours'>Czas ręcznego włączenia [h]</label><input id='hpManualHours' type='number' min='2' max='24' step='.25' value='2'>`:''}<p><button class='apply' onclick="setOverride('${p}','FORCE_ON')">Włącz</button> <button class='${hpBlocked?'danger':''}' onclick="setOverride('${p}','FORCE_OFF')">Blokuj</button> <button onclick="setOverride('${p}','AUTO')">Auto</button></p></div>`}).join('')}</div><br>`}
-async function setOverride(process,state){let minutes=60;if(process==='HP_HEAT_DHW'&&state==='FORCE_ON'){const hours=Number(document.getElementById('hpManualHours')?.value||2);if(!Number.isFinite(hours)||hours<2||hours>24){alert('Czas HP musi wynosić od 2 do 24 godzin');return}minutes=Math.round(hours*60)}const r=await fetch('api/process/override',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({process,state,minutes,reason:'panel operatora'})});const j=await r.json();if(!r.ok)alert(j.error||'Błąd');await loadProcessControls()}
-async function loadView(view){document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));const config=view==='configuration';tablePanel.style.display=config?'none':'block';configPanel.style.display=config?'block':'none';if(config){await loadSettings();return}processControls.style.display=view==='processes'?'block':'none';if(view==='processes')await loadProcessControls();tableTitle.textContent=(viewNames[view]||view).toUpperCase();const r=await fetch('api/'+view+'?limit=96');const j=await r.json();const cols=activeLayout(view);thead.innerHTML='<tr>'+cols.map(c=>'<th>'+c[1]+'</th>').join('')+'</tr>';tbody.innerHTML=j.rows.map(row=>'<tr>'+cols.map(c=>'<td>'+(c[0]==='_actions'?actionCell(row):fmt(cellValue(row,c[0]),c[0]))+'</td>').join('')+'</tr>').join('')}
-async function loadSettings(){const r=await fetch('api/settings');const j=await r.json();const groups={};Object.entries(j.settings).forEach(([k,s])=>(groups[s.group]??=[]).push([k,s]));settings.innerHTML=Object.entries(groups).map(([group,items])=>`<section class='setting-section'><h3>${group}</h3><div class='settings'>${items.map(([k,s])=>`<div class='setting'><label>${s.label}</label><input data-key='${k}' type='number' min='${s.min}' max='${s.max}' step='0.01' value='${s.value}'></div>`).join('')}</div></section>`).join('');if(!columnView.options.length)columnView.innerHTML=customizableViews.map(v=>`<option value='${v}'>${viewNames[v]}</option>`).join('');renderColumnSettings()}
-columnView.onchange=renderColumnSettings;
-resetColumns.onclick=()=>{saveColumns(columnView.value,defaultColumns[columnView.value]);renderColumnSettings()};
-applySettings.onclick=async()=>{const values={};settings.querySelectorAll('input').forEach(i=>values[i.dataset.key]=Number(i.value));settingsStatus.textContent='Zapisywanie…';const r=await fetch('api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});const j=await r.json();settingsStatus.textContent=r.ok?'Zapisano — obowiązuje od następnego przeliczenia':(j.error||'Błąd')}
-executorCard.onclick=e=>{if(e.target.tagName!=='BUTTON')executorActions.classList.toggle('open')};
-async function setExecutorMode(mode){if(mode==='LIVE'&&!confirm('Włączyć wykonawcę LIVE? Polecenia będą wysyłane do urządzeń.'))return;executorMessage.textContent='Zapisywanie…';const body={mode};if(mode==='LIVE')body.confirmation='EMS_CONNECTOR_ACCEPTED';const r=await fetch('api/executor/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();executorMessage.textContent=r.ok?'Tryb: '+j.mode:(j.error||'Błąd');await tick()}
-executorLive.onclick=()=>setExecutorMode('LIVE');
-executorOff.onclick=()=>setExecutorMode('OFF');
-document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>loadView(b.dataset.view));
-async function tick(){const appStatus=document.getElementById('appStatus');try{const r=await fetch('api/status');if(!r.ok)throw new Error('HTTP '+r.status);const s=await r.json();const labels={RUNNING:'URUCHOMIONO',STARTING:'URUCHAMIANIE',DEGRADED:'TRYB OGRANICZONY',ERROR:'BŁĄD'};appStatus.textContent=labels[s.status]||s.status||'BŁĄD';appStatus.className='value '+(s.status==='RUNNING'?'ok':s.status==='STARTING'||s.status==='DEGRADED'?'warn':'no');const started=s.started_at?new Date(s.started_at).toLocaleString('pl-PL'):'brak';applicationStatus.textContent=`Wersja: ${s.version||'—'} · uruchomiono: ${started}`;applicationStatus.className='hint '+(s.started_at?'ok':'warn');db.textContent=s.database;ha.textContent=s.ha_input;executor.textContent=s.executor;slot.textContent=s.active_slot||'—';error.textContent=s.last_error||'Brak błędów';modules.innerHTML=Object.entries(s.modules).map(([k,v])=>`<span class='tag'>${k}: <b>${v}</b></span>`).join('')}catch(e){appStatus.textContent='BRAK POŁĄCZENIA';appStatus.className='value no';applicationStatus.textContent='Nie można odczytać stanu dodatku';applicationStatus.className='hint no'}}tick();loadView('plan');setInterval(tick,5000)
-</script></body></html>"""
+HTML = Path(__file__).with_name("webui.html").read_text(encoding="utf-8")
 
 
 class Handler(BaseHTTPRequestHandler):
