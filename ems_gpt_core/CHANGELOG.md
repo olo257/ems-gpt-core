@@ -1,3 +1,10 @@
+## 0.26.4
+
+- Wydzielono pobieranie prognoz PV, prognozy pogody i cen RCE do `ingestion_service.py`.
+- Usługa danych otrzymuje jawne adaptery bazy, zegara, kalendarza DST, Home Assistant i audytu.
+- Zachowano dotychczasowe źródła Open-Meteo i PSE oraz identyczne reguły wyznaczania okien zakupu i sprzedaży.
+- Bez zmian w planerze, PPD, wykonawcy i programach SOC 1–6. Observer pozostaje `SHADOW_READ_ONLY`.
+
 ## 0.26.3
 
 - Wydzielono ustawienia operatora, override'y procesów i cykl życia komend do `executor_service.py`.
