@@ -26,12 +26,13 @@ from materialization_service import MaterializationAdapters, build_materializati
 from scheduler_service import SchedulerAdapters, run_scheduler
 from slot_calendar_service import SlotCalendarAdapters, build_slot_calendar
 from observer_service import run_ai_observer as run_observer_service
+from recovery_service import RecoveryAdapters, build_recovery
 from runtime_service import build_runtime
 from todo_service import TodoService
 from telemetry_service import TelemetryAdapters, build_telemetry
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.26.12"
+APP_VERSION = "0.26.13"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -442,49 +443,6 @@ def ensure_runtime_schema() -> None:
             cur.execute(f"""UPDATE {table} SET {column}='NEUTRAL'
               WHERE UPPER(REPLACE({column},' ','')) IN ('NEURAL','NEUTRAL')
                 AND {column}<>'NEUTRAL'""")
-
-
-def bootstrap_legacy_tables() -> int:
-    if not OPTIONS.get("bootstrap_from_source", False):
-        return 0
-    source, target = OPTIONS["source_db"], OPTIONS["db_name"]
-    if source == target:
-        return 0
-    migrated = 0
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM ems_gpt_core_migrations WHERE migration_key=%s", ("legacy_tables_1_to_1",))
-        if cur.fetchone():
-            cur.execute("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema=%s AND table_name LIKE 'ems_gpt_%%'", (target,))
-            return int(cur.fetchone()["n"])
-        cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=%s AND table_name LIKE 'ems_gpt_%%' ORDER BY table_name", (source,))
-        tables = [row["table_name"] for row in cur.fetchall()]
-        for table in tables:
-            src = f"{qname(source)}.{qname(table)}"
-            dst = f"{qname(target)}.{qname(table)}"
-            cur.execute(f"CREATE TABLE IF NOT EXISTS {dst} LIKE {src}")
-            cur.execute(f"INSERT IGNORE INTO {dst} SELECT * FROM {src}")
-            migrated += 1
-        cur.execute("INSERT INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
-                    ("legacy_tables_1_to_1", json.dumps({"source": source, "target": target, "tables": tables}, ensure_ascii=False)))
-    return migrated
-
-
-def recover_interrupted_runs() -> dict:
-    """Idempotently close runs that could not survive an application restart."""
-    with db() as conn, conn.cursor() as cur:
-        cur.execute("""UPDATE ems_gpt_plan_runs SET status='ABORTED_RECOVERED',
-          current_stage='RECOVERY',updated_at=NOW(6),validation_status='REJECTED',
-          validation_reason='application restart interrupted the run'
-          WHERE status='RUNNING' AND updated_at<NOW(6)-INTERVAL 10 MINUTE""")
-        plans = cur.rowcount
-        cur.execute("""UPDATE ems_gpt_core_analytics_runs SET status='ABORTED_RECOVERED',
-          completed_at=NOW(6),details_json=JSON_OBJECT('reason','application restart interrupted the run')
-          WHERE status='RUNNING' AND started_at<NOW(6)-INTERVAL 10 MINUTE""")
-        analytics = cur.rowcount
-    result = {"plan_runs": plans, "analytics_runs": analytics}
-    if plans or analytics:
-        record_event("interrupted_runs_recovered", "diagnostics", result, "WARNING")
-    return result
 
 
 def local_now() -> datetime:
@@ -1053,6 +1011,13 @@ def record_event(event_type: str, module: str, payload: dict, severity: str = "I
                          json.dumps(payload, ensure_ascii=False, default=str)))
     except Exception as exc:
         LOG.error("event write failed: %s", exc)
+
+
+_RECOVERY = build_recovery(RecoveryAdapters(
+    options=OPTIONS, db=db, qname=qname, record_event=record_event,
+))
+bootstrap_legacy_tables = _RECOVERY.bootstrap_legacy_tables
+recover_interrupted_runs = _RECOVERY.recover_interrupted_runs
 
 
 _MATERIALIZATIONS = build_materializations(MaterializationAdapters(
