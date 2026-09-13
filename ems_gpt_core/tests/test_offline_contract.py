@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.27.5"', APP_SOURCE)
-        self.assertIn('version: "0.27.5"', CONFIG)
+        self.assertIn('APP_VERSION = "0.28.0"', APP_SOURCE)
+        self.assertIn('version: "0.28.0"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -44,6 +44,11 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("from recovery_service import", APP_SOURCE)
         self.assertIn("from time_service import", APP_SOURCE)
         self.assertIn("from config_service import", APP_SOURCE)
+        self.assertIn("from planner_service import", APP_SOURCE)
+        self.assertIn("from schema_service import", APP_SOURCE)
+        self.assertIn("_PLANNER = build_planner(PlannerAdapters(", APP_SOURCE)
+        self.assertIn("def build_planner(", MODULE_SOURCES["planner_service.py"])
+        self.assertIn("def ensure_runtime_schema(", MODULE_SOURCES["schema_service.py"])
         self.assertIn("_EXECUTOR = build_executor(ExecutorAdapters(", APP_SOURCE)
         self.assertIn("_INGESTION = build_ingestion(IngestionAdapters(", APP_SOURCE)
         self.assertIn("Handler = build_handler(ApiAdapters(", APP_SOURCE)
@@ -97,8 +102,9 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("database_ok and status_ok", api)
 
     def test_hp_manual_duration_and_external_priority(self):
-        self.assertIn("HP_HEAT_DHW FORCE_ON must last at least", SOURCE)
-        self.assertIn("hpManualHours", SOURCE)
+        self.assertIn('OPTIONS.get("hp_min_cycle_hours", 2.0)', SOURCE)
+        self.assertNotIn("hpManualHours", SOURCE)
+        self.assertIn("if(process!=='HP_HEAT_DHW')body.minutes=60", SOURCE)
         self.assertIn("externally_started_hp_is_running", SOURCE)
         self.assertIn('source = "OVERRIDE" if requested else "EXTERNAL_MANUAL"', SOURCE)
         self.assertIn('requested != "FORCE_OFF"', SOURCE)

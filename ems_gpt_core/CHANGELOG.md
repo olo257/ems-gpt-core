@@ -1,3 +1,17 @@
+## 0.28.0
+
+- Zakończono refaktoryzację monolitu: schemat i migracje wydzielono do
+  `schema_service.py`, a planer, PPD i optymalizator HP do `planner_service.py`.
+- `app.py` pozostaje warstwą kompozycji usług; algorytmy, SQL i kolejność
+  publikacji planu nie zostały zmienione.
+- Usunięto z panelu pole czasu ręcznego `HP_HEAT_DHW`. Ręczne
+  `Włącz / Blokuj / Auto` pozostaje, a `FORCE_ON` pobiera czas z
+  `hp_min_cycle_hours` w centralnej konfiguracji.
+- Dodano bezsekretny plan dwóch kopii `ems_gpt`: lokalnej i na OMV,
+  z retencją, sumami SHA-256, testem odtworzenia i procedurą wdrożenia.
+- Bez zmian w wykonawcy LIVE, logice PPD, Observerze `SHADOW_READ_ONLY`,
+  recovery, strefie `Europe/Warsaw` i ochronie programów SOC Deye 1–6.
+
 ## 0.27.5
 
 - Usunięto tymczasowy endpoint i cały kod operatorski archiwizacji po poprawnym zakończeniu operacji 45/45.

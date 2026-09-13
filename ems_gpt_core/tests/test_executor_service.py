@@ -14,12 +14,13 @@ from executor_service import ExecutorAdapters, build_executor
 
 
 class ExecutorServiceTests(unittest.TestCase):
-    def build_service(self, directory):
+    def build_service(self, directory, db=lambda: None):
         self.options = {
             "executor_enabled": False,
             "executor_dry_run": True,
             "executor_activation_ack": "",
             "limit": 3.0,
+            "hp_min_cycle_hours": 2.5,
         }
         self.state = {"modules": {}, "executor": "OFF"}
         return build_executor(ExecutorAdapters(
@@ -30,7 +31,7 @@ class ExecutorServiceTests(unittest.TestCase):
             state=self.state,
             record_event=lambda *args: None,
             local_now=datetime.now,
-            db=lambda: None,
+            db=db,
             slot_start=lambda value: value,
             tou_program_snapshot=lambda: [],
             active_tou_program=lambda *args: None,
@@ -56,6 +57,42 @@ class ExecutorServiceTests(unittest.TestCase):
             self.assertFalse(self.options["executor_enabled"])
             self.assertTrue(self.options["executor_dry_run"])
             self.assertEqual(self.state["executor"], "OFF")
+
+    def test_hp_manual_duration_comes_only_from_configuration(self):
+        executed = []
+
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def execute(self, sql, params=()):
+                executed.append((sql, params))
+
+        class Connection:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def cursor(self):
+                return Cursor()
+
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.build_service(directory, db=Connection)
+            started = datetime.now()
+            result = service.update_process_override({
+                "process": "HP_HEAT_DHW", "state": "FORCE_ON", "minutes": 1,
+            })
+            duration = (result["valid_until"] - started).total_seconds() / 60
+            self.assertGreaterEqual(duration, 149.9)
+            self.assertLessEqual(duration, 150.1)
+            insert_params = executed[1][1]
+            self.assertEqual(insert_params[1], "HP_HEAT_DHW")
+            self.assertEqual(insert_params[2], "FORCE_ON")
 
 
 if __name__ == "__main__":

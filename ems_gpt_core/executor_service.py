@@ -161,13 +161,15 @@ def build_executor(a: ExecutorAdapters):
         if requested not in OVERRIDE_STATES:
             raise ValueError("state must be AUTO, FORCE_ON or FORCE_OFF")
         reason = str(payload.get("reason") or "operator panel")[:1000]
-        minutes = int(payload.get("minutes") or 60)
-        if not 1 <= minutes <= 1440:
-            raise ValueError("minutes must be between 1 and 1440")
         if process == "HP_HEAT_DHW" and requested == "FORCE_ON":
-            minimum_hp_minutes = max(1, int(float(OPTIONS.get("hp_min_cycle_hours", 2.0)) * 60 + 0.999999))
-            if minutes < minimum_hp_minutes:
-                raise ValueError(f"HP_HEAT_DHW FORCE_ON must last at least {minimum_hp_minutes} minutes")
+            # The operator panel deliberately has no independent duration input.
+            # One source of truth prevents a manual value from drifting away from
+            # the planner's configured minimum HP cycle.
+            minutes = max(1, int(float(OPTIONS.get("hp_min_cycle_hours", 2.0)) * 60 + 0.999999))
+        else:
+            minutes = int(payload.get("minutes") or 60)
+            if not 1 <= minutes <= 1440:
+                raise ValueError("minutes must be between 1 and 1440")
         now = local_now().replace(tzinfo=None)
         indefinite_block = process == "HP_HEAT_DHW" and requested == "FORCE_OFF"
         override_until = datetime(9999, 12, 31, 23, 59, 59) if indefinite_block else now + timedelta(minutes=minutes)
