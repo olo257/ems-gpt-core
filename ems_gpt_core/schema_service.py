@@ -255,11 +255,17 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             for column in hp_energy_columns:
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
         for column in (
-            "heating_production_start_time DATETIME(6) NULL", "heating_production_end_time DATETIME(6) NULL",
-            "dhw_production_start_time DATETIME(6) NULL", "dhw_production_end_time DATETIME(6) NULL",
-            "cooling_production_start_time DATETIME(6) NULL", "cooling_production_end_time DATETIME(6) NULL",
+            "heating_production_start_time TIME NULL", "heating_production_end_time TIME NULL",
+            "dhw_production_start_time TIME NULL", "dhw_production_end_time TIME NULL",
+            "cooling_production_start_time TIME NULL", "cooling_production_end_time TIME NULL",
         ):
             cur.execute(f"ALTER TABLE ems_gpt_daily ADD COLUMN IF NOT EXISTS {column}")
+        for column in (
+            "heating_production_start_time", "heating_production_end_time",
+            "dhw_production_start_time", "dhw_production_end_time",
+            "cooling_production_start_time", "cooling_production_end_time",
+        ):
+            cur.execute(f"ALTER TABLE ems_gpt_daily MODIFY COLUMN {column} TIME NULL")
         for column in (
             "actual_heating_consumed_kwh DOUBLE NULL", "actual_heating_generated_kwh DOUBLE NULL",
             "actual_heating_cop DOUBLE NULL", "actual_dhw_consumed_kwh DOUBLE NULL",

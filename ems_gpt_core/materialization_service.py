@@ -382,12 +382,12 @@ def build_materializations(a: MaterializationAdapters):
                   ,SUM(actual_dhw_consumed_kwh) hp_dhw_in,SUM(actual_dhw_generated_kwh) hp_dhw_out
                   ,SUM(actual_cooling_consumed_kwh) hp_cool_in,SUM(actual_cooling_generated_kwh) hp_cool_out
                   ,SUM(COALESCE(actual_heat_pump_is_running,0)) hp_running_slots
-                  ,MIN(CASE WHEN actual_heating_generated_kwh>0.001 THEN slot_start END) hp_heat_start
-                  ,MAX(CASE WHEN actual_heating_generated_kwh>0.001 THEN slot_end END) hp_heat_end
-                  ,MIN(CASE WHEN actual_dhw_generated_kwh>0.001 THEN slot_start END) hp_dhw_start
-                  ,MAX(CASE WHEN actual_dhw_generated_kwh>0.001 THEN slot_end END) hp_dhw_end
-                  ,MIN(CASE WHEN actual_cooling_generated_kwh>0.001 THEN slot_start END) hp_cool_start
-                  ,MAX(CASE WHEN actual_cooling_generated_kwh>0.001 THEN slot_end END) hp_cool_end
+                  ,MIN(CASE WHEN actual_heating_generated_kwh>0.001 THEN TIME(slot_start) END) hp_heat_start
+                  ,MAX(CASE WHEN actual_heating_generated_kwh>0.001 THEN TIME(slot_end) END) hp_heat_end
+                  ,MIN(CASE WHEN actual_dhw_generated_kwh>0.001 THEN TIME(slot_start) END) hp_dhw_start
+                  ,MAX(CASE WHEN actual_dhw_generated_kwh>0.001 THEN TIME(slot_end) END) hp_dhw_end
+                  ,MIN(CASE WHEN actual_cooling_generated_kwh>0.001 THEN TIME(slot_start) END) hp_cool_start
+                  ,MAX(CASE WHEN actual_cooling_generated_kwh>0.001 THEN TIME(slot_end) END) hp_cool_end
                   FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s""", (day_start,day_end))
                 d=cur.fetchone(); expected=int(d["slots"] or 0); terminal=int(d["terminal_n"] or 0); missing=int(d["missing_n"] or 0)
                 cur.execute("""SELECT COUNT(*) n FROM ems_gpt_core_execution_details
