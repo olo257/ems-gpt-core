@@ -1,3 +1,8 @@
+## 0.27.1
+
+- Po restarcie przed 14:00 stan RCE odtwarza również poprawny znacznik `NEXT` zapisany poprzedniego dnia dla bieżącej doby.
+- Usunięto błędne `NOT_RUN` przy kompletnych cenach; logika cen, planera, PPD i wykonawcy pozostaje bez zmian.
+
 ## 0.27.0
 
 - Skomasowano kolejny etap analityki w jednym wydaniu: PV WAPE jest liczone wyłącznie dla aktywnych slotów produkcji, z jawną liczbą slotów PV.

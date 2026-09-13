@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.27.0"', APP_SOURCE)
-        self.assertIn('version: "0.27.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.27.1"', APP_SOURCE)
+        self.assertIn('version: "0.27.1"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -83,6 +83,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('"RCE state restored: status=ALREADY_COMPLETED rows=%s/%s target=%s"', loop)
         self.assertIn("id='rceStatus'", WEBUI)
         self.assertIn("rs.rows??'—'", WEBUI)
+        self.assertIn("rce_event_keys(clock)", MODULE_SOURCES["scheduler_service.py"])
 
     def test_watchdog_uses_early_liveness_endpoint(self):
         api = MODULE_SOURCES["api_service.py"]
