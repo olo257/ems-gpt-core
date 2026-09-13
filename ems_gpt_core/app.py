@@ -17,7 +17,6 @@ from zoneinfo import ZoneInfo
 
 from api_service import ApiAdapters, build_handler
 from analytics_service import run_analytics as run_analytics_service
-from archive_service import CONFIRMATION, archive_legacy_tables
 from config_service import load_options
 from database_service import build_database
 from database_audit_service import audit_v3_tables, catalog_database_tables
@@ -36,7 +35,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.27.4"
+APP_VERSION = "0.27.5"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -108,45 +107,6 @@ def database_audit() -> dict:
 
 def database_catalog() -> dict:
     return catalog_database_tables(db=db, schema_name=OPTIONS["db_name"], log=LOG)
-
-
-ARCHIVE_STATE = {"status": "IDLE"}
-ARCHIVE_LOCK = threading.Lock()
-
-
-def database_archive_status() -> dict:
-    with ARCHIVE_LOCK:
-        return dict(ARCHIVE_STATE)
-
-
-def start_database_archive(payload: dict) -> dict:
-    confirmation = str(payload.get("confirmation") or "")
-    backup_id = str(payload.get("backup_id") or "")
-    if confirmation != CONFIRMATION:
-        raise ValueError("explicit archive confirmation is required")
-    if backup_id != "57d1a914":
-        raise ValueError("verified pre-archive backup id does not match")
-    with ARCHIVE_LOCK:
-        if ARCHIVE_STATE["status"] == "RUNNING":
-            raise RuntimeError("database archive is already running")
-        ARCHIVE_STATE.clear()
-        ARCHIVE_STATE.update({"status": "RUNNING", "backup_id": backup_id})
-
-    def worker() -> None:
-        try:
-            result = archive_legacy_tables(
-                db=db, qname=qname, schema_name=OPTIONS["db_name"],
-                confirmation=confirmation, backup_id=backup_id, log=LOG,
-            )
-            with ARCHIVE_LOCK:
-                ARCHIVE_STATE.clear(); ARCHIVE_STATE.update(result)
-        except Exception as exc:
-            LOG.exception("database archive failed")
-            with ARCHIVE_LOCK:
-                ARCHIVE_STATE.update({"status": "ERROR", "error": type(exc).__name__})
-
-    threading.Thread(target=worker, daemon=True).start()
-    return {"status": "ACCEPTED", "backup_id": backup_id, "approved_table_count": 45}
 
 
 def ensure_runtime_schema() -> None:
@@ -1115,8 +1075,6 @@ Handler = build_handler(ApiAdapters(
     generate_diagnostic_report=generate_diagnostic_report, review_todo=review_todo, html=HTML,
     database_audit=database_audit,
     database_catalog=database_catalog,
-    start_database_archive=start_database_archive,
-    database_archive_status=database_archive_status,
 ))
 
 

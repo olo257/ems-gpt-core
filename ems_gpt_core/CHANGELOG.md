@@ -1,3 +1,9 @@
+## 0.27.5
+
+- Usunięto tymczasowy endpoint i cały kod operatorski archiwizacji po poprawnym zakończeniu operacji 45/45.
+- W bazie pozostały wyłącznie zweryfikowane kopie `archive_20260913__*` oraz 23 aktywne tabele produkcyjne.
+- Bez zmian w planerze, PPD, wykonawcy, recovery, Observerze i programach SOC Deye 1–6.
+
 ## 0.27.4
 
 - Dodano jednorazową, jawnie potwierdzaną archiwizację 45 zatwierdzonych tabel historycznych.
