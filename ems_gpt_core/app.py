@@ -19,6 +19,7 @@ from api_service import ApiAdapters, build_handler
 from analytics_service import run_analytics as run_analytics_service
 from config_service import load_options
 from database_service import build_database
+from database_audit_service import audit_v3_tables
 from diagnostics_service import generate_diagnostic_report as run_diagnostics_service
 from executor_service import ExecutorAdapters, build_executor
 from ha_gateway_service import HomeAssistantAdapters, build_home_assistant_gateway
@@ -34,7 +35,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.27.1"
+APP_VERSION = "0.27.2"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -96,6 +97,12 @@ run_serialized = _RUNTIME.run_serialized
 _DATABASE = build_database(OPTIONS, TZ)
 db = _DATABASE.db
 qname = _DATABASE.qname
+
+
+def database_audit() -> dict:
+    return audit_v3_tables(
+        db=db, qname=qname, schema_name=OPTIONS["db_name"], log=LOG,
+    )
 
 
 def ensure_runtime_schema() -> None:
@@ -1062,6 +1069,7 @@ Handler = build_handler(ApiAdapters(
     refresh_pv_forecast=refresh_pv_forecast, refresh_weather_forecast=refresh_weather_forecast,
     run_analytics=run_analytics, run_ai_observer=run_ai_observer,
     generate_diagnostic_report=generate_diagnostic_report, review_todo=review_todo, html=HTML,
+    database_audit=database_audit,
 ))
 
 
@@ -1084,6 +1092,14 @@ def initialize() -> None:
             LOG.warning("waiting for MariaDB: %s", exc); time.sleep(5)
 
 
+def startup_database_audit() -> None:
+    try:
+        database_audit()
+    except Exception:
+        # An optional read-only inventory must never block or stop normal operation.
+        LOG.exception("startup read-only database audit failed")
+
+
 def main() -> None:
     startup_executor = enable_production_on_startup()
     server = ThreadingHTTPServer(("0.0.0.0", 8099), Handler)
@@ -1094,6 +1110,7 @@ def main() -> None:
         record_event("executor_startup_mode", "executor", startup_executor,
                      "INFO" if startup_executor["mode"] == "LIVE" else "WARNING")
         threading.Thread(target=engine_loop, daemon=True).start()
+        threading.Thread(target=startup_database_audit, daemon=True).start()
         LOG.info("%s %s started; executor=%s", APP_NAME, APP_VERSION, startup_executor["mode"])
         server_thread.join()
     finally:
