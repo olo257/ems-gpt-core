@@ -39,6 +39,8 @@ class ApiAdapters:
     review_todo: Callable
     database_audit: Callable
     database_catalog: Callable
+    start_database_archive: Callable
+    database_archive_status: Callable
     html: str
     icon_path: str = "/app/icon.png"
 
@@ -58,6 +60,8 @@ def build_handler(a: ApiAdapters):
     generate_diagnostic_report, review_todo = a.generate_diagnostic_report, a.review_todo
     database_audit = a.database_audit
     database_catalog = a.database_catalog
+    start_database_archive = a.start_database_archive
+    database_archive_status = a.database_archive_status
     HTML, icon_path = a.html, a.icon_path
 
     class Handler(BaseHTTPRequestHandler):
@@ -101,6 +105,8 @@ def build_handler(a: ApiAdapters):
                 except Exception as exc:
                     LOG.exception("read-only database catalog failed")
                     return self.json({"status":"ERROR","error":type(exc).__name__}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            if path.endswith("/api/database-archive/status") or path == "/api/database-archive/status":
+                return self.json(database_archive_status())
             if path.endswith("/api/process-status") or path == "/api/process-status":
                 return self.json({})
             if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs")):
@@ -132,6 +138,15 @@ def build_handler(a: ApiAdapters):
     
         def do_POST(self):
             path=self.path.split("?",1)[0].rstrip("/")
+            if path.endswith("/api/database-archive") or path=="/api/database-archive":
+                try:
+                    length=min(65536,int(self.headers.get("Content-Length","0") or 0))
+                    payload=json.loads(self.rfile.read(length) or b"{}")
+                    return self.json(start_database_archive(payload), HTTPStatus.ACCEPTED)
+                except (ValueError,TypeError,json.JSONDecodeError) as exc:
+                    return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.BAD_REQUEST)
+                except RuntimeError as exc:
+                    return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.CONFLICT)
             if path.endswith("/api/settings") or path=="/api/settings":
                 try:
                     length=min(65536,int(self.headers.get("Content-Length","0") or 0))
