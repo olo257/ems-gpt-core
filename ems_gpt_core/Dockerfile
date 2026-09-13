@@ -1,5 +1,6 @@
 FROM python:3.13-alpine
 WORKDIR /app
+RUN apk add --no-cache mariadb-client
 RUN pip install --no-cache-dir PyMySQL==1.1.2
 COPY *.py /app/
 COPY webui.html /app/webui.html

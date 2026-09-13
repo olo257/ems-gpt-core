@@ -27,29 +27,64 @@ class ExecutorAdapters:
     number: Callable
     ha_state: Callable
     ha_service_response: Callable
+    config_settings: dict | None = None
 
 
 def build_executor(a: ExecutorAdapters):
-    OPTIONS, OPERATIONAL_SETTINGS = a.options, a.operational_settings
+    OPTIONS, OPERATIONAL_SETTINGS, CONFIG_SETTINGS = a.options, a.operational_settings, a.config_settings or {}
     RUNTIME_SETTINGS_PATH, LOCK, STATE = a.runtime_settings_path, a.lock, a.state
     record_event, local_now, db, slot_start = a.record_event, a.local_now, a.db, a.slot_start
     tou_program_snapshot, active_tou_program = a.tou_program_snapshot, a.active_tou_program
     number, ha_state, ha_service_response = a.number, a.ha_state, a.ha_service_response
 
     def settings_payload() -> dict:
-        return {key: {"value": float(OPTIONS[key]), "min": spec[0], "max": spec[1], "label": spec[2], "group": spec[3]}
-                for key, spec in OPERATIONAL_SETTINGS.items()}
+        result = {key: {"value": float(OPTIONS[key]), "min": spec[0], "max": spec[1],
+                        "step": 0.01, "type": "number", "label": spec[2], "group": spec[3]}
+                  for key, spec in OPERATIONAL_SETTINGS.items()}
+        for key, spec in CONFIG_SETTINGS.items():
+            result[key] = {**spec, "value": OPTIONS.get(key)}
+        return result
     
     
     def update_operational_settings(payload: dict) -> dict:
         changed = {}
         for key, raw in payload.items():
-            if key not in OPERATIONAL_SETTINGS:
+            if key not in OPERATIONAL_SETTINGS and key not in CONFIG_SETTINGS:
                 raise ValueError(f"unknown setting: {key}")
-            low, high, _, _ = OPERATIONAL_SETTINGS[key]
-            value = float(raw)
-            if not low <= value <= high:
-                raise ValueError(f"{key} must be between {low} and {high}")
+            if key in OPERATIONAL_SETTINGS:
+                low, high, _, _ = OPERATIONAL_SETTINGS[key]
+                value = float(raw)
+                if not low <= value <= high:
+                    raise ValueError(f"{key} must be between {low} and {high}")
+            else:
+                spec = CONFIG_SETTINGS[key]
+                setting_type = spec["type"]
+                if setting_type == "boolean":
+                    if not isinstance(raw, bool):
+                        raise ValueError(f"{key} must be boolean")
+                    value = raw
+                elif setting_type == "number":
+                    value = float(raw)
+                    if not float(spec["min"]) <= value <= float(spec["max"]):
+                        raise ValueError(f"{key} must be between {spec['min']} and {spec['max']}")
+                    if float(spec.get("step", 0.01)).is_integer():
+                        value = int(value)
+                elif setting_type == "select":
+                    value = str(raw)
+                    if value not in spec["options"]:
+                        raise ValueError(f"{key} has invalid option")
+                else:
+                    value = str(raw).strip()
+                    if setting_type == "time":
+                        try:
+                            hour, minute = (int(part) for part in value.split(":"))
+                        except (TypeError, ValueError):
+                            raise ValueError(f"{key} must use HH:MM")
+                        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                            raise ValueError(f"{key} must use HH:MM")
+                        value = f"{hour:02d}:{minute:02d}"
+                    elif setting_type == "entity" and value and "." not in value:
+                        raise ValueError(f"{key} must be an entity_id")
             changed[key] = value
         if not changed:
             raise ValueError("no settings supplied")
@@ -58,6 +93,20 @@ def build_executor(a: ExecutorAdapters):
             current = json.loads(RUNTIME_SETTINGS_PATH.read_text(encoding="utf-8"))
         except FileNotFoundError:
             pass
+        candidate = {**OPTIONS, **current, **changed}
+        if candidate.get("backup_enabled"):
+            local_path = str(candidate.get("backup_local_directory") or "")
+            omv_path = str(candidate.get("backup_omv_directory") or "")
+            if not (local_path == "/backup" or local_path.startswith("/backup/")):
+                raise ValueError("backup_local_directory must be under /backup")
+            if not (omv_path == "/media" or omv_path.startswith("/media/")):
+                raise ValueError("backup_omv_directory must be under /media")
+            if local_path == omv_path:
+                raise ValueError("local and OMV backup directories must differ")
+        for appliance in ("dishwasher", "large_fridge", "small_fridge", "freezer", "washer", "dryer"):
+            prefix = f"appliance_{appliance}_"
+            if candidate.get(prefix + "enabled") and not str(candidate.get(prefix + "energy_entity") or "").strip():
+                raise ValueError(f"{prefix}energy_entity is required when enabled")
         current.update(changed)
         temporary = RUNTIME_SETTINGS_PATH.with_suffix(".tmp")
         temporary.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")

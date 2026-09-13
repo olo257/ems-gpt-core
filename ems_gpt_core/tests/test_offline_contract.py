@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.28.0"', APP_SOURCE)
-        self.assertIn('version: "0.28.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.29.0"', APP_SOURCE)
+        self.assertIn('version: "0.29.0"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -233,7 +233,8 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_table_formatter_preserves_letter_t(self):
         self.assertNotIn("replace('T',' ')", SOURCE)
-        self.assertIn("replace(/(\\\\d)T(?=\\\\d)/,'$1 ')", SOURCE)
+        self.assertIn("if(text[10]==='T')", SOURCE)
+        self.assertIn("if(text.length===16)text+=':00'", SOURCE)
 
     def test_explicit_ppd_matrix_is_persisted_and_validated(self):
         for field in (

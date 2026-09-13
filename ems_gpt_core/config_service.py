@@ -45,6 +45,46 @@ OPERATIONAL_SETTINGS = {
     "observer_min_quality_score_pct": (0.0, 100.0, "Observer: minimalna jakość [%]", "AI Observer"),
 }
 
+BACKUP_SETTINGS = {
+    "backup_enabled": {"type": "boolean", "label": "Włącz codzienny backup", "group": "Backup bazy ems_gpt"},
+    "backup_time": {"type": "time", "label": "Godzina backupu", "group": "Backup bazy ems_gpt"},
+    "backup_local_directory": {"type": "text", "label": "Katalog lokalny", "group": "Backup bazy ems_gpt"},
+    "backup_omv_directory": {"type": "text", "label": "Katalog OMV", "group": "Backup bazy ems_gpt"},
+    "backup_daily_retention": {"type": "number", "min": 1, "max": 90, "step": 1, "label": "Kopie dzienne", "group": "Backup bazy ems_gpt"},
+    "backup_weekly_retention": {"type": "number", "min": 0, "max": 52, "step": 1, "label": "Kopie tygodniowe", "group": "Backup bazy ems_gpt"},
+    "backup_monthly_retention": {"type": "number", "min": 0, "max": 36, "step": 1, "label": "Kopie miesięczne", "group": "Backup bazy ems_gpt"},
+    "backup_sha256_enabled": {"type": "boolean", "label": "Weryfikuj SHA-256", "group": "Backup bazy ems_gpt"},
+    "backup_min_size_bytes": {"type": "number", "min": 1024, "max": 10737418240, "step": 1024, "label": "Minimalny rozmiar [B]", "group": "Backup bazy ems_gpt"},
+}
+
+APPLIANCE_DEFAULTS = {
+    "dishwasher": ("Zmywarka", "sensor.zmywarka_energy", "sensor.zmywarka_power", "", "switch.zmywarka", "total", 5.0),
+    "large_fridge": ("Duża lodówka", "", "", "", "", "total", 5.0),
+    "small_fridge": ("Mała lodówka", "", "", "", "", "total", 5.0),
+    "freezer": ("Zamrażarka", "", "", "", "", "total", 5.0),
+    "washer": ("Pralka", "sensor.pralka_daily_energy_consumption", "", "sensor.pralnia_pralka_daily_water_consumption", "", "daily", 5.0),
+    "dryer": ("Suszarka", "sensor.suszarka_do_ubran_daily_energy_consumption", "", "", "", "daily", 5.0),
+}
+
+
+def appliance_settings() -> dict:
+    result = {}
+    for key, (label, *_values) in APPLIANCE_DEFAULTS.items():
+        group = f"Urządzenia — {label}"
+        result.update({
+            f"appliance_{key}_enabled": {"type": "boolean", "label": "Uwzględniaj w analityce", "group": group},
+            f"appliance_{key}_energy_entity": {"type": "entity", "label": "Encja energii", "group": group},
+            f"appliance_{key}_power_entity": {"type": "entity", "label": "Encja mocy", "group": group},
+            f"appliance_{key}_water_entity": {"type": "entity", "label": "Encja wody", "group": group},
+            f"appliance_{key}_state_entity": {"type": "entity", "label": "Encja stanu", "group": group},
+            f"appliance_{key}_counter_type": {"type": "select", "options": ["daily", "total"], "label": "Rodzaj licznika", "group": group},
+            f"appliance_{key}_active_power_threshold_w": {"type": "number", "min": 0, "max": 5000, "step": 1, "label": "Próg pracy [W]", "group": group},
+        })
+    return result
+
+
+CONFIG_SETTINGS = {**BACKUP_SETTINGS, **appliance_settings()}
+
 
 DEFAULT_OPTIONS = {
     "timezone": "Europe/Warsaw",
@@ -102,7 +142,27 @@ DEFAULT_OPTIONS = {
     "executor_activation_ack": "",
     "connector_service_map_json": "{}",
     "ai_observer_enabled": True,
+    "backup_enabled": False,
+    "backup_time": "02:20",
+    "backup_local_directory": "/backup/ems-gpt",
+    "backup_omv_directory": "/media/ems-gpt-backup",
+    "backup_daily_retention": 14,
+    "backup_weekly_retention": 8,
+    "backup_monthly_retention": 12,
+    "backup_sha256_enabled": True,
+    "backup_min_size_bytes": 1024 * 1024,
 }
+
+for _key, (_label, _energy, _power, _water, _state, _counter, _threshold) in APPLIANCE_DEFAULTS.items():
+    DEFAULT_OPTIONS.update({
+        f"appliance_{_key}_enabled": bool(_energy),
+        f"appliance_{_key}_energy_entity": _energy,
+        f"appliance_{_key}_power_entity": _power,
+        f"appliance_{_key}_water_entity": _water,
+        f"appliance_{_key}_state_entity": _state,
+        f"appliance_{_key}_counter_type": _counter,
+        f"appliance_{_key}_active_power_threshold_w": _threshold,
+    })
 
 
 def load_options(options_path: Path, runtime_settings_path: Path) -> dict:

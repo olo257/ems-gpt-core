@@ -103,7 +103,7 @@ def build_handler(a: ApiAdapters):
                     return self.json({"status":"ERROR","error":type(exc).__name__}, HTTPStatus.INTERNAL_SERVER_ERROR)
             if path.endswith("/api/process-status") or path == "/api/process-status":
                 return self.json({})
-            if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs")):
+            if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs","appliances")):
                 name=path.rsplit("/",1)[-1]; params=parse_qs(urlparse(self.path).query); limit=min(500,max(1,int(params.get("limit",["96"])[0])))
                 queries={
                   "plan":("SELECT * FROM ems_gpt_slots WHERE actual_recorded_at IS NULL AND slot_start>=%s ORDER BY slot_start LIMIT %s",(slot_start().replace(tzinfo=None),limit)),
@@ -123,6 +123,7 @@ def build_handler(a: ApiAdapters):
                   "process-execution":("SELECT * FROM ems_gpt_core_process_execution ORDER BY recorded_at DESC LIMIT %s",(limit,)),
                   "todo":("SELECT * FROM ems_gpt_core_todo ORDER BY created_at DESC LIMIT %s",(limit,)),
                   "ai-runs":("SELECT * FROM ems_gpt_core_ai_runs ORDER BY started_at DESC LIMIT %s",(limit,)),
+                  "appliances":("SELECT * FROM ems_gpt_core_appliance_daily ORDER BY local_day DESC,appliance_name LIMIT %s",(limit,)),
                 }
                 with db() as conn,conn.cursor() as cur: cur.execute(*queries[name]); rows=cur.fetchall()
                 return self.json({"view":name,"count":len(rows),"rows":rows})

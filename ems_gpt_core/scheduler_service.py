@@ -46,6 +46,8 @@ class SchedulerAdapters:
     run_analytics: Callable
     run_ai_observer: Callable
     generate_diagnostic_report: Callable
+    capture_appliances: Callable
+    maintain_backup: Callable
 
 
 def run_scheduler(a: SchedulerAdapters) -> None:
@@ -152,6 +154,8 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 a.run_serialized("planner", a.run_planner, "hourly_replan")
             a.stage_executor_commands()
             a.dispatch_ready_commands()
+            appliance_result = a.capture_appliances()
+            backup_result = a.maintain_backup()
             if minute < 15:
                 with a.db() as conn, conn.cursor() as cur:
                     cur.execute("SELECT MAX(completed_at) v FROM ems_gpt_core_analytics_runs WHERE status='COMPLETED'")
@@ -169,9 +173,13 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 a.state["database"] = "CONNECTED"
                 a.state["ha_input"] = "CONNECTED" if telemetry_ok else "PARTIAL"
                 a.state["status"] = "RUNNING"
+                a.state["appliances"] = appliance_result
+                a.state["backup"] = backup_result
                 a.state["modules"].update(
                     core="RUNNING", planner="RUNNING", ppd="RUNNING", analytics="RUNNING",
                     diagnostics="RUNNING",
+                    appliances="RUNNING" if appliance_result.get("status") == "OK" else appliance_result.get("status"),
+                    backup=backup_result.get("status"),
                     ai_observer="DISABLED" if not a.options.get("ai_observer_enabled") else "SHADOW_READ_ONLY",
                 )
         except Exception as exc:

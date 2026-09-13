@@ -13,7 +13,9 @@ from zoneinfo import ZoneInfo
 
 from api_service import ApiAdapters, build_handler
 from analytics_service import run_analytics as run_analytics_service
-from config_service import OPERATIONAL_SETTINGS, load_options
+from appliance_service import ApplianceAdapters, build_appliance_meter
+from backup_service import BackupAdapters, build_backup_service
+from config_service import CONFIG_SETTINGS, OPERATIONAL_SETTINGS, load_options
 from database_service import build_database
 from database_audit_service import audit_v3_tables, catalog_database_tables
 from diagnostics_service import generate_diagnostic_report as run_diagnostics_service
@@ -33,7 +35,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.28.0"
+APP_VERSION = "0.29.0"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -256,6 +258,7 @@ refresh_rce = _INGESTION.refresh_rce
 _EXECUTOR = build_executor(ExecutorAdapters(
     options=OPTIONS,
     operational_settings=OPERATIONAL_SETTINGS,
+    config_settings=CONFIG_SETTINGS,
     runtime_settings_path=RUNTIME_SETTINGS_PATH,
     lock=LOCK,
     state=STATE,
@@ -280,6 +283,14 @@ externally_started_hp_is_running = _EXECUTOR.externally_started_hp_is_running
 stage_executor_commands = _EXECUTOR.stage_executor_commands
 dispatch_ready_commands = _EXECUTOR.dispatch_ready_commands
 acknowledge_command = _EXECUTOR.acknowledge_command
+
+
+capture_appliances = build_appliance_meter(ApplianceAdapters(
+    options=OPTIONS, db=db, local_now=local_now, ha_state=ha_state, record_event=record_event,
+))
+maintain_backup = build_backup_service(BackupAdapters(
+    options=OPTIONS, local_now=local_now, record_event=record_event, log=LOG,
+))
 
 
 def complete_rce_cycle(result: dict, run_type: str) -> dict:
@@ -310,6 +321,7 @@ def engine_loop() -> None:
         stage_executor_commands=stage_executor_commands, dispatch_ready_commands=dispatch_ready_commands,
         run_analytics=run_analytics, run_ai_observer=run_ai_observer,
         generate_diagnostic_report=generate_diagnostic_report,
+        capture_appliances=capture_appliances, maintain_backup=maintain_backup,
     ))
 
 HTML = Path(__file__).with_name("webui.html").read_text(encoding="utf-8")
