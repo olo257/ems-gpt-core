@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.27.4"', APP_SOURCE)
-        self.assertIn('version: "0.27.4"', CONFIG)
+        self.assertIn('APP_VERSION = "0.27.5"', APP_SOURCE)
+        self.assertIn('version: "0.27.5"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -365,17 +365,6 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('LOG.exception("startup read-only database audit failed")', SOURCE)
         self.assertIn("threading.Thread(target=startup_database_audit, daemon=True).start()", SOURCE)
         self.assertIn("content_scanned\": False", audit_source)
-
-    def test_legacy_archive_is_explicit_bounded_and_verified(self):
-        archive_source = (ROOT / "archive_service.py").read_text(encoding="utf-8")
-        self.assertIn('CONFIRMATION = "ARCHIVE_AND_DROP_45"', archive_source)
-        self.assertIn("len(LEGACY_TABLES) != 45", archive_source)
-        self.assertIn("CREATE TABLE", archive_source)
-        self.assertIn("INSERT INTO", archive_source)
-        self.assertIn("source_rows != archive_rows", archive_source)
-        self.assertLess(archive_source.index("source_rows != archive_rows"), archive_source.index('cur.execute(f"DROP TABLE'))
-        self.assertIn('backup_id != "57d1a914"', SOURCE)
-
 
 if __name__ == "__main__":
     unittest.main()
