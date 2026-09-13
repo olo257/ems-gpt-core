@@ -75,6 +75,27 @@ def _is_core_quality_slot(row: dict) -> bool:
     return execution_reason.startswith("CORE_TELEMETRY_") or row.get("actual_mode") == "MISSING_OUTAGE"
 
 
+def _hp_execution_metrics(rows: list[dict]) -> dict:
+    """Aggregate the three physical HP modes without mixing their COP values."""
+    result = {}
+    total_in = total_out = 0.0
+    for mode in ("heating", "dhw", "cooling"):
+        consumed = sum(max(0.0, float(row.get(f"actual_{mode}_consumed_kwh") or 0)) for row in rows)
+        generated = sum(max(0.0, float(row.get(f"actual_{mode}_generated_kwh") or 0)) for row in rows)
+        result[f"actual_{mode}_consumed_kwh"] = round(consumed, 6)
+        result[f"actual_{mode}_generated_kwh"] = round(generated, 6)
+        result[f"actual_{mode}_cop"] = round(generated / consumed, 3) if consumed > .001 else None
+        total_in += consumed
+        total_out += generated
+    result["actual_heat_pump_electric_kwh"] = round(total_in, 6)
+    result["actual_heat_pump_thermal_kwh"] = round(total_out, 6)
+    result["actual_heat_pump_cop"] = round(total_out / total_in, 3) if total_in > .001 else None
+    result["actual_heat_pump_running_slot_count"] = sum(
+        bool(row.get("actual_heat_pump_is_running")) for row in rows
+    )
+    return result
+
+
 def run_analytics(*, options, db, local_now, record_event) -> dict:
     """Persist slot quality, rolling WAPE and a reproducible analysis watermark."""
     run_id = str(uuid.uuid4())
@@ -157,6 +178,7 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
             "suggested_pv2_scale": _suggested_scale(pv_metric_rows, "forecast_pv2_kwh", "actual_pv2_kwh"),
             "suggested_load_scale": _suggested_scale(metric_rows, "forecast_load_kwh", "actual_native_load_kwh"),
         }
+        metrics.update(_hp_execution_metrics(metric_rows))
         planned_net = sum(float(r.get("planned_sell_kwh") or 0)*float(r.get("price_sell_pln_kwh") or 0)
                           - float(r.get("planned_buy_kwh") or 0)*float(r.get("price_buy_pln_kwh") or 0) for r in metric_rows)
         actual_net = sum((float(r.get("actual_sell_kwh") or 0)+float(r.get("actual_pv_export_kwh") or 0))*float(r.get("price_sell_pln_kwh") or 0)
@@ -213,6 +235,11 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
           pv_daylight_slots=%s,metric_confidence_pct=%s,import_active_mae_kwh=%s,
           export_active_mae_kwh=%s,import_event_f1_pct=%s,export_event_f1_pct=%s,
           suggested_pv1_scale=%s,suggested_pv2_scale=%s,suggested_load_scale=%s,
+          actual_heating_consumed_kwh=%s,actual_heating_generated_kwh=%s,actual_heating_cop=%s,
+          actual_dhw_consumed_kwh=%s,actual_dhw_generated_kwh=%s,actual_dhw_cop=%s,
+          actual_cooling_consumed_kwh=%s,actual_cooling_generated_kwh=%s,actual_cooling_cop=%s,
+          actual_heat_pump_electric_kwh=%s,actual_heat_pump_thermal_kwh=%s,actual_heat_pump_cop=%s,
+          actual_heat_pump_running_slot_count=%s,
           details_json=%s WHERE run_id=%s""",
           (len(rows), complete, metrics["pv1_wape_pct"], metrics["pv2_wape_pct"],
            metrics["pv_wape_pct"], metrics["load_wape_pct"],
@@ -222,6 +249,11 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
            len(pv_metric_rows), confidence, metrics["import_active_mae_kwh"], metrics["export_active_mae_kwh"],
            metrics["import_event_f1_pct"], metrics["export_event_f1_pct"],
            metrics["suggested_pv1_scale"], metrics["suggested_pv2_scale"], metrics["suggested_load_scale"],
+           metrics["actual_heating_consumed_kwh"],metrics["actual_heating_generated_kwh"],metrics["actual_heating_cop"],
+           metrics["actual_dhw_consumed_kwh"],metrics["actual_dhw_generated_kwh"],metrics["actual_dhw_cop"],
+           metrics["actual_cooling_consumed_kwh"],metrics["actual_cooling_generated_kwh"],metrics["actual_cooling_cop"],
+           metrics["actual_heat_pump_electric_kwh"],metrics["actual_heat_pump_thermal_kwh"],
+           metrics["actual_heat_pump_cop"],metrics["actual_heat_pump_running_slot_count"],
            json.dumps({"cutoff": str(cutoff), "metrics": metrics, "metric_slots": len(metric_rows),
                        "pv_daylight_slots": len(pv_metric_rows), "metric_confidence_pct": confidence,
                        "flow_threshold_kwh": flow_threshold, "import_active_slots": import_flow["active_slots"],

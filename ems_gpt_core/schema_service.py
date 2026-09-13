@@ -242,6 +242,34 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             "planned_pv_curtail_kwh DOUBLE NOT NULL DEFAULT 0",
         ):
             cur.execute(f"ALTER TABLE ems_gpt_core_hourly ADD COLUMN IF NOT EXISTS {column}")
+        hp_energy_columns = (
+            "actual_heating_consumed_kwh DOUBLE NULL", "actual_heating_generated_kwh DOUBLE NULL",
+            "actual_heating_cop DOUBLE NULL", "actual_dhw_consumed_kwh DOUBLE NULL",
+            "actual_dhw_generated_kwh DOUBLE NULL", "actual_dhw_cop DOUBLE NULL",
+            "actual_cooling_consumed_kwh DOUBLE NULL", "actual_cooling_generated_kwh DOUBLE NULL",
+            "actual_cooling_cop DOUBLE NULL", "actual_heat_pump_electric_kwh DOUBLE NULL",
+            "actual_heat_pump_thermal_kwh DOUBLE NULL", "actual_heat_pump_cop DOUBLE NULL",
+            "actual_heat_pump_running_slot_count INT NOT NULL DEFAULT 0",
+        )
+        for table in ("ems_gpt_core_hourly", "ems_gpt_daily"):
+            for column in hp_energy_columns:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
+        for column in (
+            "heating_production_start_time DATETIME(6) NULL", "heating_production_end_time DATETIME(6) NULL",
+            "dhw_production_start_time DATETIME(6) NULL", "dhw_production_end_time DATETIME(6) NULL",
+            "cooling_production_start_time DATETIME(6) NULL", "cooling_production_end_time DATETIME(6) NULL",
+        ):
+            cur.execute(f"ALTER TABLE ems_gpt_daily ADD COLUMN IF NOT EXISTS {column}")
+        for column in (
+            "actual_heating_consumed_kwh DOUBLE NULL", "actual_heating_generated_kwh DOUBLE NULL",
+            "actual_heating_cop DOUBLE NULL", "actual_dhw_consumed_kwh DOUBLE NULL",
+            "actual_dhw_generated_kwh DOUBLE NULL", "actual_dhw_cop DOUBLE NULL",
+            "actual_cooling_consumed_kwh DOUBLE NULL", "actual_cooling_generated_kwh DOUBLE NULL",
+            "actual_cooling_cop DOUBLE NULL", "actual_heat_pump_electric_kwh DOUBLE NULL",
+            "actual_heat_pump_thermal_kwh DOUBLE NULL", "actual_heat_pump_cop DOUBLE NULL",
+            "actual_heat_pump_running_slot_count INT NOT NULL DEFAULT 0",
+        ):
+            cur.execute(f"ALTER TABLE ems_gpt_core_analytics_runs ADD COLUMN IF NOT EXISTS {column}")
         for column in (
             "completion_status VARCHAR(24) NOT NULL DEFAULT 'OPEN'",
             "terminal_slot_count INT NOT NULL DEFAULT 0",

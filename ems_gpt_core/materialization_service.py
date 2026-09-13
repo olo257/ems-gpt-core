@@ -295,6 +295,10 @@ def build_materializations(a: MaterializationAdapters):
               SUM(COALESCE(s.actual_sell_kwh,0)+COALESCE(s.actual_pv_export_kwh,0)) aexport,
               SUM((COALESCE(s.planned_sell_kwh,0)+COALESCE(s.planned_pv_export_kwh,0))*COALESCE(s.price_sell_pln_kwh,0)-COALESCE(s.planned_buy_kwh,0)*COALESCE(s.price_buy_pln_kwh,0)) pnet,
               SUM((COALESCE(s.actual_sell_kwh,0)+COALESCE(s.actual_pv_export_kwh,0))*COALESCE(s.price_sell_pln_kwh,0)-COALESCE(s.actual_buy_kwh,0)*COALESCE(s.price_buy_pln_kwh,0)) anet,
+              SUM(s.actual_heating_consumed_kwh) hp_heat_in,SUM(s.actual_heating_generated_kwh) hp_heat_out,
+              SUM(s.actual_dhw_consumed_kwh) hp_dhw_in,SUM(s.actual_dhw_generated_kwh) hp_dhw_out,
+              SUM(s.actual_cooling_consumed_kwh) hp_cool_in,SUM(s.actual_cooling_generated_kwh) hp_cool_out,
+              SUM(COALESCE(s.actual_heat_pump_is_running,0)) hp_running_slots,
               SUBSTRING_INDEX(GROUP_CONCAT(s.soc_end_pct ORDER BY s.slot_start DESC),',',1) soc,
               MAX(s.actual_recorded_at) watermark
               FROM ems_gpt_slots s LEFT JOIN ems_gpt_core_execution_details d ON d.slot_start=s.slot_start
@@ -339,9 +343,27 @@ def build_materializations(a: MaterializationAdapters):
                    r["watermark"],now if completion=="CLOSED" else None,quality=="ACCEPTED"))
                 cur.execute("""UPDATE ems_gpt_core_hourly SET planned_pv_to_bat_kwh=%s,
                   planned_pv_to_cwu_kwh=%s,planned_pv_to_ev_kwh=%s,planned_pv_export_kwh=%s,
-                  planned_pv_curtail_kwh=%s WHERE hour_start=%s""",
+                  planned_pv_curtail_kwh=%s,
+                  actual_heating_consumed_kwh=%s,actual_heating_generated_kwh=%s,
+                  actual_heating_cop=%s,actual_dhw_consumed_kwh=%s,actual_dhw_generated_kwh=%s,
+                  actual_dhw_cop=%s,actual_cooling_consumed_kwh=%s,actual_cooling_generated_kwh=%s,
+                  actual_cooling_cop=%s,actual_heat_pump_electric_kwh=%s,
+                  actual_heat_pump_thermal_kwh=%s,actual_heat_pump_cop=%s,
+                  actual_heat_pump_running_slot_count=%s WHERE hour_start=%s""",
                   (r["pvbat"] or 0,r["pvcwu"] or 0,r["pvev"] or 0,r["pvexport"] or 0,
-                   r["pvcurtail"] or 0,hour_start_value))
+                   r["pvcurtail"] or 0,
+                   r["hp_heat_in"],r["hp_heat_out"],
+                   float(r["hp_heat_out"] or 0)/float(r["hp_heat_in"]) if float(r["hp_heat_in"] or 0)>.001 else None,
+                   r["hp_dhw_in"],r["hp_dhw_out"],
+                   float(r["hp_dhw_out"] or 0)/float(r["hp_dhw_in"]) if float(r["hp_dhw_in"] or 0)>.001 else None,
+                   r["hp_cool_in"],r["hp_cool_out"],
+                   float(r["hp_cool_out"] or 0)/float(r["hp_cool_in"]) if float(r["hp_cool_in"] or 0)>.001 else None,
+                   sum(float(r[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in")),
+                   sum(float(r[k] or 0) for k in ("hp_heat_out","hp_dhw_out","hp_cool_out")),
+                   sum(float(r[k] or 0) for k in ("hp_heat_out","hp_dhw_out","hp_cool_out"))/
+                   sum(float(r[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in"))
+                   if sum(float(r[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in"))>.001 else None,
+                   int(r["hp_running_slots"] or 0),hour_start_value))
             for offset in range(max(1, days)):
                 day_start=first_day+timedelta(days=offset); day_end=day_start+timedelta(days=1)
                 cur.execute("""SELECT COUNT(*) slots,SUM(actual_recorded_at IS NOT NULL) terminal_n,
@@ -356,6 +378,16 @@ def build_materializations(a: MaterializationAdapters):
                   SUM(COALESCE(actual_sell_kwh,0)+COALESCE(actual_pv_export_kwh,0)) aexport,
                   SUM((COALESCE(planned_sell_kwh,0)+COALESCE(planned_pv_export_kwh,0))*COALESCE(price_sell_pln_kwh,0)-COALESCE(planned_buy_kwh,0)*COALESCE(price_buy_pln_kwh,0)) pnet,
                   SUM((COALESCE(actual_sell_kwh,0)+COALESCE(actual_pv_export_kwh,0))*COALESCE(price_sell_pln_kwh,0)-COALESCE(actual_buy_kwh,0)*COALESCE(price_buy_pln_kwh,0)) anet
+                  ,SUM(actual_heating_consumed_kwh) hp_heat_in,SUM(actual_heating_generated_kwh) hp_heat_out
+                  ,SUM(actual_dhw_consumed_kwh) hp_dhw_in,SUM(actual_dhw_generated_kwh) hp_dhw_out
+                  ,SUM(actual_cooling_consumed_kwh) hp_cool_in,SUM(actual_cooling_generated_kwh) hp_cool_out
+                  ,SUM(COALESCE(actual_heat_pump_is_running,0)) hp_running_slots
+                  ,MIN(CASE WHEN actual_heating_generated_kwh>0.001 THEN slot_start END) hp_heat_start
+                  ,MAX(CASE WHEN actual_heating_generated_kwh>0.001 THEN slot_end END) hp_heat_end
+                  ,MIN(CASE WHEN actual_dhw_generated_kwh>0.001 THEN slot_start END) hp_dhw_start
+                  ,MAX(CASE WHEN actual_dhw_generated_kwh>0.001 THEN slot_end END) hp_dhw_end
+                  ,MIN(CASE WHEN actual_cooling_generated_kwh>0.001 THEN slot_start END) hp_cool_start
+                  ,MAX(CASE WHEN actual_cooling_generated_kwh>0.001 THEN slot_end END) hp_cool_end
                   FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s""", (day_start,day_end))
                 d=cur.fetchone(); expected=int(d["slots"] or 0); terminal=int(d["terminal_n"] or 0); missing=int(d["missing_n"] or 0)
                 cur.execute("""SELECT COUNT(*) n FROM ems_gpt_core_execution_details
@@ -391,9 +423,29 @@ def build_materializations(a: MaterializationAdapters):
                    json.dumps({"completion":completion,"expected":expected,"terminal":terminal,"missing":missing,"recovered":recovered}),
                    quality=="ACCEPTED",completion,terminal))
                 cur.execute("""UPDATE ems_gpt_daily SET planned_pv_to_bat_kwh=%s,
-                  planned_pv_to_cwu_kwh=%s,planned_pv_to_ev_kwh=%s,planned_pv_curtail_kwh=%s
+                  planned_pv_to_cwu_kwh=%s,planned_pv_to_ev_kwh=%s,planned_pv_curtail_kwh=%s,
+                  actual_heating_consumed_kwh=%s,actual_heating_generated_kwh=%s,actual_heating_cop=%s,
+                  actual_dhw_consumed_kwh=%s,actual_dhw_generated_kwh=%s,actual_dhw_cop=%s,
+                  actual_cooling_consumed_kwh=%s,actual_cooling_generated_kwh=%s,actual_cooling_cop=%s,
+                  actual_heat_pump_electric_kwh=%s,actual_heat_pump_thermal_kwh=%s,actual_heat_pump_cop=%s,
+                  actual_heat_pump_running_slot_count=%s,
+                  heating_production_start_time=%s,heating_production_end_time=%s,
+                  dhw_production_start_time=%s,dhw_production_end_time=%s,
+                  cooling_production_start_time=%s,cooling_production_end_time=%s
                   WHERE day_date=%s""", (d["pvbat"] or 0,d["pvcwu"] or 0,d["pvev"] or 0,
-                  d["pvcurtail"] or 0,day_start.date()))
+                  d["pvcurtail"] or 0,d["hp_heat_in"],d["hp_heat_out"],
+                  float(d["hp_heat_out"] or 0)/float(d["hp_heat_in"]) if float(d["hp_heat_in"] or 0)>.001 else None,
+                  d["hp_dhw_in"],d["hp_dhw_out"],
+                  float(d["hp_dhw_out"] or 0)/float(d["hp_dhw_in"]) if float(d["hp_dhw_in"] or 0)>.001 else None,
+                  d["hp_cool_in"],d["hp_cool_out"],
+                  float(d["hp_cool_out"] or 0)/float(d["hp_cool_in"]) if float(d["hp_cool_in"] or 0)>.001 else None,
+                  sum(float(d[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in")),
+                  sum(float(d[k] or 0) for k in ("hp_heat_out","hp_dhw_out","hp_cool_out")),
+                  sum(float(d[k] or 0) for k in ("hp_heat_out","hp_dhw_out","hp_cool_out"))/
+                  sum(float(d[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in"))
+                  if sum(float(d[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in"))>.001 else None,
+                  int(d["hp_running_slots"] or 0),d["hp_heat_start"],d["hp_heat_end"],
+                  d["hp_dhw_start"],d["hp_dhw_end"],d["hp_cool_start"],d["hp_cool_end"],day_start.date()))
         return {"hours":len(hour_rows),"days":max(1,days)}
     
     

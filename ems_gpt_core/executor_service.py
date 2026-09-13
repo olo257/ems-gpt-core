@@ -167,6 +167,9 @@ def build_executor(a: ExecutorAdapters):
     
     
     PROCESS_NAMES = ("BATTERY_IMPORT", "BATTERY_EXPORT", "PV_CWU", "PV_EV", "HP_HEAT_DHW")
+    # Reserved management contract.  It is deliberately excluded from
+    # PROCESS_NAMES until the summer control policy and safe scripts exist.
+    FUTURE_PROCESS_NAMES = ("COOL_DHW",)
     OVERRIDE_STATES = ("AUTO", "FORCE_ON", "FORCE_OFF")
     
     
