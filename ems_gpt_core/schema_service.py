@@ -129,6 +129,18 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
           complete_source_samples INT NOT NULL DEFAULT 0,
           export_attribution VARCHAR(32) NOT NULL DEFAULT 'UNRESOLVED',
           updated_at DATETIME(6) NOT NULL) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS ems_gpt_core_appliance_daily (
+          local_day DATE NOT NULL, appliance_key VARCHAR(40) NOT NULL,
+          appliance_name VARCHAR(100) NOT NULL, counter_type VARCHAR(16) NOT NULL,
+          energy_entity VARCHAR(255) NULL, power_entity VARCHAR(255) NULL,
+          water_entity VARCHAR(255) NULL, state_entity VARCHAR(255) NULL,
+          first_energy_kwh DOUBLE NULL, last_energy_kwh DOUBLE NULL, daily_energy_kwh DOUBLE NULL,
+          first_water_l DOUBLE NULL, last_water_l DOUBLE NULL, daily_water_l DOUBLE NULL,
+          current_power_w DOUBLE NULL, max_power_w DOUBLE NULL, is_active TINYINT(1) NOT NULL DEFAULT 0,
+          cycle_count INT NOT NULL DEFAULT 0, state_value VARCHAR(100) NULL,
+          quality_status VARCHAR(24) NOT NULL, updated_at DATETIME(6) NOT NULL,
+          PRIMARY KEY(local_day,appliance_key), INDEX ix_appliance_key_day(appliance_key,local_day)
+        ) ENGINE=InnoDB""",
     ]
     with db() as conn, conn.cursor() as cur:
         for sql in statements:
@@ -280,6 +292,8 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
                     ("core_schema_0_25_20", json.dumps({"version": app_version, "scope": "command_expiry_observer_todo_lifecycle"})))
         cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
                     ("core_schema_0_27_0", json.dumps({"version": app_version, "scope": "analytics_confidence_daylight_intermittent_flows"})))
+        cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
+                    ("core_schema_0_29_0", json.dumps({"version": app_version, "scope": "configurable_appliance_daily_metering"})))
         # Normalize the historical/UI typo before the 0.24 slot-id cutover.
         for table, column in (
             ("ems_gpt_slots", "grid_policy_planned"),

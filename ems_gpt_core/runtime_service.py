@@ -38,6 +38,7 @@ def build_runtime(app_name: str, app_version: str, log: Any):
             "core": "STARTING", "planner": "STARTING", "ppd": "STARTING",
             "analytics": "STARTING", "ai_observer": "SHADOW_READ_ONLY",
             "executor": "CONNECTOR_REQUIRED",
+            "appliances": "STARTING", "backup": "DISABLED",
         },
         "recovery_contract": "CORE_RECOVERY_0_24_2_R6",
     }
