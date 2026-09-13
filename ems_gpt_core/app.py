@@ -35,7 +35,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.29.1"
+APP_VERSION = "0.30.0"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -118,6 +118,14 @@ ENTITIES = {
     "hp_dhw_production": "sensor.panasonic_heat_pump_main_dhw_power_production",
     "hp_cool_consumption": "sensor.panasonic_heat_pump_main_cool_power_consumption",
     "hp_cool_production": "sensor.panasonic_heat_pump_main_cool_power_production",
+    # HA keeps these daily meters (and their Recorder history) independently.
+    # They are retained as the reconciliation/backfill contract for all HP modes.
+    "hp_heat_energy_consumed": "sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_ogrzewanie_pobrana",
+    "hp_heat_energy_generated": "sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_ogrzewanie_wytworzona",
+    "hp_dhw_energy_consumed": "sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_cwu_pobrana",
+    "hp_dhw_energy_generated": "sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_cwu_wytworzona",
+    "hp_cool_energy_consumed": "sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_chlodzenie_pobrana",
+    "hp_cool_energy_generated": "sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_chlodzenie_wytworzona",
     "hp_operations_counter": "sensor.panasonic_heat_pump_main_operations_counter",
     "hp_operations_hours": "sensor.panasonic_heat_pump_main_operations_hours",
 }

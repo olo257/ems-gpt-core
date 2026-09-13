@@ -1,3 +1,15 @@
+## 0.30.0
+
+- Rozszerzono wykonanie, agregację godzinową, dobową i analitykę pompy ciepła
+  na trzy niezależne tryby: CO, CWU i chłodzenie.
+- Dla każdego trybu zapisywane są energia pobrana, energia wytworzona i COP;
+  osobno utrzymywane są także sumy całej pompy oraz liczba slotów pracy.
+- Dobowe wykonanie zawiera początki i końce produkcji CO, CWU i chłodzenia.
+- Zarejestrowano sześć istniejących liczników energii HP z Home Assistant jako
+  kontrakt uzgodnienia i późniejszego importu historii, w tym pracy letniej.
+- Dodano `COOL_DHW` do panelu zarządzania jako nieaktywny proces planowany na
+  lato. Nie wykonuje decyzji ani poleceń i nie wpływa na tryb LIVE.
+
 ## 0.29.1
 
 - Przywrócono idempotentną aktualizację materializacji godzinowej i dobowej po

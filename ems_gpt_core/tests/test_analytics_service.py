@@ -6,10 +6,29 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from analytics_service import _flow_metrics, _is_core_quality_slot, _native_load_kwh, _suggested_scale
+from analytics_service import (
+    _flow_metrics, _hp_execution_metrics, _is_core_quality_slot,
+    _native_load_kwh, _suggested_scale,
+)
 
 
 class AnalyticsQualityWindowTests(unittest.TestCase):
+    def test_hp_execution_metrics_keep_modes_separate(self):
+        result = _hp_execution_metrics([
+            {"actual_heating_consumed_kwh": 1.0, "actual_heating_generated_kwh": 4.0,
+             "actual_dhw_consumed_kwh": .5, "actual_dhw_generated_kwh": 1.5,
+             "actual_cooling_consumed_kwh": 0.0, "actual_cooling_generated_kwh": 0.0,
+             "actual_heat_pump_is_running": 1},
+            {"actual_cooling_consumed_kwh": .25, "actual_cooling_generated_kwh": .75,
+             "actual_heat_pump_is_running": 1},
+        ])
+        self.assertEqual(result["actual_heating_cop"], 4.0)
+        self.assertEqual(result["actual_dhw_cop"], 3.0)
+        self.assertEqual(result["actual_cooling_cop"], 3.0)
+        self.assertEqual(result["actual_heat_pump_electric_kwh"], 1.75)
+        self.assertEqual(result["actual_heat_pump_thermal_kwh"], 6.25)
+        self.assertEqual(result["actual_heat_pump_running_slot_count"], 2)
+
     def test_intermittent_flow_metrics_ignore_inactive_slots(self):
         rows = [
             {"plan": 0.0, "actual": 0.0},
