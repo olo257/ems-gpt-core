@@ -1,3 +1,10 @@
+## 0.27.4
+
+- Dodano jednorazową, jawnie potwierdzaną archiwizację 45 zatwierdzonych tabel historycznych.
+- Każda tabela jest kopiowana pod prefiks `archive_20260913__` wraz ze strukturą i indeksami, liczba rekordów jest porównywana, a oryginał usuwany dopiero po zgodności.
+- Operacja jest wznawialna, ograniczona stałą listą i wymaga identyfikatora zweryfikowanego backupu HA.
+- Bez zmian w planerze, PPD, wykonawcy, recovery, Observerze i programach SOC Deye 1–6.
+
 ## 0.27.3
 
 - Rozszerzono audyt o lekki, wyłącznie odczytowy katalog wszystkich tabel schematu `ems_gpt`: rozmiar, estymowana liczba rekordów i zależności SQL.
