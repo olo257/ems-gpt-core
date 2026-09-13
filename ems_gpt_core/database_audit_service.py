@@ -15,6 +15,87 @@ def _serial(value: Any) -> Any:
     return value
 
 
+def catalog_database_tables(*, db, schema_name: str, log) -> dict:
+    """Return a lightweight schema-wide catalog without scanning table contents."""
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT table_name,table_type,engine,table_rows,data_length,index_length,
+                      data_free,create_time,update_time,table_collation
+                 FROM information_schema.tables
+                WHERE table_schema=%s
+                ORDER BY table_name""",
+            (schema_name,),
+        )
+        objects = cur.fetchall()
+
+        definitions = []
+        definition_queries = (
+            ("VIEW", "SELECT table_name object_name,view_definition definition FROM information_schema.views WHERE table_schema=%s"),
+            ("TRIGGER", "SELECT trigger_name object_name,action_statement definition FROM information_schema.triggers WHERE trigger_schema=%s"),
+            ("ROUTINE", "SELECT routine_name object_name,routine_definition definition FROM information_schema.routines WHERE routine_schema=%s"),
+            ("EVENT", "SELECT event_name object_name,event_definition definition FROM information_schema.events WHERE event_schema=%s"),
+        )
+        for object_type, sql in definition_queries:
+            cur.execute(sql, (schema_name,))
+            for row in cur.fetchall():
+                definitions.append((object_type, row["object_name"], str(row.get("definition") or "").lower()))
+
+        cur.execute(
+            """SELECT table_name,column_name,constraint_name,
+                      referenced_table_name,referenced_column_name
+                 FROM information_schema.key_column_usage
+                WHERE table_schema=%s AND referenced_table_name IS NOT NULL""",
+            (schema_name,),
+        )
+        foreign_keys = cur.fetchall()
+
+    rows = []
+    for obj in objects:
+        table = obj["table_name"]
+        table_lower = table.lower()
+        dependencies = [
+            {"type": object_type, "name": object_name}
+            for object_type, object_name, definition in definitions
+            if table_lower in definition and object_name != table
+        ]
+        for fk in foreign_keys:
+            if fk["referenced_table_name"] == table:
+                dependencies.append({
+                    "type": "FOREIGN_KEY_INBOUND", "name": fk["table_name"],
+                    "column": fk["column_name"], "constraint": fk["constraint_name"],
+                })
+            if fk["table_name"] == table:
+                dependencies.append({
+                    "type": "FOREIGN_KEY_OUTBOUND", "name": fk["referenced_table_name"],
+                    "column": fk["column_name"],
+                    "referenced_column": fk["referenced_column_name"],
+                    "constraint": fk["constraint_name"],
+                })
+        rows.append({
+            "table_name": table,
+            "table_type": obj["table_type"],
+            "engine": obj.get("engine"),
+            "size_bytes": int(obj.get("data_length") or 0) + int(obj.get("index_length") or 0),
+            "estimated_row_count": obj.get("table_rows"),
+            "create_time": _serial(obj.get("create_time")),
+            "information_schema_update_time": _serial(obj.get("update_time")),
+            "sql_dependencies": dependencies,
+            "content_scanned": False,
+        })
+
+    result = {
+        "status": "OK", "schema": schema_name, "read_only": True,
+        "content_scanned": False, "object_count": len(rows), "objects": rows,
+    }
+    log.info("database_catalog_summary %s", json.dumps({
+        "status": "OK", "schema": schema_name, "read_only": True,
+        "content_scanned": False, "object_count": len(rows),
+    }, ensure_ascii=False, default=str))
+    for row in rows:
+        log.info("database_catalog_table %s", json.dumps(row, ensure_ascii=False, default=str))
+    return result
+
+
 def audit_v3_tables(*, db, qname, schema_name: str, log) -> dict:
     """Inventory every object containing ``v3`` without changing the database."""
     with db() as conn, conn.cursor() as cur:
