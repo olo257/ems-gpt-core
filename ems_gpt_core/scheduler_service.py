@@ -8,6 +8,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 
+def rce_event_keys(clock: datetime) -> tuple[str, ...]:
+    """Return valid completion markers for the price day visible after restart."""
+    if clock.hour >= 14:
+        return (f"RCE_{clock.date()}_NEXT",)
+    return (f"RCE_{clock.date()}_TODAY",
+            f"RCE_{clock.date() - timedelta(days=1)}_NEXT")
+
+
 @dataclass(frozen=True)
 class SchedulerAdapters:
     options: dict
@@ -77,9 +85,11 @@ def run_scheduler(a: SchedulerAdapters) -> None:
             with a.db() as conn, conn.cursor() as cur:
                 cur.execute("SELECT MAX(published_at) last_run FROM ems_gpt_plan_runs WHERE status='PUBLISHED'")
                 last_run = cur.fetchone()["last_run"]
-                rce_key = f"RCE_{clock.date()}_{'NEXT' if hour >= 14 else 'TODAY'}"
-                cur.execute("""SELECT created_at,payload_json FROM ems_gpt_core_events
-                  WHERE event_type=%s ORDER BY created_at DESC LIMIT 1""", (rce_key,))
+                rce_keys = rce_event_keys(clock)
+                rce_key = rce_keys[0]
+                placeholders = ",".join(["%s"] * len(rce_keys))
+                cur.execute(f"""SELECT created_at,payload_json FROM ems_gpt_core_events
+                  WHERE event_type IN ({placeholders}) ORDER BY created_at DESC LIMIT 1""", rce_keys)
                 prior_rce = cur.fetchone()
                 rce_done = prior_rce is not None
             if rce_done and a.state.get("rce", {}).get("status") == "NOT_RUN":
