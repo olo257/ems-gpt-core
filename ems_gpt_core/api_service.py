@@ -37,6 +37,7 @@ class ApiAdapters:
     run_ai_observer: Callable
     generate_diagnostic_report: Callable
     review_todo: Callable
+    database_audit: Callable
     html: str
     icon_path: str = "/app/icon.png"
 
@@ -54,6 +55,7 @@ def build_handler(a: ApiAdapters):
     refresh_pv_forecast, refresh_weather_forecast = a.refresh_pv_forecast, a.refresh_weather_forecast
     run_analytics, run_ai_observer = a.run_analytics, a.run_ai_observer
     generate_diagnostic_report, review_todo = a.generate_diagnostic_report, a.review_todo
+    database_audit = a.database_audit
     HTML, icon_path = a.html, a.icon_path
 
     class Handler(BaseHTTPRequestHandler):
@@ -85,6 +87,12 @@ def build_handler(a: ApiAdapters):
                 with LOCK: return self.json(dict(STATE))
             if path.endswith("/api/settings") or path == "/api/settings":
                 return self.json({"settings": settings_payload()})
+            if path.endswith("/api/database-audit") or path == "/api/database-audit":
+                try:
+                    return self.json(database_audit())
+                except Exception as exc:
+                    LOG.exception("read-only database audit failed")
+                    return self.json({"status":"ERROR","error":type(exc).__name__}, HTTPStatus.INTERNAL_SERVER_ERROR)
             if path.endswith("/api/process-status") or path == "/api/process-status":
                 return self.json({})
             if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs")):
