@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.29.0"', APP_SOURCE)
-        self.assertIn('version: "0.29.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.29.1"', APP_SOURCE)
+        self.assertIn('version: "0.29.1"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -79,7 +79,11 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("if minute < 15:", SOURCE)
         self.assertIn("heartbeat_age < 180", SOURCE)
         loop = MODULE_SOURCES["scheduler_service.py"]
-        self.assertEqual(loop.count("a.rebuild_recovery_materializations"), 1)
+        self.assertEqual(loop.count("a.rebuild_recovery_materializations"), 2)
+        self.assertIn(
+            'run_serialized("slot_materializations", a.rebuild_recovery_materializations, 1)',
+            loop,
+        )
         self.assertIn('a.state["rce"] = {', loop)
         self.assertIn('"status": "ALREADY_COMPLETED"', loop)
         self.assertIn('json.loads(prior_rce.get("payload_json")', loop)
@@ -88,6 +92,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('"RCE state restored: status=ALREADY_COMPLETED rows=%s/%s target=%s"', loop)
         self.assertIn("id='rceStatus'", WEBUI)
         self.assertIn("rs.rows??'—'", WEBUI)
+        self.assertIn("currentView!=='configuration'", WEBUI)
+        self.assertIn("loadView(currentView)},30000", WEBUI)
         self.assertIn("rce_event_keys(clock)", MODULE_SOURCES["scheduler_service.py"])
 
     def test_watchdog_uses_early_liveness_endpoint(self):

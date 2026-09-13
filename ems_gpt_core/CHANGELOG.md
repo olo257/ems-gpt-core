@@ -1,3 +1,13 @@
+## 0.29.1
+
+- Przywrócono idempotentną aktualizację materializacji godzinowej i dobowej po
+  każdym przejściu do nowego slotu 15-minutowego.
+- Zakończone godziny są automatycznie domykane, a zaległości po przerwie
+  uzupełniane bez wymyślania danych pomiarowych.
+- Aktywna tabela panelu odświeża się automatycznie co 30 sekund, z pominięciem
+  edytowanej konfiguracji.
+- Dodano test kontraktowy chroniący połączenie harmonogramu z materializacją.
+
 ## 0.28.0
 
 - Zakończono refaktoryzację monolitu: schemat i migracje wydzielono do

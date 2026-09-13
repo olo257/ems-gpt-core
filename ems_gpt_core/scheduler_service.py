@@ -76,6 +76,10 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 todo_archive_day = clock.date()
             if key != previous:
                 a.ensure_slot_calendar(clock.date(), clock.date() + timedelta(days=1))
+                # Closing slots and rebuilding their hourly/daily projections belong
+                # to the same transition.  The rebuild is idempotent and also fills
+                # gaps left by downtime without inventing telemetry.
+                a.run_serialized("slot_materializations", a.rebuild_recovery_materializations, 1)
                 a.refresh_pv_forecast()
                 a.refresh_weather_forecast()
                 a.record_event("slot_opened", "core",
