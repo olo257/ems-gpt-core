@@ -12,9 +12,11 @@ danych w MariaDB ani algorytmu planowania.
 
 Niezależny silnik EMS uruchamiany jako lokalna aplikacja Home Assistant.
 
-## Architektura 0.26
+## Architektura 0.28
 
-- `app.py` — koordynator procesu, harmonogramu i zgodności API;
+- `app.py` — wyłącznie kompozycja usług i cykl życia procesu;
+- `schema_service.py` — idempotentna inicjalizacja i migracje schematu MariaDB;
+- `planner_service.py` — transakcyjny planer, PPD i optymalizator cykli HP;
 - `observer_service.py` — analiza Observera w trybie `SHADOW_READ_ONLY`;
 - `diagnostics_service.py` — kontrole diagnostyczne bez zapisu do urządzeń;
 - `todo_service.py` — trwały cykl życia sugestii i decyzji operatora;
@@ -27,6 +29,13 @@ Niezależny silnik EMS uruchamiany jako lokalna aplikacja Home Assistant.
 
 Usługi otrzymują zależności przez jawne adaptery. Nie importują globalnego stanu
 aplikacji i nie mają samodzielnego dostępu do Home Assistant.
+
+Ręczne sterowanie `HP_HEAT_DHW` pozostaje dostępne. Panel nie przyjmuje
+oddzielnego czasu pracy: `FORCE_ON` używa parametru `hp_min_cycle_hours`
+z centralnej konfiguracji, wspólnego z planerem.
+
+Plan kopii bezpieczeństwa bazy jest dokumentem operacyjnym poza publicznym
+repozytorium, ponieważ zawiera szczegóły lokalnej infrastruktury HA i OMV.
 
 ## Odpowiedzialność
 

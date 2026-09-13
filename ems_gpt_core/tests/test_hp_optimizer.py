@@ -1,15 +1,12 @@
-import ast
 import pathlib
+import sys
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-TREE = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
-FUNCTION = next(node for node in TREE.body
-                if isinstance(node, ast.FunctionDef) and node.name == "optimize_hp_heating_slots")
-NAMESPACE = {}
-exec(compile(ast.Module(body=[FUNCTION], type_ignores=[]), "app.py", "exec"), NAMESPACE)
-OPTIMIZE = NAMESPACE["optimize_hp_heating_slots"]
+sys.path.insert(0, str(ROOT))
+
+from planner_service import optimize_hp_heating_slots as OPTIMIZE
 
 
 def rows(prices):
