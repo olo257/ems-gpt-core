@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.27.2"', APP_SOURCE)
-        self.assertIn('version: "0.27.2"', CONFIG)
+        self.assertIn('APP_VERSION = "0.27.3"', APP_SOURCE)
+        self.assertIn('version: "0.27.3"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -364,6 +364,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("ALTER TABLE", audit_source)
         self.assertIn('LOG.exception("startup read-only database audit failed")', SOURCE)
         self.assertIn("threading.Thread(target=startup_database_audit, daemon=True).start()", SOURCE)
+        self.assertIn("content_scanned\": False", audit_source)
 
 
 if __name__ == "__main__":

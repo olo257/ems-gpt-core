@@ -1,3 +1,10 @@
+## 0.27.3
+
+- Rozszerzono audyt o lekki, wyłącznie odczytowy katalog wszystkich tabel schematu `ems_gpt`: rozmiar, estymowana liczba rekordów i zależności SQL.
+- Katalog nie skanuje zawartości tabel produkcyjnych; dokładne liczenie i daty pozostają ograniczone do wymaganego audytu tabel `v3`.
+- Dodano endpoint `GET /api/database-catalog` i bezsekretowe wpisy `database_catalog_*` w logu dodatku.
+- Bez zmian w planerze, PPD, wykonawcy, recovery, Observerze i programach SOC Deye 1–6.
+
 ## 0.27.2
 
 - Dodano wyłącznie odczytowy audyt obiektów MariaDB zawierających `v3` w nazwie: dokładna liczba rekordów, rozmiar, możliwy ostatni zapis oraz zależności z widoków, triggerów, procedur, zdarzeń i kluczy obcych.

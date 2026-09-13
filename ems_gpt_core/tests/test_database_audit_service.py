@@ -1,7 +1,7 @@
 import unittest
 from contextlib import contextmanager
 
-from database_audit_service import audit_v3_tables
+from database_audit_service import audit_v3_tables, catalog_database_tables
 
 
 class Cursor:
@@ -59,6 +59,21 @@ class Log:
 
 
 class DatabaseAuditTests(unittest.TestCase):
+    def test_catalog_does_not_scan_table_contents(self):
+        connection = Connection()
+
+        @contextmanager
+        def db():
+            yield connection
+
+        result = catalog_database_tables(db=db, schema_name="ems_gpt", log=Log())
+
+        self.assertFalse(result["content_scanned"])
+        self.assertEqual(result["object_count"], 1)
+        statements = "\n".join(sql for sql, _ in connection.cursor_instance.executed).lower()
+        self.assertNotIn("count(*)", statements)
+        self.assertNotIn(" max(", statements)
+
     def test_audit_is_read_only_and_reports_exact_inventory(self):
         connection = Connection()
 
