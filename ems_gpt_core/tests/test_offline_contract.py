@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.27.1"', APP_SOURCE)
-        self.assertIn('version: "0.27.1"', CONFIG)
+        self.assertIn('APP_VERSION = "0.27.2"', APP_SOURCE)
+        self.assertIn('version: "0.27.2"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -353,6 +353,17 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(marker, SOURCE)
         self.assertIn("ORDER BY slot_start ASC LIMIT 2688", SOURCE)
         self.assertIn('a.options.get("recovery_lookback_days", 7)', SOURCE)
+
+    def test_database_audit_is_read_only_and_non_blocking(self):
+        audit_source = (ROOT / "database_audit_service.py").read_text(encoding="utf-8")
+        self.assertIn("information_schema.tables", audit_source)
+        self.assertIn("exact_row_count", audit_source)
+        self.assertNotIn("DELETE FROM", audit_source)
+        self.assertNotIn("UPDATE ", audit_source)
+        self.assertNotIn("INSERT INTO", audit_source)
+        self.assertNotIn("ALTER TABLE", audit_source)
+        self.assertIn('LOG.exception("startup read-only database audit failed")', SOURCE)
+        self.assertIn("threading.Thread(target=startup_database_audit, daemon=True).start()", SOURCE)
 
 
 if __name__ == "__main__":
