@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.30.0"', APP_SOURCE)
-        self.assertIn('version: "0.30.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.30.1"', APP_SOURCE)
+        self.assertIn('version: "0.30.1"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -137,6 +137,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("_hp_execution_metrics(metric_rows)", analytics)
         self.assertIn("cooling_production_start_time", materializations)
         self.assertIn("cooling_production_end_time", materializations)
+        self.assertIn("TIME(slot_start)", materializations)
+        self.assertIn("MODIFY COLUMN {column} TIME NULL", schema)
         self.assertIn("sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_chlodzenie_pobrana", APP_SOURCE)
 
     def test_app_status_card_uses_backend_start_time(self):

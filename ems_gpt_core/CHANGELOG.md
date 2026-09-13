@@ -1,3 +1,10 @@
+## 0.30.1
+
+- Ujednolicono dobowe początki i końce pracy CO, CWU i COOL do typu `TIME`
+  (`HH:MM:SS`), zgodnego z istniejącym schematem produkcyjnym.
+- Usunięto błąd startu 0.30.0 `Data too long for column
+  'dhw_production_start_time'`; materializacja pozostaje idempotentna.
+
 ## 0.30.0
 
 - Rozszerzono wykonanie, agregację godzinową, dobową i analitykę pompy ciepła
