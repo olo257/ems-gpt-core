@@ -38,6 +38,7 @@ class ApiAdapters:
     generate_diagnostic_report: Callable
     review_todo: Callable
     database_audit: Callable
+    database_catalog: Callable
     html: str
     icon_path: str = "/app/icon.png"
 
@@ -56,6 +57,7 @@ def build_handler(a: ApiAdapters):
     run_analytics, run_ai_observer = a.run_analytics, a.run_ai_observer
     generate_diagnostic_report, review_todo = a.generate_diagnostic_report, a.review_todo
     database_audit = a.database_audit
+    database_catalog = a.database_catalog
     HTML, icon_path = a.html, a.icon_path
 
     class Handler(BaseHTTPRequestHandler):
@@ -92,6 +94,12 @@ def build_handler(a: ApiAdapters):
                     return self.json(database_audit())
                 except Exception as exc:
                     LOG.exception("read-only database audit failed")
+                    return self.json({"status":"ERROR","error":type(exc).__name__}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            if path.endswith("/api/database-catalog") or path == "/api/database-catalog":
+                try:
+                    return self.json(database_catalog())
+                except Exception as exc:
+                    LOG.exception("read-only database catalog failed")
                     return self.json({"status":"ERROR","error":type(exc).__name__}, HTTPStatus.INTERNAL_SERVER_ERROR)
             if path.endswith("/api/process-status") or path == "/api/process-status":
                 return self.json({})
