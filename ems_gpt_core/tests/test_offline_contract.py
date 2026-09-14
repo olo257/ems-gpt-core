@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.31.0"', APP_SOURCE)
-        self.assertIn('version: "0.31.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.31.1"', APP_SOURCE)
+        self.assertIn('version: "0.31.1"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -201,7 +201,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('for r in metric_rows)', analytics)
 
     def test_planner_uses_all_available_rce_slots(self):
-        planner = SOURCE[SOURCE.index("def run_planner"):SOURCE.index("def _wape")]
+        planner = MODULE_SOURCES["planner_service.py"]
         self.assertNotIn("ORDER BY slot_start LIMIT 96", planner)
         self.assertIn("checks[\"n\"]==len(source)", planner)
 
@@ -351,7 +351,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("planned_hp_kwh={hp_load:.3f}", SOURCE)
 
     def test_hp_has_only_binary_window_decision(self):
-        planner = SOURCE[SOURCE.index("def run_planner"):SOURCE.index("def _wape")]
+        planner = MODULE_SOURCES["planner_service.py"]
         for obsolete in ("hp_run_preferred", "hp_run_neutral", "hp_run_avoid", "heat_pump_no_buy"):
             self.assertNotIn(obsolete, planner)
         self.assertIn('"ON" if heat_dhw_allowed else "OFF"', planner)
