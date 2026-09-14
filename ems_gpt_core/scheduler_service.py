@@ -16,6 +16,39 @@ def rce_event_keys(clock: datetime) -> tuple[str, ...]:
             f"RCE_{clock.date() - timedelta(days=1)}_NEXT")
 
 
+def update_telemetry_health(state: dict, lock: Any, telemetry_ok: bool,
+                            now_utc: datetime, degraded_after: int = 120,
+                            stale_after: int = 300) -> dict:
+    """Update readiness without allowing the scheduler heartbeat to mask HA loss."""
+    with lock:
+        state["last_telemetry_attempt"] = now_utc.isoformat()
+        if telemetry_ok:
+            state["last_telemetry_success"] = now_utc.isoformat()
+            state["telemetry_consecutive_failures"] = 0
+        else:
+            state["telemetry_consecutive_failures"] = int(
+                state.get("telemetry_consecutive_failures") or 0) + 1
+        last_success = state.get("last_telemetry_success")
+        try:
+            age = max(0.0, (now_utc - datetime.fromisoformat(last_success)).total_seconds())
+        except (TypeError, ValueError):
+            age = None
+        state["telemetry_age_seconds"] = None if age is None else round(age, 1)
+        if telemetry_ok:
+            state["ha_input"] = "CONNECTED"
+            state["readiness"] = "READY"
+        elif age is None or age >= stale_after:
+            state["ha_input"] = "STALE"
+            state["readiness"] = "STALE_TELEMETRY"
+        elif age >= degraded_after or state["telemetry_consecutive_failures"] >= 2:
+            state["ha_input"] = "DEGRADED"
+            state["readiness"] = "DEGRADED"
+        else:
+            state["ha_input"] = "PARTIAL"
+            state["readiness"] = "DEGRADED"
+        return {"age": age, "readiness": state["readiness"]}
+
+
 @dataclass(frozen=True)
 class SchedulerAdapters:
     options: dict
@@ -62,6 +95,11 @@ def run_scheduler(a: SchedulerAdapters) -> None:
         error = None
         try:
             telemetry_ok = a.capture_telemetry()
+            health = update_telemetry_health(
+                a.state, a.lock, telemetry_ok, datetime.now(timezone.utc),
+                int(a.options.get("telemetry_degraded_seconds", 120)),
+                int(a.options.get("telemetry_stale_seconds", 300)),
+            )
             a.close_finished_slots()
             a.backfill_execution_details()
             if recovery_rebuild_day is None or (clock.hour == 1 and recovery_rebuild_day != clock.date()):
@@ -156,8 +194,12 @@ def run_scheduler(a: SchedulerAdapters) -> None:
             )
             if due:
                 a.run_serialized("planner", a.run_planner, "hourly_replan")
-            a.stage_executor_commands()
-            a.dispatch_ready_commands()
+            # Never issue fresh control commands from stale or absent HA input.
+            if telemetry_ok:
+                a.stage_executor_commands()
+                a.dispatch_ready_commands()
+            else:
+                a.log.warning("HA telemetry unavailable; executor dispatch suppressed")
             appliance_result = a.capture_appliances()
             backup_result = a.maintain_backup()
             if minute < 15:
@@ -175,8 +217,7 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                     a.run_serialized("diagnostics", a.generate_diagnostic_report, "scheduled")
             with a.lock:
                 a.state["database"] = "CONNECTED"
-                a.state["ha_input"] = "CONNECTED" if telemetry_ok else "PARTIAL"
-                a.state["status"] = "RUNNING"
+                a.state["status"] = "RUNNING" if health["readiness"] == "READY" else "DEGRADED"
                 a.state["appliances"] = appliance_result
                 a.state["backup"] = backup_result
                 a.state["modules"].update(
@@ -192,6 +233,7 @@ def run_scheduler(a: SchedulerAdapters) -> None:
             with a.lock:
                 a.state["database"] = "ERROR"
                 a.state["status"] = "DEGRADED"
+                a.state["readiness"] = "ENGINE_ERROR"
         with a.lock:
             a.state["active_slot"] = key
             a.state["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
