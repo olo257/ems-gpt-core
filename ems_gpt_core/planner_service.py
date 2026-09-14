@@ -1,11 +1,84 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Callable
+
+
+def economic_sell_indices(rows: list[dict], eta_c: float, eta_d: float,
+                          degradation: float, min_margin: float) -> set[int]:
+    """Select profitable price peaks over the complete available PPD horizon."""
+    suffix_min_buy = [None] * len(rows)
+    suffix_max_sell = [None] * len(rows)
+    min_buy = max_sell = None
+    for index in range(len(rows) - 1, -1, -1):
+        suffix_min_buy[index], suffix_max_sell[index] = min_buy, max_sell
+        buy_price = rows[index].get("price_buy_pln_kwh")
+        sell_price = rows[index].get("price_sell_pln_kwh")
+        if buy_price is not None:
+            price = float(buy_price)
+            min_buy = price if min_buy is None else min(min_buy, price)
+        if sell_price is not None:
+            price = float(sell_price)
+            max_sell = price if max_sell is None else max(max_sell, price)
+    selected = set()
+    for index, row in enumerate(rows):
+        replacement = suffix_min_buy[index]
+        future_peak = suffix_max_sell[index]
+        sell_now = float(row.get("price_sell_pln_kwh") or 0.0)
+        required_sell = (replacement / (eta_c * eta_d) + degradation + min_margin
+                         if replacement is not None else None)
+        economically_ready = required_sell is not None and sell_now >= required_sell
+        peak_ready = future_peak is None or sell_now >= future_peak - min_margin
+        if economically_ready and peak_ready:
+            selected.add(index)
+    return selected
+
+
+def paired_arbitrage_buy_indices(rows: list[dict], eta_c: float, eta_d: float,
+                                 degradation: float, min_margin: float,
+                                 sell_indices: set[int] | None = None) -> set[int]:
+    """Return post-sale slots that can economically restore exported battery energy.
+
+    This is deliberately independent from clock-based sessions. A slot is
+    eligible only after a real price-defined sale window and only while
+    buying back the energy still clears efficiency, degradation and margin.
+    The sequential allocator decides how many of these slots are actually used.
+    """
+    sell_indices = (economic_sell_indices(rows, eta_c, eta_d, degradation, min_margin)
+                    if sell_indices is None else sell_indices)
+    eligible = set()
+    best_prior_sale = None
+    for index, row in enumerate(rows):
+        sell_price = row.get("price_sell_pln_kwh")
+        if index in sell_indices and sell_price is not None:
+            price = float(sell_price)
+            best_prior_sale = price if best_prior_sale is None else max(best_prior_sale, price)
+            continue
+        buy_price = row.get("price_buy_pln_kwh")
+        if best_prior_sale is None or buy_price is None:
+            continue
+        cycle_margin = best_prior_sale * eta_d - float(buy_price) / eta_c - degradation
+        if cycle_margin >= min_margin:
+            eligible.add(index)
+    return eligible
+
+
+def cheapest_recovery_indices(rows: list[dict], eligible: set[int], start_index: int,
+                              recovery_kwh: float, max_grid_slot_kwh: float,
+                              eta_c: float) -> set[int]:
+    """Select only as many cheapest future slots as the SOC recovery requires."""
+    internal_per_slot = max(0.000001, max_grid_slot_kwh * eta_c)
+    slots_needed = max(0, math.ceil(max(0.0, recovery_kwh) / internal_per_slot))
+    ranked = sorted(
+        (float(rows[index]["price_buy_pln_kwh"]), index)
+        for index in eligible if index >= start_index
+    )
+    return {index for _, index in ranked[:slots_needed]}
 
 
 def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], required_slots: int,
@@ -174,6 +247,9 @@ def build_planner(a: PlannerAdapters):
             audit_stage(cur, run_id, "WINDOWS", "OK", len(source))
             cur.execute("SELECT * FROM ems_gpt_plan_stage_rows WHERE run_id=%s ORDER BY slot_start", (run_id,))
             rows = list(cur.fetchall())
+            sell_indices = economic_sell_indices(rows, eta_c, eta_d, degradation, min_margin)
+            paired_buy_indices = paired_arbitrage_buy_indices(
+                rows, eta_c, eta_d, degradation, min_margin, sell_indices)
 
             # Keep the daily heating trigger stable across hourly replans by reading
             # the complete 00:00-06:00 forecast, including already closed slots.
@@ -263,7 +339,7 @@ def build_planner(a: PlannerAdapters):
                 economically_ready = required_sell is not None and sell_now >= required_sell
                 # Do not spend stored energy before a materially better selling slot.
                 peak_ready = future_peak is None or sell_now >= future_peak-min_margin
-                sale_candidate = max(legacy_sell, max_kw*.25 if row.get("sale_window") else 0.0)
+                sale_candidate = max(legacy_sell, max_kw*.25 if index in sell_indices else 0.0)
                 battery_sell_request = sale_candidate if sale_candidate > flow_threshold and economically_ready and peak_ready else 0.0
                 balance = pv-load-battery_sell_request
                 charge = discharge = 0.0
@@ -289,7 +365,8 @@ def build_planner(a: PlannerAdapters):
             evening_target = configured_evening_target
             for i in range(len(base)-1, -1, -1):
                 item, row = base[i], base[i]["row"]
-                grid = grid_recovery if row.get("grid_window") == "BUY_ALLOWED" else 0.0
+                grid = grid_recovery if ((row.get("grid_window") == "BUY_ALLOWED" and i not in sell_indices)
+                                         or i in paired_buy_indices) else 0.0
                 net = item["discharge"]-item["charge"]
                 required_start = max(0.0, net+required_next-grid)
                 gross_start = max(0.0, net+gross_next)
@@ -309,6 +386,7 @@ def build_planner(a: PlannerAdapters):
             floors=envelope(raw_floor,max(1.0,max_kw*.25/eta_d/capacity*100))
             targets=envelope(raw_target,max(1.0,grid_recovery/capacity*100))
             energy = capacity * soc_now / 100.0
+            arbitrage_recovery_kwh = 0.0
             for i,item in enumerate(base):
                 row=item["row"]
                 floor=min(floor_cap,max(reserve,floors[i]))
@@ -333,9 +411,16 @@ def build_planner(a: PlannerAdapters):
                 pv_flex=max(0.0,pv_surplus-pv_to_bat)
                 buy=0.0
                 required_soc=max(effective_floor,target)
-                if row.get("grid_window")=="BUY_ALLOWED" and energy/capacity*100 < required_soc:
-                    buy=min(max_kw*.25,max(0.0,(required_soc-energy/capacity*100)/100*capacity/eta_c))
+                regular_buy = row.get("grid_window")=="BUY_ALLOWED" and i not in sell_indices
+                selected_recovery = cheapest_recovery_indices(
+                    rows, paired_buy_indices, i, arbitrage_recovery_kwh, max_kw*.25, eta_c)
+                paired_buy = i in selected_recovery and arbitrage_recovery_kwh > flow_threshold
+                if regular_buy or paired_buy:
+                    target_deficit=max(0.0,(required_soc-energy/capacity*100)/100*capacity)
+                    internal_deficit=max(target_deficit,arbitrage_recovery_kwh if paired_buy else 0.0)
+                    buy=min(max_kw*.25,max(0.0,internal_deficit/eta_c),max(0.0,(capacity-energy)/eta_c))
                     energy=min(capacity,energy+buy*eta_c)
+                    arbitrage_recovery_kwh=max(0.0,arbitrage_recovery_kwh-buy*eta_c)
                 item["charge"],item["discharge"],item["end"] = pv_to_bat*eta_c,discharge,energy/capacity*100
                 sell_price=float(row.get("price_sell_pln_kwh") or 0)
                 delivered_from_battery=discharge*eta_d
@@ -344,22 +429,24 @@ def build_planner(a: PlannerAdapters):
                           and item["discharge"]>flow_threshold and item["end"]>=effective_floor)
                 if not sell_bat:
                     item["sell"] = 0.0
-                    if row.get("sale_window") and tou_program is not None and item["start"] <= effective_floor + 0.01:
+                    if i in sell_indices and tou_program is not None and item["start"] <= effective_floor + 0.01:
                         tou_block_reason=f"TOU_FLOOR_BLOCK: program={tou_program['program']}, soc={tou_floor:.0f}%"
+                else:
+                    arbitrage_recovery_kwh += item["sell"] / eta_d
                 no_sell_pv=sell_price<=0
-                pv_cwu=(not row.get("sale_window") and not sell_bat and pv_flex>=cwu_threshold and item["end"]>=target)
+                pv_cwu=(i not in sell_indices and not sell_bat and pv_flex>=cwu_threshold and item["end"]>=target)
                 cwu_kwh=min(pv_flex,0.625) if pv_cwu else 0.0
                 after_cwu=max(0.0,pv_flex-cwu_kwh)
-                pv_ev=(not row.get("sale_window") and not sell_bat and after_cwu>=ev_threshold and item["end"]>=min(100,target+20))
+                pv_ev=(i not in sell_indices and not sell_bat and after_cwu>=ev_threshold and item["end"]>=min(100,target+20))
                 ev_kwh=after_cwu if pv_ev else 0.0
                 after_flex=max(0.0,after_cwu-ev_kwh)
                 pv_export_kwh=after_flex if sell_price>0 else 0.0
                 pv_curtail_kwh=after_flex-pv_export_kwh
                 item["pv_export"]=pv_export_kwh
-                grid_policy="BUY_ALLOWED" if buy>flow_threshold else ("NO_BUY" if row.get("sale_window") else "NEUTRAL")
+                grid_policy="BUY_ALLOWED" if buy>flow_threshold else ("NO_BUY" if i in sell_indices else "NEUTRAL")
                 export_policy="SELL_BAT" if sell_bat else ("NO_SELL_PV" if no_sell_pv else ("SELL_PV" if item["pv_export"]>flow_threshold else "NEUTRAL"))
                 recommendation="Zakup ładowanie" if buy>flow_threshold else "Sprzedaż z baterii" if sell_bat else "Sprzedaż PV" if item["pv_export"]>flow_threshold else "Ładowanie PV" if item["charge"]>flow_threshold else "Autokonsumpcja PV" if float(row.get("forecast_pv_total_kwh") or 0)>flow_threshold else "Autokonsumpcja z baterii"
-                reason=f"grid={grid_policy}; export={export_policy}; soc={item['end']:.2f}; floor={effective_floor:.2f}; target={target:.2f}; hp_load_kwh={hp_load:.3f}"
+                reason=f"grid={grid_policy}; export={export_policy}; soc={item['end']:.2f}; floor={effective_floor:.2f}; target={target:.2f}; hp_load_kwh={hp_load:.3f}; paired_recovery={paired_buy}; recovery_kwh={arbitrage_recovery_kwh:.3f}"
                 if tou_block_reason:
                     reason += f"; {tou_block_reason}"
                 cur.execute("""UPDATE ems_gpt_plan_stage_rows SET soc_start_plan_pct=%s,soc_end_plan_pct=%s,

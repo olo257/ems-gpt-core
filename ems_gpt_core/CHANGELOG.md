@@ -587,6 +587,21 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.31.2
+
+- Usunięto sztywne poranne i wieczorne sesje kupna/sprzedaży. Okna wynikają z
+  cen, PPD oraz ograniczeń SOC, a nie z godziny zegarowej.
+- Po wykonanej sprzedaży planer śledzi energię wymagającą odtworzenia i korzysta
+  z kolejnych opłacalnych slotów zakupu aż do pokrycia deficytu, utraty
+  rentowności albo osiągnięcia limitu pojemności.
+- Ocena cyklu uwzględnia sprawność ładowania i rozładowania, koszt degradacji,
+  minimalną marżę, `soc_floor`, `soc_target`, aktywny próg TOU i limit 5 kW.
+- Wykresy RCE mają trwały poziomy pasek przewijania oraz tooltip punktu z datą
+  i czasem, ceną sprzedaży i ceną zakupu w PLN/kWh z trzema miejscami po przecinku.
+- Wykonawca kontroluje SOC co minutę i kończy binarny import lub eksport po
+  osiągnięciu ilościowego `SOC po` zaplanowanego dla bieżącego slotu.
+- Bez zapisów do programów SOC Deye 1–6.
+
 ## 0.31.1
 
 - Dodano natywny wykres cen RCE bez zewnętrznych bibliotek.

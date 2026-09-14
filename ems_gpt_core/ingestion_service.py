@@ -10,6 +10,31 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 
 
+def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
+                         degradation: float, min_margin: float,
+                         buy_tolerance: float) -> list[tuple[bool, bool]]:
+    """Derive economic sell/buy candidates without clock-based sessions."""
+    windows = []
+    for index, current in enumerate(prices):
+        later = prices[index + 1:]
+        later_sell = [float(row["sell"]) for row in later]
+        later_buy = [float(row["buy"]) for row in later]
+        replacement = min(later_buy) if later_buy else None
+        future_peak = max(later_sell) if later_sell else None
+        required_sell = (replacement / (eta_c * eta_d) + degradation + min_margin
+                         if replacement is not None else None)
+        economically_ready = required_sell is not None and float(current["sell"]) >= required_sell
+        peak_ready = future_peak is None or float(current["sell"]) >= future_peak - min_margin
+        sale_window = bool(economically_ready and peak_ready)
+        buy_window = bool(
+            later_sell
+            and float(current["sell"]) <= min(later_sell) + buy_tolerance
+            and max(later_sell) * eta_d - float(current["buy"]) / eta_c - degradation >= min_margin
+        )
+        windows.append((sale_window, buy_window))
+    return windows
+
+
 @dataclass(frozen=True)
 class IngestionAdapters:
     options: dict
@@ -117,19 +142,11 @@ def build_ingestion(a: IngestionAdapters):
         degradation=max(0,float(OPTIONS.get("battery_degradation_cost_pln_kwh",.08)))
         min_margin=max(0,float(OPTIONS.get("minimum_arbitrage_margin_pln_kwh",.05)))
         buy_tolerance=max(0.0,float(OPTIONS.get("buy_window_tolerance_pln_kwh",.05)))
-        morning_start=float(OPTIONS.get("sale_morning_start_hour",6.0)); morning_end=float(OPTIONS.get("sale_morning_end_hour",10.0))
-        evening_start=float(OPTIONS.get("sale_evening_start_hour",17.0)); evening_end=float(OPTIONS.get("sale_evening_end_hour",23.0))
-        def decimal_hour(s): return s.hour+s.minute/60.0
-        def sale_session(s):
-            hour=decimal_hour(s)
-            return morning_start<=hour<morning_end or evening_start<=hour<evening_end
-        for s in ordered:
-            peers=[q for q in ordered if sale_session(q) and ((q.hour<12)==(s.hour<12))]
-            peak=max(peers,key=lambda q:unique[q]["sell"]) if peers else None
-            threshold=unique[peak]["sell"]*.8 if peak else float("inf")
-            unique[s]["sale_window"]=bool(sale_session(s) and unique[s]["sell"]>=threshold and unique[s]["sell"]>degradation+min_margin)
-            later=[unique[q]["sell"] for q in ordered if q>s]
-            unique[s]["buy_window"]=bool(not sale_session(s) and later and unique[s]["sell"]<=min(later)+buy_tolerance and max(later)*eta_d-unique[s]["buy"]/eta_c-degradation>=min_margin)
+        price_windows=derive_price_windows(
+            [unique[s] for s in ordered], eta_c, eta_d, degradation, min_margin, buy_tolerance)
+        for s,(sale_window,buy_window) in zip(ordered,price_windows):
+            unique[s]["sale_window"]=sale_window
+            unique[s]["buy_window"]=buy_window
         with db() as conn,conn.cursor() as cur:
             for s,v in unique.items():
                 canonical=calendar_by_local.get(s)

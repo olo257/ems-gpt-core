@@ -17,6 +17,13 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("chart-window-sell", HTML)
         self.assertIn('path.endswith("/api/rce-chart")', API)
         self.assertIn("GROUP BY DATE(slot_start) ORDER BY label", API)
+        self.assertIn("class='rce-chart-scroll'", HTML)
+        self.assertIn("overflow-x:scroll", HTML)
+        self.assertIn("rceChart.style.width=svgWidth+'px'", HTML)
+        self.assertIn("Data i czas:", HTML)
+        self.assertIn("Cena sprzedaży:", HTML)
+        self.assertIn("Cena zakupu:", HTML)
+        self.assertIn("toFixed(3)} PLN/kWh", HTML)
 
     def test_every_panel_request_disables_browser_cache(self):
         self.assertIn("window.fetch=(url,options={})=>nativeFetch(url,{cache:'no-store',...options})", HTML)
