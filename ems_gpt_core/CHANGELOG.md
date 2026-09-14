@@ -587,6 +587,13 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.4
+
+- `soc_target` jest teraz twardym ograniczeniem optymalizatora, a nie opisem przepływu wyliczanym po fakcie.
+- Target powstaje ponad granicą sprzedaży aktywnego programu i obejmuje zapotrzebowanie do kolejnego wykonalnego PV/BUY.
+- PV odbudowuje baterię do targetu przed dopuszczeniem eksportu; wcześniejsze tańsze BUY zabezpiecza poranny deficyt.
+- Publikacja planu jest blokowana, gdy wynikowy SOC znajduje się poniżej targetu.
+
 ## 0.32.3
 
 - Naprawiono wykonawcze odczytanie `soc_floor_pct` z MariaDB. Wartość SQL jest
