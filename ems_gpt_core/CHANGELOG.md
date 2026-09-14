@@ -587,6 +587,22 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.31.3
+
+- `soc_floor` ogranicza wyłącznie celową sprzedaż energii z baterii; zwykłe
+  zużycie domu może korzystać z baterii aż do technicznego `battery_min_soc_pct`.
+- `soc_target` jest wyliczany z bilansu prognozowanego zużycia domu, pompy
+  ciepła, sprawności baterii, nadwyżek PV i skończonej mocy kolejnych slotów
+  zakupu.
+- Usunięto archiwalne wymuszenie `evening_soc_target_pct=60%` o 19:45 oraz
+  sztuczny końcowy target zależny od `historical_soc_drop_p80_pct` i
+  `terminal_soc_value_weight`.
+- Bufor niepewności pozostaje proporcjonalny do energii wymaganej na odcinku,
+  zamiast dodawać stałą liczbę punktów SOC.
+- Dodano regresje dla autokonsumpcji poniżej floor, blokady sprzedaży, bilansu
+  do kolejnego zakupu, wpływu PV oraz braku zależności od godziny zegarowej.
+- Bez zapisów do programów SOC Deye 1–6.
+
 ## 0.31.2
 
 - Usunięto sztywne poranne i wieczorne sesje kupna/sprzedaży. Okna wynikają z

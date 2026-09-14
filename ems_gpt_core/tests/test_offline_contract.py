@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.31.2"', APP_SOURCE)
-        self.assertIn('version: "0.31.2"', CONFIG)
+        self.assertIn('APP_VERSION = "0.31.3"', APP_SOURCE)
+        self.assertIn('version: "0.31.3"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -222,7 +222,12 @@ class OfflineContractTests(unittest.TestCase):
                       "planned_pv_to_ev_kwh", "planned_pv_curtail_kwh"):
             self.assertIn(field, SOURCE)
         self.assertNotIn("target=min(95,max(floor,targets[i]))", SOURCE)
-        self.assertIn("required_soc=max(effective_floor,target)", SOURCE)
+        self.assertIn("required_soc=max(reserve,target)", SOURCE)
+        planner = MODULE_SOURCES["planner_service.py"]
+        self.assertIn("def soc_bridge_envelopes", planner)
+        self.assertIn("def allocate_slot_discharge", planner)
+        self.assertNotIn("evening_soc_target_pct", planner)
+        self.assertNotIn("terminal_soc_value_weight", planner)
 
     def test_historical_slot_relations_have_fail_closed_audit(self):
         self.assertIn("def backfill_slot_relations", SOURCE)
