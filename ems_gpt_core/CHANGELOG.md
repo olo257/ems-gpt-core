@@ -587,6 +587,13 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.11
+
+- Częściowe okno PV ładuje baterię w stronę targetu, lecz nie musi osiągnąć
+  pełnego targetu, jeżeli prognozowana nadwyżka jest fizycznie za mała.
+- Twarde osiągnięcie targetu obowiązuje na końcu okna BUY; niewykorzystany
+  niedobór po PV przechodzi do następnego wykonalnego PV/BUY.
+
 ## 0.32.10
 
 - Okna BUY wymagają wyraźnego minimum w czterogodzinnym otoczeniu; drobne
