@@ -587,6 +587,13 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.8
+
+- Ostatni target dostępnego horyzontu uwzględnia wymagany terminalny SOC,
+  gdy nie istnieje już następne okno PV/BUY.
+- Usunięto niewykonalność planu 0.32.7, w której sufit ostatniego BUY wynosił
+  15%, a warunek końcowy wymagał wyższego SOC programu TOU.
+
 ## 0.32.7
 
 - `sale_window` jest twardą zgodą na sprzedaż z baterii; poza oknem SELL

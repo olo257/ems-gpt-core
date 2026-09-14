@@ -372,7 +372,8 @@ def bridge_soc_commitments(rows: list[dict], flows: list[dict], capacity_kwh: fl
                            max_grid_slot_kwh: float, uncertainty_weight: float,
                            floor_cap_pct: float,
                            target_cap_pct: float,
-                           sale_floor_pct: list[float] | None = None) -> tuple[list[float], list[float]]:
+                           sale_floor_pct: list[float] | None = None,
+                           terminal_soc_pct: float | None = None) -> tuple[list[float], list[float]]:
     """SOC needed until the next forecast PV or planned battery BUY.
 
     A sale does not create a literal buy-back debt.  Its energy is recovered
@@ -419,8 +420,10 @@ def bridge_soc_commitments(rows: list[dict], flows: list[dict], capacity_kwh: fl
         ))
         start = cluster_end[index] if cluster_end[index] is not None else index
         need_kwh = 0.0
+        has_next_replenishment = False
         for future in range(start + 1, len(rows)):
             if replenishment[future]:
+                has_next_replenishment = True
                 break
             row = rows[future]
             load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
@@ -435,7 +438,9 @@ def bridge_soc_commitments(rows: list[dict], flows: list[dict], capacity_kwh: fl
                 need_kwh + deficit * (1.0 + uncertainty) + sale_internal
                 - surplus * max(0.0, 1.0 - uncertainty),
             )
-        targets[index] = min(target_cap, reserve + need_kwh / capacity * 100.0)
+        base_pct = (reserve if has_next_replenishment or terminal_soc_pct is None
+                    else max(reserve, min(target_cap, float(terminal_soc_pct))))
+        targets[index] = min(target_cap, base_pct + need_kwh / capacity * 100.0)
     return floors, targets
 
 
@@ -598,7 +603,7 @@ def build_planner(a: PlannerAdapters):
             cur.execute("""INSERT INTO ems_gpt_plan_runs
               (run_id,plan_day,run_type,stage_version,expected_slots,status,current_stage,created_at,updated_at)
               VALUES(%s,%s,%s,%s,%s,'RUNNING','RCE_RAW',NOW(6),NOW(6))""",
-              (run_id, cutoff.date(), run_type, "CORE_0_32_7", len(source)))
+              (run_id, cutoff.date(), run_type, "CORE_0_32_8", len(source)))
             stage_columns = [
                 "slot_start","slot_end","slot_id","slot_start_utc","slot_start_local","utc_offset_minutes",
                 "local_fold","local_day","slot_index_local","price_sell_pln_kwh","price_buy_pln_kwh","price_source",
@@ -702,7 +707,7 @@ def build_planner(a: PlannerAdapters):
             _, minimum_targets = bridge_soc_commitments(
                 horizon_rows, seed_flows, capacity, reserve, eta_c, eta_d,
                 max_kw*int(OPTIONS["slot_minutes"])/60.0,
-                uncertainty_weight, floor_cap, target_cap, sale_constraints)
+                uncertainty_weight, floor_cap, target_cap, sale_constraints, terminal_soc)
             for _ in range(5):
                 optimization = optimize_energy_horizon(
                     horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
@@ -711,7 +716,7 @@ def build_planner(a: PlannerAdapters):
                 bridge_floors, targets = bridge_soc_commitments(
                     horizon_rows, optimization["flows"], capacity, reserve,
                     eta_c, eta_d, max_kw*int(OPTIONS["slot_minutes"])/60.0,
-                    uncertainty_weight, floor_cap, target_cap, sale_constraints)
+                    uncertainty_weight, floor_cap, target_cap, sale_constraints, terminal_soc)
                 next_floors = [max(sale_constraints[index], bridge_floors[index])
                                for index in range(len(rows))]
                 if (all(abs(a-b) < 1e-9 for a,b in zip(next_floors, optimized_floors))
@@ -727,7 +732,7 @@ def build_planner(a: PlannerAdapters):
             bridge_floors, targets = bridge_soc_commitments(
                 horizon_rows, optimization["flows"], capacity, reserve,
                 eta_c, eta_d, max_kw*int(OPTIONS["slot_minutes"])/60.0,
-                uncertainty_weight, floor_cap, target_cap, sale_constraints)
+                uncertainty_weight, floor_cap, target_cap, sale_constraints, terminal_soc)
             replenishment_flags = []
             for row in horizon_rows:
                 validation_load = (
@@ -916,8 +921,8 @@ def build_planner(a: PlannerAdapters):
               p.sell_pv_allowed=s.sell_pv_allowed,p.no_sell_pv=s.no_sell_pv,
               p.heat_pump_window=s.heat_pump_window,
               p.ppd_reason=s.ppd_reason,p.ppd_run_type=%s,
-              p.ppd_version='CORE_0_32_7',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
-              p.plan_stage_version='CORE_0_32_7',p.plan_stage_updated_at=NOW(6),
+              p.ppd_version='CORE_0_32_8',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
+              p.plan_stage_version='CORE_0_32_8',p.plan_stage_updated_at=NOW(6),
               p.plan_validation_status='ACCEPTED',p.plan_validation_reason='OK',
               p.plan_published_at=NOW(6),p.plan_published=1 WHERE p.actual_recorded_at IS NULL AND p.slot_start>=%s""",
               (run_id,run_type,run_id,cutoff))
