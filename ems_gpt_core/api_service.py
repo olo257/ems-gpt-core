@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -118,6 +118,31 @@ def build_handler(a: ApiAdapters):
                     return self.json({"status":"ERROR","error":type(exc).__name__}, HTTPStatus.INTERNAL_SERVER_ERROR)
             if path.endswith("/api/process-status") or path == "/api/process-status":
                 return self.json({})
+            if path.endswith("/api/rce-chart") or path == "/api/rce-chart":
+                params = parse_qs(urlparse(self.path).query)
+                chart_range = params.get("range", ["48h"])[0]
+                with db() as conn, conn.cursor() as cur:
+                    if chart_range == "365d":
+                        cur.execute("""SELECT DATE(slot_start) label,
+                          ROUND(AVG(price_sell_pln_kwh),6) sell_avg,
+                          ROUND(AVG(price_buy_pln_kwh),6) buy_avg,
+                          ROUND(MIN(price_sell_pln_kwh),6) sell_min,
+                          ROUND(MAX(price_sell_pln_kwh),6) sell_max
+                          FROM ems_gpt_slots
+                          WHERE slot_start>=%s AND price_sell_pln_kwh IS NOT NULL
+                          GROUP BY DATE(slot_start) ORDER BY label""",
+                                    (local_now().replace(tzinfo=None)-timedelta(days=364),))
+                    else:
+                        chart_range = "48h"
+                        now = local_now().replace(tzinfo=None)
+                        cur.execute("""SELECT slot_start label,price_sell_pln_kwh sell_avg,
+                          price_buy_pln_kwh buy_avg,price_sell_pln_kwh sell_min,
+                          price_sell_pln_kwh sell_max,buy_window,sale_window
+                          FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s
+                          AND price_sell_pln_kwh IS NOT NULL ORDER BY slot_start""",
+                                    (now-timedelta(hours=24), now+timedelta(hours=24)))
+                    rows = cur.fetchall()
+                return self.json({"range":chart_range,"unit":"PLN/kWh","count":len(rows),"rows":rows})
             if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs","appliances")):
                 name=path.rsplit("/",1)[-1]; params=parse_qs(urlparse(self.path).query); limit=min(500,max(1,int(params.get("limit",["96"])[0])))
                 queries={
