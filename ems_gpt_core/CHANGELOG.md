@@ -587,6 +587,13 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.9
+
+- Target obliczony z energii jest zaokrąglany w górę do wykonawczego kroku
+  SOC 0,25% przed optymalizacją, walidacją i publikacją.
+- Usunięto fałszywe odrzucenie planu, gdy dyskretny SOC końcowy był nieznacznie
+  wyższy od niezaokrąglonego targetu.
+
 ## 0.32.8
 
 - Ostatni target dostępnego horyzontu uwzględnia wymagany terminalny SOC,
