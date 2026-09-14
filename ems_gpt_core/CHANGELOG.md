@@ -587,6 +587,14 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.3
+
+- Naprawiono wykonawcze odczytanie `soc_floor_pct` z MariaDB. Wartość SQL jest
+  teraz parsowana jako skalar, a nie jak obiekt stanu Home Assistant; poprawny
+  plan sprzedaży nie jest już odrzucany jako `PLAN_FLOOR_UNAVAILABLE`.
+- Dodano test regresyjny dla wartości liczbowej i tekstowej zwracanej przez
+  sterownik MariaDB.
+
 ## 0.32.2
 
 - Planer używa żywych czasów programów TOU Deye, ale ich ograniczenia SOC zawsze
