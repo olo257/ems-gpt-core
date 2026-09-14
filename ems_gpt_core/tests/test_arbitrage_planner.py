@@ -215,7 +215,8 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertTrue(all(
             flow["soc_end_pct"] + 1e-9 >= target
             or flow["battery_charge_internal_kwh"] > 1e-9
-            for flow, target in zip(flows, targets)
+            for row, flow, target in zip(rows, flows, targets)
+            if row["buy_window"] or row["forecast_pv_total_kwh"] > row["forecast_load_kwh"]
         ))
         self.assertFalse(any(
             flow["pv_export_kwh"] > 1e-9 and flow["soc_end_pct"] < target
@@ -236,6 +237,23 @@ class PairedArbitrageTests(unittest.TestCase):
             5.0, 15, [20.0, 20.0], 20.0, 0.25, 100.0, [20.0, 30.0])
 
         self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
+        self.assertGreater(result["flows"][1]["grid_charge_kwh"], 0.0)
+
+    def test_unmet_target_between_replenishment_windows_remains_feasible(self):
+        rows = [
+            {"price_buy_pln_kwh": 4.0, "price_sell_pln_kwh": 0.0,
+             "buy_window": Decimal("0"), "forecast_load_kwh": 0.30,
+             "forecast_pv_total_kwh": 0.0},
+            {"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.0,
+             "buy_window": Decimal("1"), "forecast_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0},
+        ]
+        result = optimize_energy_horizon(
+            rows, 25.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [20.0, 20.0], 20.0, 0.25, 100.0, [35.0, 35.0])
+
+        self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
+        self.assertGreater(result["flows"][0]["battery_to_load_kwh"], 0.0)
         self.assertGreater(result["flows"][1]["grid_charge_kwh"], 0.0)
 
     def test_soc_bridge_has_no_special_evening_hour(self):
