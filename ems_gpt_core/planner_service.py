@@ -215,17 +215,13 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                                 else max(best_future_sell, float(price)))
 
     costs = {start_unit: 0.0}
-    replenishment = []
-    for row in rows:
-        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
-                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
-        pv_surplus = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0) - load)
-        replenishment.append(
-            strict_database_bool(row.get("buy_window", False), "buy_window")
-            or pv_surplus > 1e-9)
-    replenishment_ends = {
-        index for index, value in enumerate(replenishment)
-        if value and (index + 1 == len(replenishment) or not replenishment[index + 1])
+    buy_permissions = [
+        strict_database_bool(row.get("buy_window", False), "buy_window")
+        for row in rows
+    ]
+    buy_window_ends = {
+        index for index, value in enumerate(buy_permissions)
+        if value and (index + 1 == len(buy_permissions) or not buy_permissions[index + 1])
     }
     predecessors: list[dict[int, tuple[int, dict]]] = []
     for index, row in enumerate(rows):
@@ -299,13 +295,17 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 if battery_sell > 1e-9 and next_unit * step < floor_pct - 1e-9:
                     continue
                 # Usable PV fills the target before any PV surplus is exported.
+                pv_reachable_target = min(
+                    requested_target_unit,
+                    current_unit + reachable_up,
+                )
                 if (minimum_soc_targets is not None and pv_export > 1e-9
-                        and next_unit < requested_target_unit):
+                        and next_unit < pv_reachable_target):
                     continue
                 # At the end of a replenishment window the calculated energy
                 # requirement must be present. Earlier slots in the same window
                 # may share the charge according to price and power limits.
-                if (minimum_soc_targets is not None and index in replenishment_ends
+                if (minimum_soc_targets is not None and index in buy_window_ends
                         and next_unit < requested_target_unit):
                     continue
                 slot_cost = ((grid_load+grid_charge)*buy_price
@@ -612,7 +612,7 @@ def build_planner(a: PlannerAdapters):
             cur.execute("""INSERT INTO ems_gpt_plan_runs
               (run_id,plan_day,run_type,stage_version,expected_slots,status,current_stage,created_at,updated_at)
               VALUES(%s,%s,%s,%s,%s,'RUNNING','RCE_RAW',NOW(6),NOW(6))""",
-              (run_id, cutoff.date(), run_type, "CORE_0_32_10", len(source)))
+              (run_id, cutoff.date(), run_type, "CORE_0_32_11", len(source)))
             stage_columns = [
                 "slot_start","slot_end","slot_id","slot_start_utc","slot_start_local","utc_offset_minutes",
                 "local_fold","local_day","slot_index_local","price_sell_pln_kwh","price_buy_pln_kwh","price_source",
@@ -742,19 +742,14 @@ def build_planner(a: PlannerAdapters):
                 horizon_rows, optimization["flows"], capacity, reserve,
                 eta_c, eta_d, max_kw*int(OPTIONS["slot_minutes"])/60.0,
                 uncertainty_weight, floor_cap, target_cap, sale_constraints, terminal_soc)
-            replenishment_flags = []
-            for row in horizon_rows:
-                validation_load = (
-                    max(0.0, float(row.get("forecast_load_kwh") or 0.0))
-                    + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
-                replenishment_flags.append(
-                    strict_database_bool(row.get("buy_window"), "buy_window")
-                    or max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0)
-                           - validation_load) > flow_threshold)
-            replenishment_ends = {
-                index for index, value in enumerate(replenishment_flags)
-                if value and (index + 1 == len(replenishment_flags)
-                              or not replenishment_flags[index + 1])
+            buy_permissions = [
+                strict_database_bool(row.get("buy_window"), "buy_window")
+                for row in horizon_rows
+            ]
+            buy_window_ends = {
+                index for index, value in enumerate(buy_permissions)
+                if value and (index + 1 == len(buy_permissions)
+                              or not buy_permissions[index + 1])
             }
             for index, flow in enumerate(optimization["flows"]):
                 row = horizon_rows[index]
@@ -773,7 +768,7 @@ def build_planner(a: PlannerAdapters):
                 if grid_charge > flow_threshold and soc_end > targets[index] + 0.01:
                     raise RuntimeError(
                         f"BUY_TARGET_EXCEEDED:{index}:{soc_end}>{targets[index]}")
-                if index in replenishment_ends and soc_end + 0.01 < targets[index]:
+                if index in buy_window_ends and soc_end + 0.01 < targets[index]:
                     raise RuntimeError(
                         f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{targets[index]}")
                 load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
@@ -930,8 +925,8 @@ def build_planner(a: PlannerAdapters):
               p.sell_pv_allowed=s.sell_pv_allowed,p.no_sell_pv=s.no_sell_pv,
               p.heat_pump_window=s.heat_pump_window,
               p.ppd_reason=s.ppd_reason,p.ppd_run_type=%s,
-              p.ppd_version='CORE_0_32_10',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
-              p.plan_stage_version='CORE_0_32_10',p.plan_stage_updated_at=NOW(6),
+              p.ppd_version='CORE_0_32_11',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
+              p.plan_stage_version='CORE_0_32_11',p.plan_stage_updated_at=NOW(6),
               p.plan_validation_status='ACCEPTED',p.plan_validation_reason='OK',
               p.plan_published_at=NOW(6),p.plan_published=1 WHERE p.actual_recorded_at IS NULL AND p.slot_start>=%s""",
               (run_id,run_type,run_id,cutoff))
