@@ -305,12 +305,14 @@ def build_executor(a: ExecutorAdapters):
             and service_map[p][state].startswith("script.")
             for state in ("ON", "OFF")
         )]
+        configured_enabled = bool(OPTIONS.get("executor_enabled", False))
+        live = configured_enabled and not missing
         changed = {
-            "executor_enabled": not missing,
-            "executor_dry_run": bool(missing),
-            "executor_activation_ack": "" if missing else "EMS_CONNECTOR_ACCEPTED",
+            "executor_enabled": live,
+            "executor_dry_run": not live,
+            "executor_activation_ack": "EMS_CONNECTOR_ACCEPTED" if live else "",
         }
-        state = "OFF" if missing else "LIVE"
+        state = "LIVE" if live else "OFF"
         try:
             current = json.loads(RUNTIME_SETTINGS_PATH.read_text(encoding="utf-8"))
         except FileNotFoundError:

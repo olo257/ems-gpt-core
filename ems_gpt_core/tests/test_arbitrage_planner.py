@@ -333,6 +333,25 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertTrue(windows[4][1])
         self.assertTrue(windows[5][1])
 
+    def test_small_local_price_noise_does_not_expand_buy_over_whole_day(self):
+        buys = [1.50 + (0.01 if index % 2 else 0.0) for index in range(40)]
+        buys[20] = 1.00
+        prices = [{"buy": price, "sell": 0.0} for price in buys]
+
+        windows = derive_price_windows(prices, 0.90, 0.95, 0.08, 0.05, 0.05)
+
+        self.assertEqual([i for i, (_, buy) in enumerate(windows) if buy], [20])
+
+    def test_buy_and_sale_permissions_never_overlap(self):
+        prices = [
+            {"sell": 3.0, "buy": 1.0},
+            {"sell": 0.0, "buy": 2.0},
+        ]
+
+        windows = derive_price_windows(prices, 1.0, 1.0, 0.0, 0.0, 0.05)
+
+        self.assertEqual(windows[0], (True, False))
+
     def test_sale_window_false_blocks_battery_export_but_not_native_load(self):
         rows = [{"price_buy_pln_kwh": 4.0, "price_sell_pln_kwh": 10.0,
                  "sale_window": False, "buy_window": False,

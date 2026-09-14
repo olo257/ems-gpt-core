@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.32.9"', APP_SOURCE)
-        self.assertIn('version: "0.32.9"', CONFIG)
+        self.assertIn('APP_VERSION = "0.32.10"', APP_SOURCE)
+        self.assertIn('version: "0.32.10"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -284,7 +284,7 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(field, SOURCE)
         self.assertIn("grid_buy_allowed+grid_no_buy+grid_neutral<>1", SOURCE)
         self.assertIn("heat_pump_window NOT IN (0,1)", SOURCE)
-        self.assertIn("CORE_0_32_9", SOURCE)
+        self.assertIn("CORE_0_32_10", SOURCE)
 
     def test_executor_is_safe_by_default(self):
         self.assertIn("executor_enabled: false", CONFIG)
@@ -300,12 +300,13 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('state = "DRY_RUN" if dry_run else "LIVE"', SOURCE)
         self.assertIn('STATE["executor"] = "OFF"', SOURCE)
 
-    def test_executor_starts_live_with_complete_safe_mapping(self):
+    def test_executor_startup_respects_explicit_enabled_setting(self):
         self.assertIn("def enable_production_on_startup()", SOURCE)
         self.assertIn("startup_executor = enable_production_on_startup()", SOURCE)
-        self.assertIn('"executor_enabled": not missing', SOURCE)
-        self.assertIn('"executor_dry_run": bool(missing)', SOURCE)
-        self.assertIn('"executor_activation_ack": "" if missing else "EMS_CONNECTOR_ACCEPTED"', SOURCE)
+        self.assertIn('configured_enabled = bool(OPTIONS.get("executor_enabled", False))', SOURCE)
+        self.assertIn('live = configured_enabled and not missing', SOURCE)
+        self.assertIn('"executor_enabled": live', SOURCE)
+        self.assertIn('"executor_dry_run": not live', SOURCE)
         self.assertIn('"missing_safe_script_mappings": missing', SOURCE)
 
     def test_circulation_is_outside_application_control_and_panel(self):

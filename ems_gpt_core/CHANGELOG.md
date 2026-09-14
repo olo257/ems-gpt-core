@@ -587,6 +587,14 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.10
+
+- Okna BUY wymagają wyraźnego minimum w czterogodzinnym otoczeniu; drobne
+  lokalne wahania nie mogą już rozszerzyć BUY na prawie cały horyzont.
+- Flagi BUY i SELL są wzajemnie wykluczające.
+- Restart respektuje zapisane executor_enabled=false i nie przełącza
+  samoczynnie wykonawcy z OFF na LIVE tylko dlatego, że mapowania istnieją.
+
 ## 0.32.9
 
 - Target obliczony z energii jest zaokrąglany w górę do wykonawczego kroku
