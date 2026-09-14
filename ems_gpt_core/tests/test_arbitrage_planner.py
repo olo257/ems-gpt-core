@@ -54,7 +54,9 @@ class PairedArbitrageTests(unittest.TestCase):
     def test_full_horizon_links_distant_purchase_and_sale(self):
         rows=[{"price_buy_pln_kwh":2.0,"price_sell_pln_kwh":1.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(100)]
         rows[1]["price_buy_pln_kwh"]=1.0
+        rows[1]["buy_window"]=True
         rows[85]["price_sell_pln_kwh"]=3.0
+        rows[85]["sale_window"]=True
         result=self.optimize(rows)
         self.assertGreater(result["flows"][1]["grid_charge_kwh"],0.0)
         self.assertGreater(result["flows"][85]["battery_sell_kwh"],0.0)
@@ -62,6 +64,7 @@ class PairedArbitrageTests(unittest.TestCase):
     def test_full_horizon_buys_for_distant_load_without_sale(self):
         rows=[{"price_buy_pln_kwh":3.0,"price_sell_pln_kwh":0.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(72)]
         rows[2]["price_buy_pln_kwh"]=0.5
+        rows[2]["buy_window"]=True
         rows[60]["forecast_load_kwh"]=1.0
         result=self.optimize(rows,15.0,15.0,[15.0]*len(rows))
         self.assertGreater(result["flows"][2]["grid_charge_kwh"],0.0)
@@ -71,6 +74,7 @@ class PairedArbitrageTests(unittest.TestCase):
     def test_target_covers_future_load_and_is_not_the_floor(self):
         rows=[{"price_buy_pln_kwh":3.0,"price_sell_pln_kwh":0.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(8)]
         rows[0]["price_buy_pln_kwh"]=0.5
+        rows[0]["buy_window"]=True
         rows[6]["forecast_load_kwh"]=1.0
         result=self.optimize(rows,15.0,15.0,[15.0]*len(rows))
         floors,targets=derive_soc_commitments(result["flows"],15.0,15.0,15.0,90.0,95.0)
@@ -81,13 +85,14 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(targets[6],15.0)
 
     def test_sale_floor_and_terminal_soc_are_protected(self):
-        rows=[{"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":10.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(8)]
+        rows=[{"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":10.0,"sale_window":True,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(8)]
         result=self.optimize(rows,60.0,40.0)
         self.assertGreaterEqual(result["flows"][-1]["soc_end_pct"],40.0)
         self.assertGreaterEqual(min(flow["soc_end_pct"] for flow in result["flows"] if flow["battery_sell_kwh"]>0),40.0)
 
     def test_sale_slot_native_load_cannot_push_soc_below_floor(self):
         rows=[{"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":10.0,
+               "sale_window":True,
                "forecast_load_kwh":0.30,"forecast_pv_total_kwh":0.0}]
         result=self.optimize(rows,46.5,40.0,[40.0])
         flow=result["flows"][0]
@@ -110,6 +115,7 @@ class PairedArbitrageTests(unittest.TestCase):
             {"price_buy_pln_kwh":1.0,"price_sell_pln_kwh":0.0,
              "forecast_load_kwh":0.30,"forecast_pv_total_kwh":0.0},
             {"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":5.0,
+             "sale_window":True,
              "forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0},
         ]
         result=self.optimize(rows,17.0,15.0,[15.0,15.0])
@@ -207,8 +213,8 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(targets[6], floors[6])
 
         result = optimize_energy_horizon(
-            rows, 30.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, sale_floors, 20.0, 0.25, 100.0, targets)
+            rows, 20.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, sale_floors, 15.0, 0.25, 100.0, targets)
         flows = result["flows"]
 
         self.assertGreater(flows[0]["grid_charge_kwh"], 0.0)
@@ -234,7 +240,7 @@ class PairedArbitrageTests(unittest.TestCase):
         ]
         result = optimize_energy_horizon(
             rows, 20.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [20.0, 20.0], 20.0, 0.25, 100.0, [20.0, 30.0])
+            5.0, 15, [20.0, 20.0], 20.0, 0.25, 100.0, [20.0, 27.5])
 
         self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertGreater(result["flows"][1]["grid_charge_kwh"], 0.0)
@@ -250,7 +256,7 @@ class PairedArbitrageTests(unittest.TestCase):
         ]
         result = optimize_energy_horizon(
             rows, 25.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [20.0, 20.0], 20.0, 0.25, 100.0, [35.0, 35.0])
+            5.0, 15, [20.0, 20.0], 20.0, 0.25, 100.0, [30.0, 30.0])
 
         self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertGreater(result["flows"][0]["battery_to_load_kwh"], 0.0)
@@ -287,6 +293,48 @@ class PairedArbitrageTests(unittest.TestCase):
 
         self.assertTrue(windows[0][0])
         self.assertFalse(windows[0][1])
+
+    def test_falling_evening_price_is_not_buy_before_overnight_trough(self):
+        prices = [
+            {"sell": 2.568, "buy": 3.168},
+            {"sell": 2.138, "buy": 2.738},
+            {"sell": 1.545, "buy": 2.145},
+            {"sell": 1.153, "buy": 1.753},
+            {"sell": 0.807, "buy": 1.407},
+            {"sell": 0.787, "buy": 1.387},
+            {"sell": 1.812, "buy": 2.412},
+        ]
+
+        windows = derive_price_windows(prices, 0.90, 0.95, 0.08, 0.05, 0.05)
+
+        self.assertFalse(windows[0][1])
+        self.assertFalse(windows[1][1])
+        self.assertTrue(windows[4][1])
+        self.assertTrue(windows[5][1])
+
+    def test_sale_window_false_blocks_battery_export_but_not_native_load(self):
+        rows = [{"price_buy_pln_kwh": 4.0, "price_sell_pln_kwh": 10.0,
+                 "sale_window": False, "buy_window": False,
+                 "forecast_load_kwh": 0.30, "forecast_pv_total_kwh": 0.0}]
+
+        result = self.optimize(rows, 41.0, 15.0, [40.0])
+        flow = result["flows"][0]
+
+        self.assertEqual(flow["battery_sell_kwh"], 0.0)
+        self.assertGreater(flow["battery_to_load_kwh"], 0.0)
+        self.assertLess(flow["soc_end_pct"], 40.0)
+
+    def test_buy_target_is_a_hard_charge_ceiling(self):
+        rows = [{"price_buy_pln_kwh": 0.5, "price_sell_pln_kwh": 0.0,
+                 "sale_window": False, "buy_window": True,
+                 "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0}]
+
+        result = optimize_energy_horizon(
+            rows, 20.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 15.0, 0.25, 100.0, [25.0])
+
+        self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
+        self.assertEqual(result["flows"][0]["soc_end_pct"], 25.0)
 
     def test_ppd_sell_peak_uses_complete_horizon_not_named_sessions(self):
         rows = [
