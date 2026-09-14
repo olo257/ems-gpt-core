@@ -175,6 +175,57 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(floors[0], 15.0)
         self.assertEqual(targets[0], 15.0)
 
+    def test_target_stays_above_sale_floor_and_drives_morning_recovery(self):
+        rows = [
+            {"price_buy_pln_kwh": 1.0 if index == 0 else 4.0,
+             "price_sell_pln_kwh": 2.0,
+             "buy_window": index == 0,
+             "forecast_load_kwh": 0.30,
+             "forecast_pv_total_kwh": 0.80 if 6 <= index < 12 else 0.0}
+            for index in range(20)
+        ]
+        sale_floors = [20.0] * len(rows)
+        seed = [{"grid_charge_kwh": 0.0} for _ in rows]
+        floors, targets = bridge_soc_commitments(
+            rows, seed, 15.0, 15.0, 0.90, 0.95, 1.25, 1.0,
+            90.0, 100.0, sale_floors)
+
+        self.assertTrue(all(floor == 20.0 for floor in floors))
+        self.assertGreater(targets[0], floors[0])
+        self.assertGreater(targets[6], floors[6])
+
+        result = optimize_energy_horizon(
+            rows, 30.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, sale_floors, 20.0, 0.25, 100.0, targets)
+        flows = result["flows"]
+
+        self.assertGreater(flows[0]["grid_charge_kwh"], 0.0)
+        self.assertTrue(all(
+            flow["soc_end_pct"] + 1e-9 >= target
+            or flow["battery_charge_internal_kwh"] > 1e-9
+            for flow, target in zip(flows, targets)
+        ))
+        self.assertFalse(any(
+            flow["pv_export_kwh"] > 1e-9 and flow["soc_end_pct"] < target
+            for flow, target in zip(flows, targets)
+        ))
+
+    def test_unmet_target_charges_only_in_buy_or_from_pv(self):
+        rows = [
+            {"price_buy_pln_kwh": 4.0, "price_sell_pln_kwh": 2.0,
+             "buy_window": False, "forecast_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0},
+            {"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 1.0,
+             "buy_window": True, "forecast_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0},
+        ]
+        result = optimize_energy_horizon(
+            rows, 20.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [20.0, 20.0], 20.0, 0.25, 100.0, [20.0, 30.0])
+
+        self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
+        self.assertGreater(result["flows"][1]["grid_charge_kwh"], 0.0)
+
     def test_soc_bridge_has_no_special_evening_hour(self):
         evening = [
             {"slot_start_local": "2026-09-14 19:45:00", "forecast_load_kwh": 0.4,
