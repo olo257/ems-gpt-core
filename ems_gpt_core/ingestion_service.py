@@ -18,10 +18,14 @@ def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
         return []
     buys = [float(row["buy"]) for row in prices]
     buy_candidates: set[int] = set()
+    # A 4-hour neighbourhood suppresses insignificant quarter-hour noise.
+    # Without this prominence test, every tiny local dip expands by tolerance
+    # and overlapping expansions can mark almost the complete day as BUY.
+    radius = min(16, max(0, len(prices) - 1))
     for index in range(len(prices)):
-        previous_buy = buys[index - 1] if index else float("inf")
-        next_buy = buys[index + 1] if index + 1 < len(prices) else float("inf")
-        if buys[index] <= previous_buy and buys[index] <= next_buy:
+        neighbourhood = buys[max(0, index-radius):min(len(buys), index+radius+1)]
+        prominent = max(neighbourhood) - buys[index] >= buy_tolerance - 1e-9
+        if prominent and buys[index] <= min(neighbourhood) + 1e-9:
             left = right = index
             while left > 0 and buys[left - 1] <= buys[index] + buy_tolerance:
                 left -= 1
@@ -37,7 +41,8 @@ def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
                          if replacement is not None else None)
         economically_ready = required_sell is not None and float(current["sell"]) >= required_sell
         sale_window = bool(economically_ready)
-        buy_window = index in buy_candidates
+        # BUY and SELL are mutually exclusive permissions.
+        buy_window = index in buy_candidates and not sale_window
         windows.append((sale_window, buy_window))
     return windows
 
