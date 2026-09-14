@@ -587,3 +587,22 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.31.0
+
+- Dodano osobny kontrakt gotowości `/ready`, który kontroluje świeżość telemetrii HA.
+- Scheduler nie maskuje już braku telemetrii statusem `RUNNING` i heartbeat procesu.
+- Po braku wejścia HA wykonawca nie wystawia ani nie wysyła nowych poleceń.
+- Status API publikuje wiek ostatniej poprawnej próbki oraz liczbę kolejnych niepowodzeń.
+- Dodano konfigurowalne progi `telemetry_degraded_seconds` i `telemetry_stale_seconds`.
+- Dodano test regresyjny incydentu 2026-09-13 23:45–06:21.
+- Wszystkie odpowiedzi API i odczyty panelu używają `no-store`; Diagnostyka pokazuje
+  najnowsze raporty oraz jawny czas ostatniego odświeżenia.
+- Przełączanie zakładek jest blokowane na czas aktywnego odczytu.
+- Czas w panelu ma format `HH:MM:SS`, a data z czasem `YYYY-MM-DD HH:MM:SS`
+  w strefie `Europe/Warsaw`, bez migracji ani zmiany semantyki pól w MariaDB.
+- Widok Sugestie / TODO został skrócony do opisu i statusu; pełna rekomendacja,
+  metadane przebiegu, notatka operatora oraz decyzje są dostępne w popupie.
+- Recovery nadal domyka wszystkie zakończone sloty idempotentnie; brak materiału
+  źródłowego pozostaje jawnym `MISSING_OUTAGE`, bez syntetycznych pomiarów.
+- Bez zmian w planerze, PPD i semantyce wykonawcy LIVE. Observer pozostaje
+  `SHADOW_READ_ONLY`, a `COOL_DHW` pozostaje nieaktywną zapowiedzią na lato.
