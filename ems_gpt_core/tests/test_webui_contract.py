@@ -8,6 +8,16 @@ API = (ROOT / "api_service.py").read_text(encoding="utf-8")
 
 
 class WebUiContractTests(unittest.TestCase):
+    def test_rce_chart_has_48_hour_and_365_day_modes(self):
+        self.assertIn("data-view='rce-chart'", HTML)
+        self.assertIn("data-rce-range='48h'", HTML)
+        self.assertIn("data-rce-range='365d'", HTML)
+        self.assertIn("api/rce-chart?range=", HTML)
+        self.assertIn("chart-window-buy", HTML)
+        self.assertIn("chart-window-sell", HTML)
+        self.assertIn('path.endswith("/api/rce-chart")', API)
+        self.assertIn("GROUP BY DATE(slot_start) ORDER BY label", API)
+
     def test_every_panel_request_disables_browser_cache(self):
         self.assertIn("window.fetch=(url,options={})=>nativeFetch(url,{cache:'no-store',...options})", HTML)
         self.assertIn('self.send_header("Cache-Control", "no-store")', API)
