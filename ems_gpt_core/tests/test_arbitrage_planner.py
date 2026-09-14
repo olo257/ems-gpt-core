@@ -336,6 +336,21 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertEqual(result["flows"][0]["soc_end_pct"], 25.0)
 
+    def test_last_replenishment_target_includes_terminal_soc(self):
+        rows = [
+            {"buy_window": True, "forecast_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0},
+            {"buy_window": False, "forecast_load_kwh": 0.30,
+             "forecast_pv_total_kwh": 0.0},
+        ]
+        flows = [{"battery_sell_kwh": 0.0}, {"battery_sell_kwh": 0.0}]
+
+        _, targets = bridge_soc_commitments(
+            rows, flows, 15.0, 15.0, 0.90, 0.95, 1.25, 0.0,
+            90.0, 100.0, [40.0, 40.0], 30.0)
+
+        self.assertAlmostEqual(targets[0], 30.0 + 0.30 / 0.95 / 15.0 * 100.0)
+
     def test_ppd_sell_peak_uses_complete_horizon_not_named_sessions(self):
         rows = [
             {"price_sell_pln_kwh": 2.70, "price_buy_pln_kwh": 3.29},
