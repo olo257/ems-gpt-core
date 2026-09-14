@@ -587,6 +587,14 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.5
+
+- Naprawiono normalizację flagi `buy_window` zwracanej przez MariaDB jako
+  `TINYINT`/`Decimal`: wartość `0` bezwarunkowo blokuje ładowanie sieciowe.
+- Wszystkie bieżące i historyczne flagi okien są na granicy bazy zamieniane na
+  jawne `True/False`; wartości inne niż `0/1/true/false` zatrzymują publikację.
+- Dodano test regresyjny potwierdzający zakup wyłącznie dla wartości `True`.
+
 ## 0.32.4
 
 - `soc_target` jest teraz twardym ograniczeniem optymalizatora, a nie opisem przepływu wyliczanym po fakcie.

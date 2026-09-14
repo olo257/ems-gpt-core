@@ -1,6 +1,7 @@
 import pathlib
 import sys
 import unittest
+from decimal import Decimal
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -13,6 +14,7 @@ from planner_service import (
     paired_arbitrage_buy_indices,
     optimize_energy_horizon,
     planning_tou_programs,
+    strict_database_bool,
     bridge_soc_commitments,
     derive_soc_commitments,
     soc_bridge_envelopes,
@@ -21,6 +23,16 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_database_flags_are_strict_true_false_for_historical_rows(self):
+        self.assertIs(strict_database_bool(False, "buy_window"), False)
+        self.assertIs(strict_database_bool(True, "buy_window"), True)
+        self.assertIs(strict_database_bool(Decimal("0"), "buy_window"), False)
+        self.assertIs(strict_database_bool(Decimal("1"), "buy_window"), True)
+        self.assertIs(strict_database_bool("false", "buy_window"), False)
+        self.assertIs(strict_database_bool("true", "buy_window"), True)
+        with self.assertRaisesRegex(RuntimeError, "INVALID_BOOLEAN:buy_window"):
+            strict_database_bool(2, "buy_window")
+
     def test_planning_uses_configured_soc_not_temporary_live_target(self):
         live = [
             {"program": 4, "soc": 100, "time": "19:30"},
@@ -213,10 +225,10 @@ class PairedArbitrageTests(unittest.TestCase):
     def test_unmet_target_charges_only_in_buy_or_from_pv(self):
         rows = [
             {"price_buy_pln_kwh": 4.0, "price_sell_pln_kwh": 2.0,
-             "buy_window": False, "forecast_load_kwh": 0.0,
+             "buy_window": Decimal("0"), "forecast_load_kwh": 0.0,
              "forecast_pv_total_kwh": 0.0},
             {"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 1.0,
-             "buy_window": True, "forecast_load_kwh": 0.0,
+             "buy_window": Decimal("1"), "forecast_load_kwh": 0.0,
              "forecast_pv_total_kwh": 0.0},
         ]
         result = optimize_energy_horizon(
