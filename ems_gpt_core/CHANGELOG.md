@@ -587,6 +587,30 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.2
+
+- Planer używa żywych czasów programów TOU Deye, ale ich ograniczenia SOC zawsze
+  bierze z konfigurowalnego baseline. Tymczasowy `soc_target` lub `soc_floor`
+  ustawiony przez wykonawcę nie może już przesunąć sprzedaży do późniejszego,
+  tańszego slotu po zmianie programu.
+- `BATTERY_IMPORT` przed włączeniem Grid sprawdza rzeczywisty SOC, wynikowy target
+  oraz zaplanowaną energię zakupu. Jeżeli target jest już osiągnięty albo przepływ
+  nie przekracza progu planu, wykonawca pozostawia import wyłączony, ustawia aktywny
+  program na `Charging=Disabled` i bezpiecznie przywraca bazowy SOC.
+- Dodano testy regresji izolacji baseline planera oraz brakującego baseline.
+- Rozdzielono kontrakty SOC: `soc_floor` ogranicza wyłącznie celową sprzedaż,
+  natomiast `soc_target` jest liczonym wstecz zapotrzebowaniem po slocie,
+  koniecznym do wykonania przyszłego zużycia i zaakceptowanych przepływów do
+  następnego uzupełnienia. Target nie jest kopiowany z floor ani z bieżącego SOC.
+- Sprzedaż nie tworzy automatycznego obowiązku odkupienia całej sprzedanej energii.
+  Planer bilansuje most energetyczny do następnego realnego uzupełnienia: najpierw
+  prognozowane PV, a BUY do baterii pokrywa wyłącznie pozostały niedobór.
+- Zwykłe zasilanie odbiorników z sieci nie jest decyzją zakupową EMS. Jest
+  dopuszczalne ponad techniczną resztę kwantyzacji wyłącznie jako ekonomicznie
+  uzasadniona ochrona SOC przed późniejszą sprzedażą i jest tak jawnie opisane.
+- Plan sprzedaży nie może zostać opublikowany, jeżeli końcowy SOC slotu narusza
+  `soc_floor`; przypadek taki kończy przebieg błędem `SALE_FLOOR_VIOLATION`.
+
 ## 0.32.1
 
 - Wykonawca przed włączeniem `BATTERY_IMPORT` zapisuje pierwotny SOC aktywnego

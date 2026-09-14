@@ -12,6 +12,8 @@ from planner_service import (
     economic_sell_indices,
     paired_arbitrage_buy_indices,
     optimize_energy_horizon,
+    planning_tou_programs,
+    bridge_soc_commitments,
     derive_soc_commitments,
     soc_bridge_envelopes,
 )
@@ -19,6 +21,19 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_planning_uses_configured_soc_not_temporary_live_target(self):
+        live = [
+            {"program": 4, "soc": 100, "time": "19:30"},
+            {"program": 5, "soc": 40, "time": "20:30"},
+        ]
+        result = planning_tou_programs(live, '{"4":40,"5":40}')
+        self.assertEqual([row["soc"] for row in result], [40.0, 40.0])
+        self.assertEqual([row["time"] for row in result], ["19:30", "20:30"])
+
+    def test_missing_planning_baseline_fails_closed(self):
+        with self.assertRaisesRegex(RuntimeError, "DEYE_PROGRAM_SOC_BASELINE_MISSING:4"):
+            planning_tou_programs([{"program": 4, "soc": 100}], '{}')
+
     @staticmethod
     def optimize(rows, initial_soc=40.0, terminal_soc=40.0, floors=None):
         return optimize_energy_horizon(rows, initial_soc, 15.0, 15.0, 0.90, 0.95,
@@ -41,18 +56,79 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][60]["battery_to_load_kwh"],0.0)
         self.assertFalse(any(flow["battery_sell_kwh"]>0 for flow in result["flows"]))
 
+    def test_target_covers_future_load_and_is_not_the_floor(self):
+        rows=[{"price_buy_pln_kwh":3.0,"price_sell_pln_kwh":0.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(8)]
+        rows[0]["price_buy_pln_kwh"]=0.5
+        rows[6]["forecast_load_kwh"]=1.0
+        result=self.optimize(rows,15.0,15.0,[15.0]*len(rows))
+        floors,targets=derive_soc_commitments(result["flows"],15.0,15.0,15.0,90.0,95.0)
+        self.assertEqual(floors[0],15.0)
+        self.assertGreater(targets[0],floors[0])
+        self.assertAlmostEqual(targets[0],result["flows"][0]["soc_end_pct"])
+        self.assertEqual(targets[5],targets[0])
+        self.assertEqual(targets[6],15.0)
+
     def test_sale_floor_and_terminal_soc_are_protected(self):
         rows=[{"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":10.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(8)]
         result=self.optimize(rows,60.0,40.0)
         self.assertGreaterEqual(result["flows"][-1]["soc_end_pct"],40.0)
         self.assertGreaterEqual(min(flow["soc_end_pct"] for flow in result["flows"] if flow["battery_sell_kwh"]>0),40.0)
 
+    def test_sale_slot_native_load_cannot_push_soc_below_floor(self):
+        rows=[{"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":10.0,
+               "forecast_load_kwh":0.30,"forecast_pv_total_kwh":0.0}]
+        result=self.optimize(rows,46.5,40.0,[40.0])
+        flow=result["flows"][0]
+        self.assertGreater(flow["battery_sell_kwh"],0.0)
+        self.assertGreaterEqual(flow["soc_end_pct"],40.0)
+
+    def test_grid_only_load_is_rejected_without_profitable_future_sale(self):
+        rows=[
+            {"price_buy_pln_kwh":1.0,"price_sell_pln_kwh":0.0,
+             "forecast_load_kwh":0.30,"forecast_pv_total_kwh":0.0},
+            {"price_buy_pln_kwh":2.0,"price_sell_pln_kwh":0.0,
+             "forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0},
+        ]
+        result=self.optimize(rows,40.0,15.0,[15.0,15.0])
+        self.assertGreater(result["flows"][0]["battery_to_load_kwh"],0.0)
+        self.assertLessEqual(result["flows"][0]["grid_load_kwh"],0.04)
+
+    def test_grid_load_may_hold_soc_for_materially_better_sale(self):
+        rows=[
+            {"price_buy_pln_kwh":1.0,"price_sell_pln_kwh":0.0,
+             "forecast_load_kwh":0.30,"forecast_pv_total_kwh":0.0},
+            {"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":5.0,
+             "forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0},
+        ]
+        result=self.optimize(rows,17.0,15.0,[15.0,15.0])
+        self.assertGreater(result["flows"][0]["grid_load_kwh"],0.0)
+        self.assertGreater(result["flows"][1]["battery_sell_kwh"],0.0)
+
+    def test_sale_recovery_uses_pv_before_grid_buy(self):
+        rows=[
+            {"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0},
+            {"forecast_load_kwh":0.2,"forecast_pv_total_kwh":1.2},
+            {"forecast_load_kwh":0.3,"forecast_pv_total_kwh":0.0},
+        ]
+        flows=[
+            {"grid_charge_kwh":0.0,"soc_end_pct":30.0},
+            {"grid_charge_kwh":0.0,"soc_end_pct":36.0},
+            {"grid_charge_kwh":0.0,"soc_end_pct":34.0},
+        ]
+        floors,targets=bridge_soc_commitments(
+            rows,flows,15.0,15.0,0.98,0.98,1.25,0.0,90.0,100.0)
+        self.assertEqual(targets[0],15.0)
+        self.assertEqual(floors[0],15.0)
+
     def test_soc_controls_are_results_of_backward_pass(self):
-        flows=[{"battery_charge_internal_kwh":3.0,"battery_discharge_internal_kwh":0.0},{"battery_charge_internal_kwh":0.0,"battery_discharge_internal_kwh":3.0}]
+        flows=[
+            {"soc_start_pct":15.0,"soc_end_pct":35.0,"battery_charge_internal_kwh":3.0,"battery_discharge_internal_kwh":0.0,"battery_sell_kwh":0.0},
+            {"soc_start_pct":35.0,"soc_end_pct":20.0,"battery_charge_internal_kwh":0.0,"battery_discharge_internal_kwh":3.0,"battery_sell_kwh":2.0},
+        ]
         floors,targets=derive_soc_commitments(flows,15.0,15.0,15.0,90.0,95.0)
-        self.assertGreater(targets[0],15.0)
-        self.assertEqual(targets[1],15.0)
-        self.assertEqual(floors,targets)
+        self.assertEqual(targets,[35.0,15.0])
+        self.assertEqual(floors,[15.0,20.0])
+        self.assertNotEqual(floors,targets)
     def test_native_load_can_discharge_below_sale_floor_to_technical_reserve(self):
         sale, native = allocate_slot_discharge(
             energy_kwh=6.0, capacity_kwh=15.0, reserve_pct=15.0,

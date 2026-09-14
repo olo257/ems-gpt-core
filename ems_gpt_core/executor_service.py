@@ -22,6 +22,17 @@ def battery_soc_guard_actions(live_soc: float | None, planned_end_soc: float | N
     )
 
 
+def battery_import_guard_reason(live_soc, target, planned_buy, flow_threshold: float) -> str | None:
+    """Reject grid mode unless the battery can absorb the planned purchase."""
+    if target is None or live_soc is None or planned_buy is None:
+        return "IMPORT_PLAN_OR_SOC_UNAVAILABLE"
+    if float(planned_buy) <= float(flow_threshold):
+        return f"IMPORT_FLOW_BELOW_THRESHOLD:{float(planned_buy):.6f}"
+    if float(live_soc) >= float(target) - 0.01:
+        return f"IMPORT_TARGET_ALREADY_REACHED:live={float(live_soc):.2f};target={float(target):.2f}"
+    return None
+
+
 @dataclass(frozen=True)
 class ExecutorAdapters:
     options: dict
@@ -499,12 +510,35 @@ def build_executor(a: ExecutorAdapters):
                 target_update = None
                 restored_targets = []
                 if command["process_name"] == "BATTERY_IMPORT" and command["decision"] == "ON":
-                    cur.execute("""SELECT soc_target_pct,soc_end_plan_pct FROM ems_gpt_slots
+                    cur.execute("""SELECT soc_target_pct,soc_end_plan_pct,planned_buy_kwh FROM ems_gpt_slots
                       WHERE slot_start=%s LIMIT 1""", (current_slot,))
                     plan_target = cur.fetchone() or {}
                     target = plan_target.get("soc_target_pct")
                     if target is None:
                         target = plan_target.get("soc_end_plan_pct")
+                    live_soc = number(ha_state("sensor.inverter_battery"))
+                    planned_buy = number(plan_target.get("planned_buy_kwh"))
+                    flow_threshold = float(OPTIONS.get("planned_flow_threshold_kwh", 0.02))
+                    guard_reason = battery_import_guard_reason(
+                        live_soc, target, planned_buy, flow_threshold)
+                    if guard_reason:
+                        off_entity = process_map.get("OFF")
+                        safe_response = ha_service_response("script", "turn_on", {"entity_id": off_entity}) \
+                            if isinstance(off_entity, str) and off_entity.startswith("script.") else None
+                        try:
+                            set_active_program_charging(now, "Disabled")
+                        except RuntimeError:
+                            pass
+                        restored_targets = restore_program_targets_if_idle()
+                        cur.execute("UPDATE ems_gpt_core_commands SET status='REJECTED',acknowledgement_json=%s WHERE command_id=%s",
+                                    (json.dumps({"reason": guard_reason, "live_soc": live_soc,
+                                                 "target_soc": target, "planned_buy_kwh": planned_buy,
+                                                 "safe_off_dispatched": safe_response is not None,
+                                                 "tou_targets_restored": restored_targets}), command["command_id"]))
+                        record_event("battery_import_blocked_by_live_target", "executor", {
+                            "reason": guard_reason, "slot_start": current_slot,
+                        }, "WARNING")
+                        continue
                     try:
                         set_active_program_charging(now, "Grid")
                         target_update = set_active_program_target(now, float(target))
