@@ -1,5 +1,5 @@
 name: EMS-GPT Core
-version: "0.30.1"
+version: "0.31.0"
 slug: ems_gpt_core
 description: Niezależny silnik planowania i analityki EMS-GPT
 url: https://github.com/olo257/ems-gpt-core
@@ -22,6 +22,8 @@ options:
   timezone: Europe/Warsaw
   slot_minutes: 15
   command_ttl_seconds: 960
+  telemetry_degraded_seconds: 120
+  telemetry_stale_seconds: 300
   db_host: core-mariadb
   db_port: 3306
   db_name: ems_gpt
@@ -42,6 +44,8 @@ schema:
   timezone: str
   slot_minutes: int(15,15)
   command_ttl_seconds: int(60,1800)
+  telemetry_degraded_seconds: int(60,600)
+  telemetry_stale_seconds: int(120,1800)
   db_host: str
   db_port: port
   db_name: str

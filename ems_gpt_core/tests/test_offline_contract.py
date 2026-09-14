@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.30.1"', APP_SOURCE)
-        self.assertIn('version: "0.30.1"', CONFIG)
+        self.assertIn('APP_VERSION = "0.31.0"', APP_SOURCE)
+        self.assertIn('version: "0.31.0"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -78,6 +78,9 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn('if start.minute == 8:', SOURCE)
         self.assertIn("if minute < 15:", SOURCE)
         self.assertIn("heartbeat_age < 180", SOURCE)
+        self.assertIn('readiness == "READY"', SOURCE)
+        self.assertIn('path.endswith("/ready")', SOURCE)
+        self.assertIn("executor dispatch suppressed", SOURCE)
         loop = MODULE_SOURCES["scheduler_service.py"]
         self.assertEqual(loop.count("a.rebuild_recovery_materializations"), 2)
         self.assertIn(
