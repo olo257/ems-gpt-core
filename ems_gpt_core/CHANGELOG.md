@@ -587,6 +587,20 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.7
+
+- `sale_window` jest twardą zgodą na sprzedaż z baterii; poza oknem SELL
+  bateria może zasilać dom, lecz nie może eksportować energii.
+- `soc_floor` ogranicza wyłącznie sprzedaż z baterii i nie blokuje zwykłej
+  autokonsumpcji aż do technicznego minimum SOC.
+- `soc_target` jest niezależny od floor, obejmuje zapotrzebowanie tylko do
+  następnego okna PV/BUY i stanowi twardy sufit ładowania.
+- PV ładuje baterię do targetu przed eksportem nadwyżki.
+- Okna BUY/SELL są ponownie wyznaczane dla całego otwartego horyzontu;
+  opadające ramię ceny nie jest już błędnie oznaczane jako BUY.
+- Publikacja sprawdza zgodę SELL, floor sprzedaży, sufit/osiągnięcie targetu
+  oraz fizyczne domknięcie bilansu każdego slotu.
+
 ## 0.32.6
 
 - Niezrealizowany `soc_target` jest egzekwowany dopiero w najbliższym

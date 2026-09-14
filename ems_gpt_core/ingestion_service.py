@@ -13,24 +13,31 @@ from urllib.parse import urlencode
 def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
                          degradation: float, min_margin: float,
                          buy_tolerance: float) -> list[tuple[bool, bool]]:
-    """Derive economic sell/buy candidates without clock-based sessions."""
+    """Derive economic valleys and peaks over the complete price horizon."""
+    if not prices:
+        return []
+    buys = [float(row["buy"]) for row in prices]
+    buy_candidates: set[int] = set()
+    for index in range(len(prices)):
+        previous_buy = buys[index - 1] if index else float("inf")
+        next_buy = buys[index + 1] if index + 1 < len(prices) else float("inf")
+        if buys[index] <= previous_buy and buys[index] <= next_buy:
+            left = right = index
+            while left > 0 and buys[left - 1] <= buys[index] + buy_tolerance:
+                left -= 1
+            while right + 1 < len(prices) and buys[right + 1] <= buys[index] + buy_tolerance:
+                right += 1
+            buy_candidates.update(range(left, right + 1))
+
     windows = []
     for index, current in enumerate(prices):
-        later = prices[index + 1:]
-        later_sell = [float(row["sell"]) for row in later]
-        later_buy = [float(row["buy"]) for row in later]
+        later_buy = buys[index + 1:]
         replacement = min(later_buy) if later_buy else None
-        future_peak = max(later_sell) if later_sell else None
         required_sell = (replacement / (eta_c * eta_d) + degradation + min_margin
                          if replacement is not None else None)
         economically_ready = required_sell is not None and float(current["sell"]) >= required_sell
-        peak_ready = future_peak is None or float(current["sell"]) >= future_peak - min_margin
-        sale_window = bool(economically_ready and peak_ready)
-        buy_window = bool(
-            later_sell
-            and float(current["sell"]) <= min(later_sell) + buy_tolerance
-            and max(later_sell) * eta_d - float(current["buy"]) / eta_c - degradation >= min_margin
-        )
+        sale_window = bool(economically_ready)
+        buy_window = index in buy_candidates
         windows.append((sale_window, buy_window))
     return windows
 
@@ -169,6 +176,22 @@ def build_ingestion(a: IngestionAdapters):
                    canonical["slot_id"] if canonical else None,canonical["slot_start_utc"] if canonical else None,s,
                    canonical["utc_offset_minutes"] if canonical else None,canonical["local_fold"] if canonical else 0,
                    target,canonical["slot_index_local"] if canonical else None))
+            # Window flags are a property of the complete currently available
+            # price horizon. Recalculate every open slot after either day is
+            # imported so yesterday's partial-horizon flag cannot survive.
+            cur.execute("""SELECT slot_start,price_sell_pln_kwh,price_buy_pln_kwh
+              FROM ems_gpt_slots WHERE actual_recorded_at IS NULL
+                AND price_source='PSE_API' AND price_sell_pln_kwh IS NOT NULL
+                AND price_buy_pln_kwh IS NOT NULL ORDER BY slot_start""")
+            open_prices = list(cur.fetchall())
+            open_windows = derive_price_windows(
+                [{"sell": row["price_sell_pln_kwh"], "buy": row["price_buy_pln_kwh"]}
+                 for row in open_prices],
+                eta_c, eta_d, degradation, min_margin, buy_tolerance)
+            for row, (sale_window, buy_window) in zip(open_prices, open_windows):
+                cur.execute("""UPDATE ems_gpt_slots SET sale_window=%s,buy_window=%s
+                  WHERE slot_start=%s AND actual_recorded_at IS NULL""",
+                  (sale_window, buy_window, row["slot_start"]))
         result={"day":str(target),"rows":len(unique),"expected":expected,
                 "status":"OK" if len(unique)==expected else "PARTIAL","margin":margin}
         record_event("rce_refreshed","core",result)
