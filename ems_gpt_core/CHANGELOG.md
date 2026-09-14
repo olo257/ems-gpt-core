@@ -587,6 +587,16 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.31.1
+
+- Dodano natywny wykres cen RCE bez zewnętrznych bibliotek.
+- Widok 48-godzinny pokazuje sloty 15-minutowe, cenę sprzedaży, cenę zakupu
+  z marżą oraz tła okien zakupu i sprzedaży.
+- Widok 365-dniowy agreguje historię do średnich dziennych, aby nie obciążać
+  panelu dziesiątkami tysięcy punktów.
+- Endpoint `/api/rce-chart` jest wyłącznie odczytowy i zachowuje `no-store`.
+- Bez zmian w planerze, PPD, wykonawcy LIVE i programach SOC Deye 1–6.
+
 ## 0.31.0
 
 - Dodano osobny kontrakt gotowości `/ready`, który kontroluje świeżość telemetrii HA.
