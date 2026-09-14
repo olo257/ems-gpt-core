@@ -15,10 +15,17 @@ from executor_service import (
     battery_import_guard_reason,
     battery_soc_guard_actions,
     build_executor,
+    scalar_number,
 )
 
 
 class ExecutorServiceTests(unittest.TestCase):
+    def test_sql_floor_scalar_does_not_use_ha_state_parser(self):
+        self.assertEqual(scalar_number(55.65), 55.65)
+        self.assertEqual(scalar_number("40.00"), 40.0)
+        self.assertIsNone(scalar_number(None))
+        self.assertIsNone(scalar_number({"state": "40"}))
+
     def test_import_requires_headroom_and_material_planned_energy(self):
         self.assertIsNone(battery_import_guard_reason(60.0, 75.0, 0.5, 0.02))
         self.assertIn("TARGET_ALREADY_REACHED", battery_import_guard_reason(75.0, 75.0, 0.5, 0.02))

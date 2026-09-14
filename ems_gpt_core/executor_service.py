@@ -11,6 +11,16 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 
+def scalar_number(value) -> float | None:
+    """Parse a numeric SQL scalar without using the HA-state adapter."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def battery_soc_guard_actions(live_soc: float | None, planned_end_soc: float | None,
                               import_active: bool, export_active: bool) -> tuple[bool, bool]:
     """Return (stop_import, stop_export) at the quantitative slot SOC boundary."""
@@ -494,7 +504,7 @@ def build_executor(a: ExecutorAdapters):
                     cur.execute("""SELECT soc_floor_pct FROM ems_gpt_slots
                       WHERE slot_start=%s LIMIT 1""", (current_slot,))
                     floor_row = cur.fetchone() or {}
-                    plan_floor = number(floor_row.get("soc_floor_pct"))
+                    plan_floor = scalar_number(floor_row.get("soc_floor_pct"))
                     if live_soc is None or plan_floor is None or live_soc <= plan_floor + 0.01:
                         reason = ("PLAN_FLOOR_UNAVAILABLE" if live_soc is None or plan_floor is None else
                                   f"PLAN_FLOOR_BLOCK: soc_floor={plan_floor:.2f}%")
