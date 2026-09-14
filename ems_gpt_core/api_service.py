@@ -63,7 +63,7 @@ def build_handler(a: ApiAdapters):
     class Handler(BaseHTTPRequestHandler):
         def json(self, payload: dict, status=HTTPStatus.OK):
             data = json.dumps(payload, ensure_ascii=False, default=str).encode()
-            self.send_response(status); self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+            self.send_response(status); self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Cache-Control", "no-store"); self.send_header("Pragma", "no-cache"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
     
         def do_GET(self):
             path = self.path.split("?", 1)[0].rstrip("/")
@@ -74,17 +74,32 @@ def build_handler(a: ApiAdapters):
                 with LOCK:
                     heartbeat = STATE.get("last_heartbeat")
                     database_ok = STATE["database"] == "CONNECTED"
-                    status_ok = STATE["status"] in {"RUNNING", "DEGRADED"}
+                    status_ok = STATE["status"] == "RUNNING"
+                    readiness = STATE.get("readiness")
+                    telemetry_age = STATE.get("telemetry_age_seconds")
                 heartbeat_age = None
                 if heartbeat:
                     try:
                         heartbeat_age = (datetime.now(timezone.utc) - datetime.fromisoformat(heartbeat)).total_seconds()
                     except (TypeError, ValueError):
                         heartbeat_age = None
-                healthy = database_ok and status_ok and heartbeat_age is not None and heartbeat_age < 180
+                healthy = (database_ok and status_ok and readiness == "READY" and
+                           heartbeat_age is not None and heartbeat_age < 180)
                 return self.json({"ok": healthy, "app": APP_NAME, "version": APP_VERSION,
-                                  "heartbeat_age_seconds": None if heartbeat_age is None else round(heartbeat_age, 1)},
+                                  "readiness": readiness,
+                                  "heartbeat_age_seconds": None if heartbeat_age is None else round(heartbeat_age, 1),
+                                  "telemetry_age_seconds": telemetry_age},
                                  HTTPStatus.OK if healthy else HTTPStatus.SERVICE_UNAVAILABLE)
+            if path.endswith("/ready") or path == "/ready":
+                with LOCK:
+                    readiness = STATE.get("readiness")
+                    payload = {"ok": readiness == "READY", "app": APP_NAME,
+                               "version": APP_VERSION, "readiness": readiness,
+                               "ha_input": STATE.get("ha_input"),
+                               "telemetry_age_seconds": STATE.get("telemetry_age_seconds"),
+                               "telemetry_consecutive_failures": STATE.get("telemetry_consecutive_failures"),
+                               "last_telemetry_success": STATE.get("last_telemetry_success")}
+                return self.json(payload, HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE)
             if path.endswith("/api/status") or path == "/api/status":
                 with LOCK: return self.json(dict(STATE))
             if path.endswith("/api/settings") or path == "/api/settings":
@@ -128,8 +143,8 @@ def build_handler(a: ApiAdapters):
                 with db() as conn,conn.cursor() as cur: cur.execute(*queries[name]); rows=cur.fetchall()
                 return self.json({"view":name,"count":len(rows),"rows":rows})
             if path.endswith("/icon.png") or path == "/icon.png":
-                data = Path(icon_path).read_bytes(); self.send_response(200); self.send_header("Content-Type", "image/png"); self.send_header("Content-Length", str(len(data))); self.end_headers(); return self.wfile.write(data)
-            data = HTML.encode(); self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+                data = Path(icon_path).read_bytes(); self.send_response(200); self.send_header("Content-Type", "image/png"); self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(data))); self.end_headers(); return self.wfile.write(data)
+            data = HTML.encode(); self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
     
         def do_POST(self):
             path=self.path.split("?",1)[0].rstrip("/")
