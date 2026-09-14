@@ -1,3 +1,27 @@
+## 0.33.0
+
+- Planer wykonuje jawne przebiegi po wspólnej tabeli slotów 15-minutowych:
+  `WINDOWS`, `LOAD`, `PV`, `SLOT_BALANCE`, `TARGET_COMMITMENT`, `DISPATCH`,
+  `FLEX_SURPLUS`, `VALIDATE`. Każdy przebieg odpowiada wyłącznie za własne pola.
+- `soc_target` powstaje w przebiegu wstecznym z prognozowanego deficytu zużycia,
+  sprawności i zarezerwowanej przyszłej nadwyżki PV. Jest twardym warunkiem
+  wykonalności oraz sufitem ładowania; posiada termin, źródło i ilość
+  zarezerwowanego PV.
+- `soc_floor` pozostaje wyłącznie podłogą celowej sprzedaży baterii. Zwykłe
+  zużycie może zejść poniżej floor, ale nie może naruszyć przyszłego kontraktu
+  targetu ani technicznego minimum SOC.
+- Okno BUY jest zezwoleniem na ładowanie baterii, a nie samodzielnym zakupem
+  dla odbiorników. Kolejne dostępne okno BUY jest granicą bilansu i zmienną
+  pełnohoryzontowego wyboru ekonomicznego.
+- Podstawowy bilans baterii i domu nie zawiera sprzedaży nadwyżki PV. Nadwyżka
+  jest rozdzielana osobnym przebiegiem pomiędzy ekonomiczną sprzedaż, CWU, EV i
+  redukcję; curtailment pozostaje ostatnią możliwością.
+- Przekroczenie 120 sekund albo niespójność dowolnego slotu przerywa transakcję;
+  częściowy plan nigdy nie zastępuje ostatniego zaakceptowanego planu.
+- Panel Planer pokazuje wszystkie niezamknięte sloty. Wykres RCE obejmuje tylko
+  48 godzin, oznacza bieżący slot i nie zawiera już widoku 365 dni.
+- Wykonawca pozostaje domyślnie i trwale wyłączony po instalacji aktualizacji.
+
 ## 0.30.1
 
 - Ujednolicono dobowe początki i końce pracy CO, CWU i COOL do typu `TIME`
