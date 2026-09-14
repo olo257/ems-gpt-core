@@ -237,7 +237,11 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 surplus * eta_c + (max_internal_charge if grid_charge_allowed else 0.0),
             )
             reachable_up = int(math.floor(available_charge_internal / unit_kwh + 1e-9))
-            target_unit = min(requested_target_unit, current_unit + reachable_up)
+            # A target can be enforced only where energy is physically
+            # available. Between PV/BUY windows it remains the next
+            # replenishment commitment and must not make native load infeasible.
+            target_unit = (min(requested_target_unit, current_unit + reachable_up)
+                           if reachable_up > 0 else first_unit)
             for next_unit in range(max(first_unit, target_unit, current_unit-max_down),
                                    min(last_unit, current_unit+max_up)+1):
                 delta = (next_unit-current_unit) * unit_kwh
@@ -539,7 +543,7 @@ def build_planner(a: PlannerAdapters):
             cur.execute("""INSERT INTO ems_gpt_plan_runs
               (run_id,plan_day,run_type,stage_version,expected_slots,status,current_stage,created_at,updated_at)
               VALUES(%s,%s,%s,%s,%s,'RUNNING','RCE_RAW',NOW(6),NOW(6))""",
-              (run_id, cutoff.date(), run_type, "CORE_0_32_5", len(source)))
+              (run_id, cutoff.date(), run_type, "CORE_0_32_6", len(source)))
             stage_columns = [
                 "slot_start","slot_end","slot_id","slot_start_utc","slot_start_local","utc_offset_minutes",
                 "local_fold","local_day","slot_index_local","price_sell_pln_kwh","price_buy_pln_kwh","price_source",
@@ -676,11 +680,18 @@ def build_planner(a: PlannerAdapters):
                     raise RuntimeError(
                         f"SALE_FLOOR_VIOLATION:{index}:"
                         f"{flow.get('soc_end_pct')}<{optimized_floors[index]}")
-                if (float(flow.get("soc_end_pct") or 0.0) + 1e-9 < targets[index]
+                row = horizon_rows[index]
+                load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
+                        + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+                pv_surplus = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0) - load)
+                replenishment_available = strict_database_bool(
+                    row.get("buy_window"), "buy_window") or pv_surplus > flow_threshold
+                if (replenishment_available
+                        and float(flow.get("soc_end_pct") or 0.0) + 1e-9 < targets[index]
                         and float(flow.get("battery_charge_internal_kwh") or 0.0)
                         <= flow_threshold):
                     raise RuntimeError(
-                        f"SOC_TARGET_VIOLATION:{index}:"
+                        f"SOC_TARGET_REPLENISHMENT_MISSED:{index}:"
                         f"{flow.get('soc_end_pct')}<{targets[index]}")
             audit_stage(cur,run_id,"ECONOMY","OK",len(rows),f"pass 4: objective={optimization['objective_pln']:.3f}")
             purchase_slots=sum(float(flow["grid_charge_kwh"])>flow_threshold for flow in optimization["flows"])
@@ -821,8 +832,8 @@ def build_planner(a: PlannerAdapters):
               p.sell_pv_allowed=s.sell_pv_allowed,p.no_sell_pv=s.no_sell_pv,
               p.heat_pump_window=s.heat_pump_window,
               p.ppd_reason=s.ppd_reason,p.ppd_run_type=%s,
-              p.ppd_version='CORE_0_32_5',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
-              p.plan_stage_version='CORE_0_32_5',p.plan_stage_updated_at=NOW(6),
+              p.ppd_version='CORE_0_32_6',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
+              p.plan_stage_version='CORE_0_32_6',p.plan_stage_updated_at=NOW(6),
               p.plan_validation_status='ACCEPTED',p.plan_validation_reason='OK',
               p.plan_published_at=NOW(6),p.plan_published=1 WHERE p.actual_recorded_at IS NULL AND p.slot_start>=%s""",
               (run_id,run_type,run_id,cutoff))

@@ -587,6 +587,12 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.6
+
+- Niezrealizowany `soc_target` jest egzekwowany dopiero w najbliższym
+  wykonalnym slocie PV/BUY; poza oknem uzupełnienia nie blokuje zasilania domu.
+- Usunięto błąd `No feasible SOC state at horizon slot 0` przy późnym replanie.
+
 ## 0.32.5
 
 - Naprawiono normalizację flagi `buy_window` zwracanej przez MariaDB jako
