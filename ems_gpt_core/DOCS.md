@@ -40,7 +40,10 @@ repozytorium, ponieważ zawiera szczegóły lokalnej infrastruktury HA i OMV.
 ## Odpowiedzialność
 
 - CORE: zegar 15-minutowy, telemetria, wznowienie i zamykanie slotów.
-- PLANER: transakcyjny przebieg RCE → FORECAST → WINDOWS → SOC → PPD → VALIDATE.
+- PLANER: transakcyjne przebiegi po tej samej tabeli slotów 15-minutowych:
+  `RCE → WINDOWS → LOAD → PV → SLOT_BALANCE → TARGET_COMMITMENT → DISPATCH →
+  FLEX_SURPLUS → VALIDATE → PPD`. Każdy przebieg zmienia wyłącznie pola swojej
+  odpowiedzialności.
 - PPD: polityki sieci, eksportu oraz dostępność PV→CWU i PV→EV.
 - ANALYTICS: agregaty godzinowe i dobowe oraz profil zużycia.
 - AI OBSERVER: analiza progowa w trybie `SHADOW_READ_ONLY`, potwierdzanie sugestii po 3 kolejnych dniach i audyt decyzji operatora.
@@ -59,8 +62,33 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
 - Observer nie wywołuje usług urządzeń i nie zapisuje planu ani PPD;
 - aktywny i zamknięte sloty nie są nadpisywane przez replan;
 - publikacja planu następuje atomowo dopiero po pełnej walidacji;
+- planer ma budżet 120 sekund; timeout lub błąd jednego slotu wycofuje całą
+  transakcję i zachowuje ostatni kompletny plan;
 - brak cen RCE nie jest zastępowany zerem ani stałą ceną;
 - watchdog kontroluje połączenie z MariaDB i pracę procesu.
+
+## Kontrakt energii i SOC 0.33
+
+- Każdy slot cenowy ma dokładnie jeden stan `BUY`, `SELL` albo `NEUTRAL`.
+  `BUY` i `SELL` nie mogą się nakładać.
+- `soc_target` oznacza energię potrzebną do najbliższego wykonalnego
+  uzupełnienia przez PV albo BUY. Jest liczony wstecz przed decyzjami o
+  rozładowaniu i sprzedaży, ma `soc_target_due`, `soc_target_source` oraz
+  `soc_target_reserved_pv_kwh` i jest sufitem zakupu do baterii.
+- Przyszłe PV może odroczyć osiągnięcie targetu tylko wtedy, gdy jego
+  zarezerwowana, konserwatywnie skorygowana nadwyżka gwarantuje osiągnięcie
+  targetu w terminie. Pozostałe PV jest nadwyżką elastyczną.
+- `soc_floor` chroni wyłącznie celową sprzedaż z baterii. Nie jest minimum
+  autokonsumpcji i nie może uruchamiać zakupu.
+- Podstawowy bilans slotu to energia PV wykorzystana przez dom/baterię, energia
+  baterii i zakup do baterii wobec zużycia oraz ładowania. Sprzedaż nadwyżki PV
+  jest przepływem pozabilansowym tego rdzenia i podlega osobnej kontroli
+  zachowania energii.
+- Nadwyżka po pokryciu domu i rezerwacji targetu jest przydzielana według
+  wartości ekonomicznej pomiędzy sprzedaż PV, PV→CWU i PV→EV. Ograniczenie PV
+  występuje dopiero po wyczerpaniu wszystkich wykonalnych odbiorów.
+- Niepowodzenie bilansu powoduje ponowną ocenę z kolejnym możliwym oknem BUY;
+  jeżeli żaden pełny wariant nie jest wykonalny, plan jest odrzucany.
 
 ## Panel
 
