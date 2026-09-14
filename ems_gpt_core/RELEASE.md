@@ -1,10 +1,13 @@
-# EMS-GPT Core 0.25.17
+# EMS-GPT Core 0.31.3
 
-## Krytyczna poprawka planowania HP
+## Krytyczna korekta semantyki SOC
 
-- Zużycie energii przez zaplanowane okno `HP_HEAT_DHW` jest doliczane do obciążenia każdego slotu przed wyliczeniem SOC.
-- Zapotrzebowanie HP wpływa teraz na `soc_floor`, `soc_target`, rozładowanie baterii oraz wcześniejszy zakup w oknie `BUY_ALLOWED`.
-- Dzięki temu planer uwzględnia ryzyko nocnego spadku SOC i konieczności późniejszego drogiego importu.
-- Zachowano minimum 10 godzin grzania, cykl minimum 2 godziny oraz przerwy 1–3 godziny.
-- Ślad decyzji zapisuje planowaną energię HP dla slotu bez dodawania zbędnej kolumny do panelu.
-- Kafelek stanu pokazuje czytelny kolorowy stan aplikacji oraz rzeczywisty czas uruchomienia dodatku z backendu.
+- `soc_floor` chroni energię przed sprzedażą, ale nie blokuje autokonsumpcji.
+- Zużycie domu może rozładowywać baterię do technicznego `battery_min_soc_pct`.
+- `soc_target` wynika z bilansu energii do kolejnego zakupu lub pokrywającej
+  deficyt nadwyżki PV, z uwzględnieniem zaplanowanego HP i sprawności baterii.
+- Moc każdego przyszłego slotu zakupu jest ograniczona rzeczywistym limitem
+  baterii; planer nie zakłada nieograniczonego uzupełnienia w jednym slocie.
+- Usunięto stały cel 60% o 19:45 i historyczny target końca horyzontu.
+- Zachowano techniczny limit SOC, ochronę TOU dla sprzedaży i brak zapisów do
+  programów SOC Deye 1–6.

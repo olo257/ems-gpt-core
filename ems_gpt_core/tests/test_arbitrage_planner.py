@@ -6,11 +6,82 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from planner_service import cheapest_recovery_indices, economic_sell_indices, paired_arbitrage_buy_indices
+from planner_service import (
+    allocate_slot_discharge,
+    cheapest_recovery_indices,
+    economic_sell_indices,
+    paired_arbitrage_buy_indices,
+    soc_bridge_envelopes,
+)
 from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_native_load_can_discharge_below_sale_floor_to_technical_reserve(self):
+        sale, native = allocate_slot_discharge(
+            energy_kwh=6.0, capacity_kwh=15.0, reserve_pct=15.0,
+            sale_floor_pct=40.0, native_deficit_kwh=0.30,
+            sale_request_kwh=1.0, max_slot_output_kwh=1.25, eta_d=0.95)
+
+        self.assertEqual(sale, 0.0)
+        self.assertAlmostEqual(native * 0.95, 0.30)
+
+    def test_sale_floor_blocks_only_export_energy(self):
+        sale, native = allocate_slot_discharge(
+            energy_kwh=6.15, capacity_kwh=15.0, reserve_pct=15.0,
+            sale_floor_pct=40.0, native_deficit_kwh=0.30,
+            sale_request_kwh=1.0, max_slot_output_kwh=1.25, eta_d=0.95)
+
+        self.assertAlmostEqual(sale, 0.15)
+        self.assertAlmostEqual(native * 0.95, 0.30)
+
+    def test_soc_target_bridges_only_to_finite_next_grid_replenishment(self):
+        rows = [
+            {"forecast_load_kwh": 0.30, "forecast_pv_total_kwh": 0.0},
+            {"forecast_load_kwh": 0.30, "forecast_pv_total_kwh": 0.0},
+            {"forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.0},
+            {"forecast_load_kwh": 0.40, "forecast_pv_total_kwh": 0.0},
+        ]
+
+        floors, targets = soc_bridge_envelopes(
+            rows, {2}, 15.0, 15.0, 1.0, 1.0, 0.50, 0.0, 90.0, 95.0)
+
+        self.assertAlmostEqual(targets[2], 15.0 + 0.40 / 15.0 * 100.0)
+        self.assertEqual(targets[1], 15.0)
+        self.assertEqual(floors, targets)
+
+    def test_forecast_pv_reduces_bridge_target_without_clock_rule(self):
+        rows = [
+            {"forecast_load_kwh": 0.30, "forecast_pv_total_kwh": 0.0},
+            {"forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.60},
+            {"forecast_load_kwh": 0.20, "forecast_pv_total_kwh": 0.0},
+        ]
+
+        floors, targets = soc_bridge_envelopes(
+            rows, set(), 15.0, 15.0, 1.0, 1.0, 1.25, 0.0, 90.0, 95.0)
+
+        self.assertEqual(floors[0], 15.0)
+        self.assertEqual(targets[0], 15.0)
+
+    def test_soc_bridge_has_no_special_evening_hour(self):
+        evening = [
+            {"slot_start_local": "2026-09-14 19:45:00", "forecast_load_kwh": 0.4,
+             "forecast_pv_total_kwh": 0.0},
+            {"slot_start_local": "2026-09-14 20:00:00", "forecast_load_kwh": 0.2,
+             "forecast_pv_total_kwh": 0.0},
+        ]
+        morning = [
+            {**row, "slot_start_local": f"2026-09-15 0{3 + index}:15:00"}
+            for index, row in enumerate(evening)
+        ]
+
+        evening_result = soc_bridge_envelopes(
+            evening, set(), 15.0, 15.0, 0.9, 0.95, 1.25, 1.0, 90.0, 95.0)
+        morning_result = soc_bridge_envelopes(
+            morning, set(), 15.0, 15.0, 0.9, 0.95, 1.25, 1.0, 90.0, 95.0)
+
+        self.assertEqual(evening_result, morning_result)
+
     def test_price_windows_have_no_clock_dependency(self):
         prices = [
             {"sell": 3.039, "buy": 3.629},
