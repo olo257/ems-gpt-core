@@ -229,6 +229,27 @@ class PairedArbitrageTests(unittest.TestCase):
             for flow, target in zip(flows, targets)
         ))
 
+    def test_bridge_target_is_rounded_up_to_executable_soc_step(self):
+        rows = [
+            {
+                "buy_window": True,
+                "forecast_load_kwh": 0.0,
+                "forecast_pv_total_kwh": 0.0,
+            },
+            {
+                "buy_window": False,
+                "forecast_load_kwh": 0.027,
+                "forecast_pv_total_kwh": 0.0,
+            },
+        ]
+        flows = [{"grid_charge_kwh": 0.0}, {"grid_charge_kwh": 0.0}]
+
+        _, targets = bridge_soc_commitments(
+            rows, flows, 15.0, 15.0, 0.90, 0.95, 1.25, 0.0,
+            90.0, 100.0, [15.0, 15.0], 35.0, 0.25)
+
+        self.assertEqual(targets[0], 35.25)
+
     def test_unmet_target_charges_only_in_buy_or_from_pv(self):
         rows = [
             {"price_buy_pln_kwh": 4.0, "price_sell_pln_kwh": 2.0,
@@ -349,7 +370,7 @@ class PairedArbitrageTests(unittest.TestCase):
             rows, flows, 15.0, 15.0, 0.90, 0.95, 1.25, 0.0,
             90.0, 100.0, [40.0, 40.0], 30.0)
 
-        self.assertAlmostEqual(targets[0], 30.0 + 0.30 / 0.95 / 15.0 * 100.0)
+        self.assertEqual(targets[0], 32.25)
 
     def test_ppd_sell_peak_uses_complete_horizon_not_named_sessions(self):
         rows = [
