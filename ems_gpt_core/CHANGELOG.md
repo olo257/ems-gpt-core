@@ -587,6 +587,17 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.0
+
+- Planer optymalizuje cały dostępny ciągły horyzont RCE z krokiem SOC 0,25%.
+- Kolejne przebiegi obejmują okna, zużycie, PV, ekonomikę, uzupełnienie energii,
+  wynikowe SOC, walidację i PPD.
+- Tani zakup zabezpiecza przyszłe zużycie przy malejącej produkcji PV, odległą
+  sprzedaż albo wymagany SOC końca horyzontu; obsługuje też odkup po sprzedaży.
+- `soc_floor` i `soc_target` są wynikami zaakceptowanych przepływów, a PPD
+  powstaje dopiero po zakończeniu planowania.
+- Dodano testy odległego zakupu, sprzedaży i zużycia bez sprzedaży.
+
 ## 0.31.3
 
 - `soc_floor` ogranicza wyłącznie celową sprzedaż energii z baterii; zwykłe

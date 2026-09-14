@@ -11,12 +11,48 @@ from planner_service import (
     cheapest_recovery_indices,
     economic_sell_indices,
     paired_arbitrage_buy_indices,
+    optimize_energy_horizon,
+    derive_soc_commitments,
     soc_bridge_envelopes,
 )
 from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    @staticmethod
+    def optimize(rows, initial_soc=40.0, terminal_soc=40.0, floors=None):
+        return optimize_energy_horizon(rows, initial_soc, 15.0, 15.0, 0.90, 0.95,
+            0.08, 0.05, 5.0, 15, floors or [40.0]*len(rows), terminal_soc, 0.25, 95.0)
+
+    def test_full_horizon_links_distant_purchase_and_sale(self):
+        rows=[{"price_buy_pln_kwh":2.0,"price_sell_pln_kwh":1.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(100)]
+        rows[1]["price_buy_pln_kwh"]=1.0
+        rows[85]["price_sell_pln_kwh"]=3.0
+        result=self.optimize(rows)
+        self.assertGreater(result["flows"][1]["grid_charge_kwh"],0.0)
+        self.assertGreater(result["flows"][85]["battery_sell_kwh"],0.0)
+
+    def test_full_horizon_buys_for_distant_load_without_sale(self):
+        rows=[{"price_buy_pln_kwh":3.0,"price_sell_pln_kwh":0.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(72)]
+        rows[2]["price_buy_pln_kwh"]=0.5
+        rows[60]["forecast_load_kwh"]=1.0
+        result=self.optimize(rows,15.0,15.0,[15.0]*len(rows))
+        self.assertGreater(result["flows"][2]["grid_charge_kwh"],0.0)
+        self.assertGreater(result["flows"][60]["battery_to_load_kwh"],0.0)
+        self.assertFalse(any(flow["battery_sell_kwh"]>0 for flow in result["flows"]))
+
+    def test_sale_floor_and_terminal_soc_are_protected(self):
+        rows=[{"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":10.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(8)]
+        result=self.optimize(rows,60.0,40.0)
+        self.assertGreaterEqual(result["flows"][-1]["soc_end_pct"],40.0)
+        self.assertGreaterEqual(min(flow["soc_end_pct"] for flow in result["flows"] if flow["battery_sell_kwh"]>0),40.0)
+
+    def test_soc_controls_are_results_of_backward_pass(self):
+        flows=[{"battery_charge_internal_kwh":3.0,"battery_discharge_internal_kwh":0.0},{"battery_charge_internal_kwh":0.0,"battery_discharge_internal_kwh":3.0}]
+        floors,targets=derive_soc_commitments(flows,15.0,15.0,15.0,90.0,95.0)
+        self.assertGreater(targets[0],15.0)
+        self.assertEqual(targets[1],15.0)
+        self.assertEqual(floors,targets)
     def test_native_load_can_discharge_below_sale_floor_to_technical_reserve(self):
         sale, native = allocate_slot_discharge(
             energy_kwh=6.0, capacity_kwh=15.0, reserve_pct=15.0,
