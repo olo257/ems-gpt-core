@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.32.0"', APP_SOURCE)
-        self.assertIn('version: "0.32.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.32.1"', APP_SOURCE)
+        self.assertIn('version: "0.32.1"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -284,7 +284,7 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(field, SOURCE)
         self.assertIn("grid_buy_allowed+grid_no_buy+grid_neutral<>1", SOURCE)
         self.assertIn("heat_pump_window NOT IN (0,1)", SOURCE)
-        self.assertIn("CORE_0_32_0", SOURCE)
+        self.assertIn("CORE_0_32_1", SOURCE)
 
     def test_executor_is_safe_by_default(self):
         self.assertIn("executor_enabled: false", CONFIG)
@@ -377,16 +377,23 @@ class OfflineContractTests(unittest.TestCase):
         for field in ("command_id", "expires_at", "plan_version", "acknowledgement_json"):
             self.assertIn(field, SOURCE)
 
-    def test_no_soc_program_writes(self):
-        forbidden = [f"inverter_program_{number}_soc" for number in range(1, 7)]
-        self.assertFalse(any(value in SOURCE for value in forbidden))
+    def test_soc_program_writes_are_scoped_and_restored(self):
+        for marker in ("soc_programs_1_6_write_allowed", "soc_restore_required",
+                       "battery_program_soc_restore.json", "restore_program_targets",
+                       "deye_program_soc_baseline_json"):
+            self.assertIn(marker, SOURCE)
+        import_off = SOURCE.index('if command["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"} and command["decision"] == "OFF"')
+        disable_grid = SOURCE.index('set_active_program_charging(now, "Disabled")', import_off)
+        restore_soc = SOURCE.index("restore_program_targets_if_idle()", disable_grid)
+        self.assertLess(import_off, disable_grid)
+        self.assertLess(disable_grid, restore_soc)
 
     def test_tou_floor_blocks_impossible_battery_sale(self):
         for marker in ("tou_program_snapshot", "active_tou_program", "effective_floor",
-                       "TOU_FLOOR_BLOCK", "TOU_FLOOR_UNAVAILABLE",
+                       "PLAN_FLOOR_BLOCK", "PLAN_FLOOR_UNAVAILABLE",
                        "battery_export_blocked_by_tou_floor"):
             self.assertIn(marker, SOURCE)
-        self.assertIn('live_soc <= float(live_program["soc"]) + 0.01', SOURCE)
+        self.assertIn("live_soc <= plan_floor + 0.01", SOURCE)
 
     def test_outside_temperature_contract(self):
         self.assertIn('"outside_temperature": "sensor.klimat_w_ogrodzie_temperature"', SOURCE)
