@@ -10,10 +10,24 @@ import sys
 
 sys.path.insert(0, str(ROOT))
 
-from executor_service import ExecutorAdapters, battery_soc_guard_actions, build_executor
+from executor_service import (
+    ExecutorAdapters,
+    battery_import_guard_reason,
+    battery_soc_guard_actions,
+    build_executor,
+)
 
 
 class ExecutorServiceTests(unittest.TestCase):
+    def test_import_requires_headroom_and_material_planned_energy(self):
+        self.assertIsNone(battery_import_guard_reason(60.0, 75.0, 0.5, 0.02))
+        self.assertIn("TARGET_ALREADY_REACHED", battery_import_guard_reason(75.0, 75.0, 0.5, 0.02))
+        self.assertIn("FLOW_BELOW_THRESHOLD", battery_import_guard_reason(60.0, 75.0, 0.02, 0.02))
+        self.assertEqual(
+            battery_import_guard_reason(None, 75.0, 0.5, 0.02),
+            "IMPORT_PLAN_OR_SOC_UNAVAILABLE",
+        )
+
     def test_battery_soc_guard_stops_binary_scripts_at_planned_endpoint(self):
         self.assertEqual(battery_soc_guard_actions(60.0, 60.0, True, False), (True, False))
         self.assertEqual(battery_soc_guard_actions(30.0, 30.0, False, True), (False, True))
