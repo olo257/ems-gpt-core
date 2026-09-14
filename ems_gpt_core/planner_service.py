@@ -9,6 +9,17 @@ from types import SimpleNamespace
 from typing import Callable
 
 
+def strict_database_bool(value, field: str) -> bool:
+    """Normalize MariaDB BOOLEAN/TINYINT once and reject ambiguous values."""
+    if isinstance(value, bool):
+        return value
+    if value == 0 or str(value).strip().lower() in {"0", "false"}:
+        return False
+    if value == 1 or str(value).strip().lower() in {"1", "true"}:
+        return True
+    raise RuntimeError(f"INVALID_BOOLEAN:{field}:{value!r}")
+
+
 def planning_tou_programs(live_programs: list[dict], baseline_json: str) -> list[dict]:
     """Use live TOU times but immutable configured SOC baselines for planning."""
     try:
@@ -215,7 +226,9 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                       max(reserve, min(float(max_soc_pct),
                           float(minimum_soc_targets[index]))))
         requested_target_unit = int(math.ceil(target_pct / step - 1e-9))
-        grid_charge_allowed = row.get("buy_window") is not False
+        # MariaDB returns BOOL/TINYINT as 0/1 (and some drivers as Decimal),
+        # so identity checks against False would incorrectly allow 0.
+        grid_charge_allowed = strict_database_bool(row.get("buy_window", True), "buy_window")
         next_costs, next_predecessors = {}, {}
         for current_unit, accumulated in costs.items():
             current_energy = current_unit * unit_kwh
@@ -526,7 +539,7 @@ def build_planner(a: PlannerAdapters):
             cur.execute("""INSERT INTO ems_gpt_plan_runs
               (run_id,plan_day,run_type,stage_version,expected_slots,status,current_stage,created_at,updated_at)
               VALUES(%s,%s,%s,%s,%s,'RUNNING','RCE_RAW',NOW(6),NOW(6))""",
-              (run_id, cutoff.date(), run_type, "CORE_0_32_4", len(source)))
+              (run_id, cutoff.date(), run_type, "CORE_0_32_5", len(source)))
             stage_columns = [
                 "slot_start","slot_end","slot_id","slot_start_utc","slot_start_local","utc_offset_minutes",
                 "local_fold","local_day","slot_index_local","price_sell_pln_kwh","price_buy_pln_kwh","price_source",
@@ -606,6 +619,11 @@ def build_planner(a: PlannerAdapters):
             horizon_rows, sale_constraints, tou_by_index = [], [], []
             for index, row in enumerate(rows):
                 work = dict(row)
+                # From this boundary onward the planner sees only real bools,
+                # regardless of how current or historical MariaDB rows encode
+                # BOOLEAN/TINYINT values.
+                work["buy_window"] = strict_database_bool(row.get("buy_window"), "buy_window")
+                work["sale_window"] = strict_database_bool(row.get("sale_window"), "sale_window")
                 work["forecast_load_kwh"] = max(0.0, float(row.get("forecast_load_kwh") or 0.0)*(1+0.10*uncertainty_weight))
                 work["forecast_pv_total_kwh"] = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0)*(1-0.10*uncertainty_weight))
                 work["forecast_heat_pump_load_kwh"] = planned_hp_kw*0.25 if index in hp_selected_indices else 0.0
@@ -803,8 +821,8 @@ def build_planner(a: PlannerAdapters):
               p.sell_pv_allowed=s.sell_pv_allowed,p.no_sell_pv=s.no_sell_pv,
               p.heat_pump_window=s.heat_pump_window,
               p.ppd_reason=s.ppd_reason,p.ppd_run_type=%s,
-              p.ppd_version='CORE_0_32_4',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
-              p.plan_stage_version='CORE_0_32_4',p.plan_stage_updated_at=NOW(6),
+              p.ppd_version='CORE_0_32_5',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
+              p.plan_stage_version='CORE_0_32_5',p.plan_stage_updated_at=NOW(6),
               p.plan_validation_status='ACCEPTED',p.plan_validation_reason='OK',
               p.plan_published_at=NOW(6),p.plan_published=1 WHERE p.actual_recorded_at IS NULL AND p.slot_start>=%s""",
               (run_id,run_type,run_id,cutoff))
