@@ -8,15 +8,16 @@ API = (ROOT / "api_service.py").read_text(encoding="utf-8")
 
 
 class WebUiContractTests(unittest.TestCase):
-    def test_rce_chart_has_48_hour_and_365_day_modes(self):
+    def test_rce_chart_is_48_hours_with_current_slot(self):
         self.assertIn("data-view='rce-chart'", HTML)
-        self.assertIn("data-rce-range='48h'", HTML)
-        self.assertIn("data-rce-range='365d'", HTML)
-        self.assertIn("api/rce-chart?range=", HTML)
+        self.assertNotIn("data-rce-range='365d'", HTML)
+        self.assertIn("api/rce-chart", HTML)
         self.assertIn("chart-window-buy", HTML)
         self.assertIn("chart-window-sell", HTML)
         self.assertIn('path.endswith("/api/rce-chart")', API)
-        self.assertIn("GROUP BY DATE(slot_start) ORDER BY label", API)
+        self.assertNotIn("GROUP BY DATE(slot_start) ORDER BY label", API)
+        self.assertIn('"current_slot":slot_start().replace(tzinfo=None)', API)
+        self.assertIn("data-current-slot='true'", HTML)
         self.assertIn("class='rce-chart-scroll'", HTML)
         self.assertIn("overflow-x:scroll", HTML)
         self.assertIn("rceChart.style.width=svgWidth+'px'", HTML)
@@ -24,6 +25,10 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("Cena sprzedaży:", HTML)
         self.assertIn("Cena zakupu:", HTML)
         self.assertIn("toFixed(3)} PLN/kWh", HTML)
+
+    def test_plan_view_requests_all_open_slots(self):
+        self.assertIn('if name == "plan":', API)
+        self.assertIn("limit = 500", API)
 
     def test_every_panel_request_disables_browser_cache(self):
         self.assertIn("window.fetch=(url,options={})=>nativeFetch(url,{cache:'no-store',...options})", HTML)
