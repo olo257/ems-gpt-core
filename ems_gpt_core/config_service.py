@@ -77,6 +77,9 @@ def appliance_settings() -> dict:
 
 
 CONFIG_SETTINGS = {**BACKUP_SETTINGS, **appliance_settings()}
+CONFIG_SETTINGS["deye_program_soc_baseline_json"] = {
+    "type": "text", "label": "Bazowe SOC programów Deye [JSON]", "group": "Bateria"
+}
 
 
 DEFAULT_OPTIONS = {
@@ -99,6 +102,7 @@ DEFAULT_OPTIONS = {
     "technical_flow_threshold_kwh": 0.05,
     "soc_floor_max_pct": 90.0,
     "soc_target_max_pct": 95.0,
+    "deye_program_soc_baseline_json": '{"1":20,"2":20,"3":40,"4":40,"5":40,"6":30}',
     "night_heating_threshold_c": 10.0,
     "hp_min_heating_hours": 10.0,
     "hp_min_cycle_hours": 2.0,

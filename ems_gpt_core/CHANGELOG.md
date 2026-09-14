@@ -587,6 +587,31 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.1
+
+- Wykonawca przed włączeniem `BATTERY_IMPORT` zapisuje pierwotny SOC aktywnego
+  programu Deye i ustawia jego SOC zgodnie z wynikowym `soc_target` slotu.
+- Po zakończeniu importu, osiągnięciu planowanego SOC albo nieudanym uruchomieniu
+  skryptu wykonawca przywraca dokładnie zapisaną wartość programu.
+- Migawka przywracania jest trwała i nie jest nadpisywana w kolejnych slotach,
+  dzięki czemu zachowuje poprawną wartość także po restarcie dodatku.
+- Przywracanie korzysta z konfigurowalnych wartości bazowych programów Deye
+  (`20/20/40/40/40/30`), więc ręczne 100% nie stanie się nowym baseline.
+- Przed `BATTERY_EXPORT` aktywny program otrzymuje wynikowy `soc_floor`, aby
+  wyższy bazowy SOC programu nie zatrzymał sprzedaży przed limitem planera;
+  guard `SOC po` nadal kończy eksport ilościowo i przywraca baseline.
+- Bazowy SOC jest przywracany dopiero po potwierdzeniu jednocześnie wyłączonego
+  ładowania sieciowego i trybu eksportu, aby nie uruchomić nieplanowanego zakupu
+  ani nie zatrzymać drugiego aktywnego kierunku przepływu.
+- Zakończenie sprzedaży ma wymuszoną kolejność: `Zero Export To Load`, aktywny
+  program `Charging=Disabled`, przywrócenie bazowego SOC. Planowany zakup wykonuje
+  kolejność odwrotną: `Charging=Grid`, `soc_target`, włączenie importu.
+- Zakończenie zakupu ma niezależną kolejność bezpieczeństwa: wyłączenie
+  `Battery Grid Charging`, ustawienie aktywnego programu na `Charging=Disabled`,
+  a dopiero potem przywrócenie jego bazowego SOC.
+- Ustawienie targetu działa fail-closed: import nie zostanie uruchomiony, jeżeli
+  aktywny program lub jego encja SOC są niedostępne.
+
 ## 0.32.0
 
 - Planer optymalizuje cały dostępny ciągły horyzont RCE z krokiem SOC 0,25%.

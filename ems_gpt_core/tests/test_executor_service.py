@@ -100,6 +100,88 @@ class ExecutorServiceTests(unittest.TestCase):
             self.assertEqual(insert_params[1], "HP_HEAT_DHW")
             self.assertEqual(insert_params[2], "FORCE_ON")
 
+    def test_program_soc_target_is_persisted_and_restored(self):
+        states = {"number.inverter_program_4_soc": {"state": "100"}}
+        calls = []
+
+        def service(domain, action, data, **_kwargs):
+            calls.append((domain, action, data.copy()))
+            states[data["entity_id"]] = {"state": str(data["value"])}
+            return {"ok": True}
+
+        with tempfile.TemporaryDirectory() as directory:
+            service_under_test = build_executor(ExecutorAdapters(
+                options={"executor_enabled": True, "executor_dry_run": False,
+                         "deye_program_soc_baseline_json": '{"4":40}'},
+                operational_settings={},
+                runtime_settings_path=pathlib.Path(directory) / "runtime-settings.json",
+                lock=RLock(), state={"modules": {}, "executor": "LIVE"},
+                record_event=lambda *args: None, local_now=datetime.now,
+                db=lambda: None, slot_start=lambda value: value,
+                tou_program_snapshot=lambda: [{"program": 4, "soc": 40}],
+                active_tou_program=lambda *_args: {"program": 4, "soc": 40},
+                number=lambda value: float(value["state"]) if value else None,
+                ha_state=lambda entity: states.get(entity),
+                ha_service_response=service,
+            ))
+            update = service_under_test.set_active_program_target(datetime.now(), 82.0)
+            self.assertEqual(update["original_soc_pct"], 40.0)
+            self.assertEqual(states["number.inverter_program_4_soc"]["state"], "82")
+            # A later slot must retain the first baseline, not snapshot the EMS value.
+            service_under_test.set_active_program_target(datetime.now(), 90.0)
+            restored = service_under_test.restore_program_targets()
+            self.assertEqual(restored[0]["restored_soc_pct"], 40.0)
+            self.assertEqual(states["number.inverter_program_4_soc"]["state"], "40")
+            self.assertFalse((pathlib.Path(directory) / "battery_program_soc_restore.json").read_text().strip() == "")
+            self.assertEqual(calls[-1][2]["value"], 40)
+
+    def test_program_soc_is_not_restored_while_grid_or_export_is_active(self):
+        states = {
+            "number.inverter_program_4_soc": {"state": "25"},
+            "switch.inverter_battery_grid_charging": {"state": "on"},
+            "select.inverter_work_mode": {"state": "Zero Export To Load"},
+            "select.inverter_program_4_charging": {"state": "Disabled"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            (path / "battery_program_soc_restore.json").write_text('{"4":40}')
+            service = build_executor(ExecutorAdapters(
+                options={}, operational_settings={},
+                runtime_settings_path=path / "runtime-settings.json", lock=RLock(),
+                state={"modules": {}, "executor": "LIVE"}, record_event=lambda *args: None,
+                local_now=datetime.now, db=lambda: None, slot_start=lambda value: value,
+                tou_program_snapshot=lambda: [], active_tou_program=lambda *_args: None,
+                number=lambda value: float(value["state"]) if value else None,
+                ha_state=lambda entity: states.get(entity),
+                ha_service_response=lambda *_args, **_kwargs: {"ok": True},
+            ))
+            self.assertEqual(service.restore_program_targets_if_idle(), [])
+            states["switch.inverter_battery_grid_charging"] = {"state": "off"}
+            states["select.inverter_work_mode"] = {"state": "Export First"}
+            self.assertEqual(service.restore_program_targets_if_idle(), [])
+
+    def test_program_soc_restore_requires_program_grid_disabled(self):
+        states = {
+            "number.inverter_program_4_soc": {"state": "25"},
+            "switch.inverter_battery_grid_charging": {"state": "off"},
+            "select.inverter_work_mode": {"state": "Zero Export To Load"},
+            "select.inverter_program_4_charging": {"state": "Grid"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            (path / "battery_program_soc_restore.json").write_text('{"4":40}')
+            service = build_executor(ExecutorAdapters(
+                options={}, operational_settings={}, runtime_settings_path=path / "runtime-settings.json",
+                lock=RLock(), state={"modules": {}, "executor": "LIVE"}, record_event=lambda *args: None,
+                local_now=datetime.now, db=lambda: None, slot_start=lambda value: value,
+                tou_program_snapshot=lambda: [{"program": 4, "soc": 25}],
+                active_tou_program=lambda *_args: {"program": 4, "soc": 25},
+                number=lambda value: float(value["state"]) if value else None,
+                ha_state=lambda entity: states.get(entity),
+                ha_service_response=lambda *_args, **_kwargs: {"ok": True},
+            ))
+            self.assertEqual(service.restore_program_targets_if_idle(), [])
+
 
 if __name__ == "__main__":
     unittest.main()
