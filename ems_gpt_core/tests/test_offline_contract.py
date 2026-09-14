@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.31.3"', APP_SOURCE)
-        self.assertIn('version: "0.31.3"', CONFIG)
+        self.assertIn('APP_VERSION = "0.32.0"', APP_SOURCE)
+        self.assertIn('version: "0.32.0"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -222,7 +222,7 @@ class OfflineContractTests(unittest.TestCase):
                       "planned_pv_to_ev_kwh", "planned_pv_curtail_kwh"):
             self.assertIn(field, SOURCE)
         self.assertNotIn("target=min(95,max(floor,targets[i]))", SOURCE)
-        self.assertIn("required_soc=max(reserve,target)", SOURCE)
+        self.assertIn("def derive_soc_commitments", SOURCE)
         planner = MODULE_SOURCES["planner_service.py"]
         self.assertIn("def soc_bridge_envelopes", planner)
         self.assertIn("def allocate_slot_discharge", planner)
@@ -251,7 +251,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("sale_evening_end_hour", config)
         self.assertIn("derive_price_windows", ingestion)
         self.assertIn("paired_arbitrage_buy_indices", MODULE_SOURCES["planner_service.py"])
-        self.assertIn("arbitrage_recovery_kwh", MODULE_SOURCES["planner_service.py"])
+        self.assertIn('audit_stage(cur,run_id,"REPLENISHMENT"', MODULE_SOURCES["planner_service.py"])
 
     def test_operational_constants_are_panel_configurable(self):
         for setting in (
@@ -284,7 +284,7 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(field, SOURCE)
         self.assertIn("grid_buy_allowed+grid_no_buy+grid_neutral<>1", SOURCE)
         self.assertIn("heat_pump_window NOT IN (0,1)", SOURCE)
-        self.assertIn("CORE_0_4_1", SOURCE)
+        self.assertIn("CORE_0_32_0", SOURCE)
 
     def test_executor_is_safe_by_default(self):
         self.assertIn("executor_enabled: false", CONFIG)
@@ -355,7 +355,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('"hp_min_heating_hours": 10.0', SOURCE)
 
     def test_hp_load_is_coupled_into_soc_and_recharge_plan(self):
-        self.assertIn("hp_load = planned_hp_kw * 0.25 if index in hp_selected_indices else 0.0", SOURCE)
+        self.assertIn('work["forecast_heat_pump_load_kwh"] = planned_hp_kw*0.25 if index in hp_selected_indices else 0.0', SOURCE)
         self.assertIn("hp_load=planned_hp_kw * 0.25 if i in hp_selected_indices else 0.0", SOURCE)
         self.assertIn("load = native_load + hp_load", SOURCE)
         self.assertIn("load=native_load+hp_load", SOURCE)
