@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.31.1"', APP_SOURCE)
-        self.assertIn('version: "0.31.1"', CONFIG)
+        self.assertIn('APP_VERSION = "0.31.2"', APP_SOURCE)
+        self.assertIn('version: "0.31.2"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -239,12 +239,19 @@ class OfflineContractTests(unittest.TestCase):
     def test_rce_and_battery_import_regressions(self):
         self.assertIn('{"sell":raw,"buy":raw+margin', SOURCE)
         self.assertIn('grid_policy == "BUY_ALLOWED"', SOURCE)
+        ingestion = MODULE_SOURCES["ingestion_service.py"]
+        config = MODULE_SOURCES["config_service.py"]
+        self.assertNotIn("sale_session", ingestion)
+        self.assertNotIn("sale_morning_start_hour", config)
+        self.assertNotIn("sale_evening_end_hour", config)
+        self.assertIn("derive_price_windows", ingestion)
+        self.assertIn("paired_arbitrage_buy_indices", MODULE_SOURCES["planner_service.py"])
+        self.assertIn("arbitrage_recovery_kwh", MODULE_SOURCES["planner_service.py"])
 
     def test_operational_constants_are_panel_configurable(self):
         for setting in (
             "buy_window_tolerance_pln_kwh", "planned_flow_threshold_kwh",
             "technical_flow_threshold_kwh", "soc_floor_max_pct", "soc_target_max_pct",
-            "sale_morning_start_hour", "sale_evening_end_hour",
             "hp_min_heating_hours", "hp_min_cycle_hours",
             "hp_min_cycle_break_hours", "hp_max_cycle_break_hours",
             "telemetry_min_samples_per_slot", "telemetry_learning_coverage_pct",

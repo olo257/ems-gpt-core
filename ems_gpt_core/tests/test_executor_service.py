@@ -10,10 +10,16 @@ import sys
 
 sys.path.insert(0, str(ROOT))
 
-from executor_service import ExecutorAdapters, build_executor
+from executor_service import ExecutorAdapters, battery_soc_guard_actions, build_executor
 
 
 class ExecutorServiceTests(unittest.TestCase):
+    def test_battery_soc_guard_stops_binary_scripts_at_planned_endpoint(self):
+        self.assertEqual(battery_soc_guard_actions(60.0, 60.0, True, False), (True, False))
+        self.assertEqual(battery_soc_guard_actions(30.0, 30.0, False, True), (False, True))
+        self.assertEqual(battery_soc_guard_actions(45.0, 60.0, True, False), (False, False))
+        self.assertEqual(battery_soc_guard_actions(None, 60.0, True, True), (True, True))
+
     def build_service(self, directory, db=lambda: None):
         self.options = {
             "executor_enabled": False,

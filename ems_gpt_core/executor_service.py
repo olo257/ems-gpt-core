@@ -11,6 +11,17 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 
+def battery_soc_guard_actions(live_soc: float | None, planned_end_soc: float | None,
+                              import_active: bool, export_active: bool) -> tuple[bool, bool]:
+    """Return (stop_import, stop_export) at the quantitative slot SOC boundary."""
+    if live_soc is None or planned_end_soc is None:
+        return bool(import_active), bool(export_active)
+    return (
+        bool(import_active and live_soc >= planned_end_soc),
+        bool(export_active and live_soc <= planned_end_soc),
+    )
+
+
 @dataclass(frozen=True)
 class ExecutorAdapters:
     options: dict
@@ -400,6 +411,42 @@ def build_executor(a: ExecutorAdapters):
                   acknowledgement_json=%s WHERE command_id=%s AND status='READY_FOR_CONNECTOR'""",
                   (json.dumps({"entity_id": entity_id, "ha_response": response}, ensure_ascii=False, default=str), command["command_id"]))
                 dispatched += cur.rowcount
+            # Scripts are binary for the duration of a slot. Re-check the live
+            # SOC every scheduler minute so a partial final slot stops at the
+            # quantitative SOC endpoint produced by PPD.
+            cur.execute("""SELECT soc_end_plan_pct FROM ems_gpt_slots
+              WHERE slot_start=%s LIMIT 1""", (current_slot,))
+            plan = cur.fetchone() or {}
+            live_soc = number(ha_state("sensor.inverter_battery"))
+            try:
+                planned_end_soc = float(plan["soc_end_plan_pct"])
+            except (KeyError, TypeError, ValueError):
+                planned_end_soc = None
+            grid_state = ha_state("switch.inverter_battery_grid_charging") or {}
+            mode_state = ha_state("select.inverter_work_mode") or {}
+            stop_import, stop_export = battery_soc_guard_actions(
+                live_soc, planned_end_soc,
+                str(grid_state.get("state") or "").lower() == "on",
+                str(mode_state.get("state") or "") == "Export First",
+            )
+            guard_actions = []
+            if stop_import:
+                entity_id = service_map.get("BATTERY_IMPORT", {}).get("OFF")
+                if isinstance(entity_id, str) and entity_id.startswith("script."):
+                    response = ha_service_response("script", "turn_on", {"entity_id": entity_id})
+                    if response is not None:
+                        guard_actions.append("BATTERY_IMPORT_OFF")
+            if stop_export:
+                entity_id = service_map.get("BATTERY_EXPORT", {}).get("OFF")
+                if isinstance(entity_id, str) and entity_id.startswith("script."):
+                    response = ha_service_response("script", "turn_on", {"entity_id": entity_id})
+                    if response is not None:
+                        guard_actions.append("BATTERY_EXPORT_OFF")
+            if guard_actions:
+                record_event("battery_soc_guard_applied", "executor", {
+                    "actions": guard_actions, "live_soc": live_soc,
+                    "planned_end_soc": plan.get("soc_end_plan_pct"), "slot_start": current_slot,
+                })
         return {"status": "DISPATCHED", "dispatched": dispatched}
     
     
