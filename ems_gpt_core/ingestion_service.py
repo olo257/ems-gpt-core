@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -12,11 +13,21 @@ from urllib.parse import urlencode
 
 def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
                          degradation: float, min_margin: float,
-                         buy_tolerance: float) -> list[tuple[bool, bool]]:
+                         buy_tolerance: float,
+                         minimum_buy_slots: int = 1) -> list[tuple[bool, bool]]:
     """Derive economic valleys and peaks over the complete price horizon."""
     if not prices:
         return []
     buys = [float(row["buy"]) for row in prices]
+    sale_flags = []
+    for index, current in enumerate(prices):
+        later_buy = buys[index + 1:]
+        replacement = min(later_buy) if later_buy else None
+        required_sell = (replacement / (eta_c * eta_d) + degradation + min_margin
+                         if replacement is not None else None)
+        sale_flags.append(bool(
+            required_sell is not None and float(current["sell"]) >= required_sell
+        ))
     buy_candidates: set[int] = set()
     # A 4-hour neighbourhood suppresses insignificant quarter-hour noise.
     # Without this prominence test, every tiny local dip expands by tolerance
@@ -33,14 +44,34 @@ def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
                 right += 1
             buy_candidates.update(range(left, right + 1))
 
+    minimum_buy_slots = max(1, int(minimum_buy_slots))
+    pending = sorted(buy_candidates)
+    clusters = []
+    while pending:
+        cluster = [pending.pop(0)]
+        while pending and pending[0] == cluster[-1] + 1:
+            cluster.append(pending.pop(0))
+        clusters.append(cluster)
+    for cluster in clusters:
+        left, right = cluster[0], cluster[-1]
+        while sum(not sale_flags[i] for i in range(left, right + 1)) < minimum_buy_slots:
+            choices = []
+            if left > 0 and not sale_flags[left - 1]:
+                choices.append((buys[left - 1], "left"))
+            if right + 1 < len(prices) and not sale_flags[right + 1]:
+                choices.append((buys[right + 1], "right"))
+            if not choices:
+                break
+            _, side = min(choices)
+            if side == "left":
+                left -= 1
+            else:
+                right += 1
+            buy_candidates.update(range(left, right + 1))
+
     windows = []
     for index, current in enumerate(prices):
-        later_buy = buys[index + 1:]
-        replacement = min(later_buy) if later_buy else None
-        required_sell = (replacement / (eta_c * eta_d) + degradation + min_margin
-                         if replacement is not None else None)
-        economically_ready = required_sell is not None and float(current["sell"]) >= required_sell
-        sale_window = bool(economically_ready)
+        sale_window = sale_flags[index]
         # BUY and SELL are mutually exclusive permissions.
         buy_window = index in buy_candidates and not sale_window
         windows.append((sale_window, buy_window))
@@ -154,8 +185,18 @@ def build_ingestion(a: IngestionAdapters):
         degradation=max(0,float(OPTIONS.get("battery_degradation_cost_pln_kwh",.08)))
         min_margin=max(0,float(OPTIONS.get("minimum_arbitrage_margin_pln_kwh",.05)))
         buy_tolerance=max(0.0,float(OPTIONS.get("buy_window_tolerance_pln_kwh",.05)))
+        baseline=json.loads(str(OPTIONS.get("deye_program_soc_baseline_json") or "{}"))
+        terminal_pct=max([float(value) for value in baseline.values()] or [15.0])
+        capacity=max(1.0,float(OPTIONS.get("battery_capacity_kwh",15.0)))
+        reserve=max(0.0,float(OPTIONS.get("battery_min_soc_pct",15.0)))
+        max_kw=max(0.25,float(OPTIONS.get("battery_max_power_kw",5.0)))
+        slot_hours=max(1,int(OPTIONS.get("slot_minutes",15)))/60.0
+        minimum_buy_slots=max(1,math.ceil(
+            capacity*max(0.0,terminal_pct-reserve)/100.0
+            /max(0.001,max_kw*slot_hours*eta_c)))
         price_windows=derive_price_windows(
-            [unique[s] for s in ordered], eta_c, eta_d, degradation, min_margin, buy_tolerance)
+            [unique[s] for s in ordered],eta_c,eta_d,degradation,min_margin,
+            buy_tolerance,minimum_buy_slots)
         for s,(sale_window,buy_window) in zip(ordered,price_windows):
             unique[s]["sale_window"]=sale_window
             unique[s]["buy_window"]=buy_window

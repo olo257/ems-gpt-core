@@ -587,6 +587,13 @@
 
 - Planer i wykonawca respektują sprzętowy próg SOC aktywnego programu TOU Deye.
 - Niewykonalna sprzedaż baterii jest blokowana z jawną diagnostyką bez zapisu programów SOC 1–6.
+## 0.32.12
+
+- Każda wyraźna dolina BUY jest poszerzana do minimalnej liczby slotów
+  wynikającej z pojemności, mocy, sprawności, SOC minimalnego i bazowego SOC TOU.
+- Końcowe okno BUY nie może już być cenowo poprawne, lecz fizycznie za krótkie
+  do osiągnięcia wymaganego terminalnego SOC.
+
 ## 0.32.11
 
 - Częściowe okno PV ładuje baterię w stronę targetu, lecz nie musi osiągnąć

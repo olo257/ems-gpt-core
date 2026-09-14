@@ -352,6 +352,20 @@ class PairedArbitrageTests(unittest.TestCase):
 
         self.assertEqual(windows[0], (True, False))
 
+    def test_terminal_price_valley_is_wide_enough_for_physical_recovery(self):
+        prices = [
+            {"sell": 0.0, "buy": 2.0},
+            {"sell": 0.0, "buy": 1.40},
+            {"sell": 0.0, "buy": 1.31},
+            {"sell": 0.0, "buy": 1.35},
+            {"sell": 0.0, "buy": 1.36},
+        ]
+
+        windows = derive_price_windows(
+            prices, 0.90, 0.95, 0.08, 0.05, 0.05, minimum_buy_slots=4)
+
+        self.assertEqual([i for i, (_, buy) in enumerate(windows) if buy], [1, 2, 3, 4])
+
     def test_sale_window_false_blocks_battery_export_but_not_native_load(self):
         rows = [{"price_buy_pln_kwh": 4.0, "price_sell_pln_kwh": 10.0,
                  "sale_window": False, "buy_window": False,
