@@ -81,73 +81,6 @@ def cheapest_recovery_indices(rows: list[dict], eligible: set[int], start_index:
     return {index for _, index in ranked[:slots_needed]}
 
 
-def soc_bridge_envelopes(rows: list[dict], grid_replenishment_indices: set[int],
-                         reserve_pct: float, capacity_kwh: float, eta_c: float,
-                         eta_d: float, max_grid_slot_kwh: float,
-                         uncertainty_weight: float,
-                         floor_cap_pct: float,
-                         target_cap_pct: float) -> tuple[list[float], list[float]]:
-    """Derive sale floors and charge targets from the next energy bridge.
-
-    Future load raises the required SOC, forecast PV lowers it and every grid
-    replenishment contributes only its physically available slot capacity.
-    There is no clock-based evening target or invented terminal SOC.
-    """
-    capacity = max(0.001, float(capacity_kwh))
-    reserve = max(0.0, min(100.0, float(reserve_pct)))
-    floor_cap = max(reserve, min(100.0, float(floor_cap_pct)))
-    target_cap = max(floor_cap, min(100.0, float(target_cap_pct)))
-    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
-    grid_internal = max(0.0, float(max_grid_slot_kwh)) * max(0.01, float(eta_c))
-    nominal_after_kwh = guarded_after_kwh = 0.0
-    floors = [reserve] * len(rows)
-    targets = [reserve] * len(rows)
-
-    for index in range(len(rows) - 1, -1, -1):
-        nominal_pct = nominal_after_kwh / capacity * 100.0
-        guarded_pct = guarded_after_kwh / capacity * 100.0
-        floors[index] = min(floor_cap, max(reserve, reserve + nominal_pct))
-        targets[index] = min(target_cap, max(floors[index], reserve + guarded_pct))
-
-        row = rows[index]
-        native_load = max(0.0, float(row.get("forecast_load_kwh") or 0.0))
-        hp_load = max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0))
-        load = native_load + hp_load
-        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
-        deficit = max(0.0, load - pv) / max(0.01, float(eta_d))
-        surplus = max(0.0, pv - load) * max(0.01, float(eta_c))
-        nominal_before = max(0.0, nominal_after_kwh + deficit - surplus)
-        guarded_before = max(0.0, guarded_after_kwh
-                             + deficit * (1.0 + uncertainty)
-                             - surplus * max(0.0, 1.0 - uncertainty))
-        if index in grid_replenishment_indices:
-            nominal_before = max(0.0, nominal_before - grid_internal)
-            guarded_before = max(0.0, guarded_before - grid_internal)
-        nominal_after_kwh, guarded_after_kwh = nominal_before, guarded_before
-
-    return floors, targets
-
-
-def allocate_slot_discharge(energy_kwh: float, capacity_kwh: float,
-                            reserve_pct: float, sale_floor_pct: float,
-                            native_deficit_kwh: float, sale_request_kwh: float,
-                            max_slot_output_kwh: float,
-                            eta_d: float) -> tuple[float, float]:
-    """Allocate deliberate export above sale floor, then native load to reserve."""
-    efficiency = max(0.01, float(eta_d))
-    output_limit_internal = max(0.0, float(max_slot_output_kwh)) / efficiency
-    sale_internal = min(max(0.0, float(sale_request_kwh)) / efficiency,
-                        output_limit_internal,
-                        max(0.0, float(energy_kwh)
-                            - float(capacity_kwh) * float(sale_floor_pct) / 100.0))
-    after_sale = float(energy_kwh) - sale_internal
-    native_internal = min(max(0.0, float(native_deficit_kwh)) / efficiency,
-                          max(0.0, output_limit_internal - sale_internal),
-                          max(0.0, after_sale
-                              - float(capacity_kwh) * float(reserve_pct) / 100.0))
-    return sale_internal, native_internal
-
-
 def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], required_slots: int,
                               min_cycle_slots: int, min_gap_slots: int,
                               max_gap_slots: int, planned_power_kw: float,
@@ -252,9 +185,12 @@ def build_planner(a: PlannerAdapters):
         eta_d = max(0.01, min(1.0, float(OPTIONS.get("battery_discharge_efficiency", 0.95))))
         degradation = max(0.0, float(OPTIONS.get("battery_degradation_cost_pln_kwh", 0.08)))
         min_margin = max(0.0, float(OPTIONS.get("minimum_arbitrage_margin_pln_kwh", 0.05)))
+        p80 = max(0.0, float(OPTIONS.get("historical_soc_drop_p80_pct", 60.0)))
         uncertainty_weight = max(0.0, min(2.0, float(OPTIONS.get("forecast_uncertainty_weight", 1.0))))
+        terminal_weight = max(0.0, min(2.0, float(OPTIONS.get("terminal_soc_value_weight", 1.0))))
         floor_cap = max(reserve, min(100.0, float(OPTIONS.get("soc_floor_max_pct", 90.0))))
         target_cap = max(floor_cap, min(100.0, float(OPTIONS.get("soc_target_max_pct", 95.0))))
+        configured_evening_target = max(reserve, min(target_cap, float(OPTIONS.get("evening_soc_target_pct", 60.0))))
         flow_threshold = max(0.0, float(OPTIONS.get("planned_flow_threshold_kwh", 0.02)))
         max_kw = max(0.25, float(OPTIONS.get("battery_max_power_kw", 5.0)))
         cwu_threshold = max(0.0, float(OPTIONS.get("pv_cwu_min_surplus_kw", 2.0))) * .25
@@ -371,10 +307,15 @@ def build_planner(a: PlannerAdapters):
             # One backward pass replaces repeated 96x96 future-price/weather scans.
             suffix_min_buy = [None] * len(rows)
             suffix_max_sell = [None] * len(rows)
+            suffix_bad_weather = [False] * len(rows)
             min_buy = max_sell = None
+            bad_weather = False
             for i in range(len(rows)-1, -1, -1):
                 row = rows[i]
                 suffix_min_buy[i], suffix_max_sell[i] = min_buy, max_sell
+                bad = float(row.get("forecast_cloud_coverage_pct") or 0) >= 80 or float(row.get("forecast_precipitation_mm") or 0) > 0
+                bad_weather = bad_weather or bad
+                suffix_bad_weather[i] = bad_weather
                 if row.get("price_buy_pln_kwh") is not None:
                     price = float(row["price_buy_pln_kwh"])
                     min_buy = price if min_buy is None else min(min_buy, price)
@@ -414,23 +355,36 @@ def build_planner(a: PlannerAdapters):
                 native_deficit = max(0.0, load-pv)
                 battery_export = min(battery_sell_request, max(0.0, served_from_battery-native_deficit))
                 base.append({"row":row,"start":start_pct,"end":energy/capacity*100,"charge":charge,
-                             "discharge":discharge,"sell":battery_export,
-                             "sell_request":battery_sell_request,"pv_export":pv_export})
+                             "discharge":discharge,"sell":battery_export,"pv_export":pv_export})
 
-            bridge_rows = []
-            for index, row in enumerate(rows):
-                bridge_row = dict(row)
-                bridge_row["forecast_heat_pump_load_kwh"] = planned_hp_kw * 0.25 if index in hp_selected_indices else 0.0
-                bridge_rows.append(bridge_row)
-            grid_replenishment_indices = {
-                index for index, row in enumerate(rows)
-                if (row.get("grid_window") == "BUY_ALLOWED" and index not in sell_indices)
-                or index in paired_buy_indices
-            }
-            floors, targets = soc_bridge_envelopes(
-                bridge_rows, grid_replenishment_indices, reserve, capacity,
-                eta_c, eta_d, max_kw * .25, uncertainty_weight,
-                floor_cap, target_cap)
+            raw_floor = [reserve] * len(base)
+            raw_target = [reserve] * len(base)
+            terminal_target = min(target_cap, reserve + p80 * 0.25 * terminal_weight)
+            required_next = gross_next = max(0.0, (terminal_target - reserve) / 100.0 * capacity)
+            grid_recovery = max_kw*.25*eta_c
+            evening_target = configured_evening_target
+            for i in range(len(base)-1, -1, -1):
+                item, row = base[i], base[i]["row"]
+                grid = grid_recovery if ((row.get("grid_window") == "BUY_ALLOWED" and i not in sell_indices)
+                                         or i in paired_buy_indices) else 0.0
+                net = item["discharge"]-item["charge"]
+                required_start = max(0.0, net+required_next-grid)
+                gross_start = max(0.0, net+gross_next)
+                uncertainty = min(20.0, uncertainty_weight * (5.0+p80*.10+(3.0 if suffix_bad_weather[i] else 0.0)))
+                floor = min(floor_cap,max(reserve,reserve+required_start/capacity*100+3.0))
+                target = min(target_cap,max(floor+uncertainty,reserve+gross_next/capacity*100+3.0+uncertainty))
+                if row["slot_start"].hour == 19 and row["slot_start"].minute == 45:
+                    target=max(target,evening_target)
+                raw_floor[i], raw_target[i] = floor,target
+                required_next,gross_next=required_start,gross_start
+
+            def envelope(values, step):
+                out=list(values)
+                for i in range(1,len(out)): out[i]=max(out[i],out[i-1]-step)
+                for i in range(len(out)-2,-1,-1): out[i]=max(out[i],out[i+1]-step)
+                return out
+            floors=envelope(raw_floor,max(1.0,max_kw*.25/eta_d/capacity*100))
+            targets=envelope(raw_target,max(1.0,grid_recovery/capacity*100))
             energy = capacity * soc_now / 100.0
             arbitrage_recovery_kwh = 0.0
             for i,item in enumerate(base):
@@ -448,18 +402,15 @@ def build_planner(a: PlannerAdapters):
                 load=native_load+hp_load
                 pv_surplus=max(0.0,pv-load)
                 native_deficit=max(0.0,load-pv)
-                requested_export=(max(0.0,float(item.get("sell_request") or 0))
-                                  if tou_program is not None else 0.0)
-                sale_discharge, native_discharge = allocate_slot_discharge(
-                    energy, capacity, reserve, effective_floor, native_deficit,
-                    requested_export, max_kw * .25, eta_d)
-                energy-=sale_discharge+native_discharge
-                discharge=sale_discharge+native_discharge
+                requested_export=max(0.0,float(item.get("sell") or 0))
+                discharge=min((native_deficit+requested_export)/eta_d,max_kw*.25/eta_d,
+                              max(0.0,energy-capacity*effective_floor/100))
+                energy-=discharge
                 pv_to_bat=min(pv_surplus,max_kw*.25,max(0.0,(capacity-energy)/eta_c))
                 energy+=pv_to_bat*eta_c
                 pv_flex=max(0.0,pv_surplus-pv_to_bat)
                 buy=0.0
-                required_soc=max(reserve,target)
+                required_soc=max(effective_floor,target)
                 regular_buy = row.get("grid_window")=="BUY_ALLOWED" and i not in sell_indices
                 selected_recovery = cheapest_recovery_indices(
                     rows, paired_buy_indices, i, arbitrage_recovery_kwh, max_kw*.25, eta_c)
@@ -472,9 +423,10 @@ def build_planner(a: PlannerAdapters):
                     arbitrage_recovery_kwh=max(0.0,arbitrage_recovery_kwh-buy*eta_c)
                 item["charge"],item["discharge"],item["end"] = pv_to_bat*eta_c,discharge,energy/capacity*100
                 sell_price=float(row.get("price_sell_pln_kwh") or 0)
-                item["sell"]=sale_discharge*eta_d
+                delivered_from_battery=discharge*eta_d
+                item["sell"]=max(0.0,delivered_from_battery-native_deficit)
                 sell_bat=(tou_program is not None and item["sell"]>flow_threshold
-                          and sale_discharge>flow_threshold)
+                          and item["discharge"]>flow_threshold and item["end"]>=effective_floor)
                 if not sell_bat:
                     item["sell"] = 0.0
                     if i in sell_indices and tou_program is not None and item["start"] <= effective_floor + 0.01:
