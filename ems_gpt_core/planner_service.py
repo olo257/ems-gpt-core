@@ -214,10 +214,17 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         target_pct = (reserve if minimum_soc_targets is None else
                       max(reserve, min(float(max_soc_pct),
                           float(minimum_soc_targets[index]))))
-        target_unit = int(math.ceil(target_pct / step - 1e-9))
+        requested_target_unit = int(math.ceil(target_pct / step - 1e-9))
+        grid_charge_allowed = row.get("buy_window") is not False
         next_costs, next_predecessors = {}, {}
         for current_unit, accumulated in costs.items():
             current_energy = current_unit * unit_kwh
+            available_charge_internal = min(
+                max_internal_charge,
+                surplus * eta_c + (max_internal_charge if grid_charge_allowed else 0.0),
+            )
+            reachable_up = int(math.floor(available_charge_internal / unit_kwh + 1e-9))
+            target_unit = min(requested_target_unit, current_unit + reachable_up)
             for next_unit in range(max(first_unit, target_unit, current_unit-max_down),
                                    min(last_unit, current_unit+max_up)+1):
                 delta = (next_unit-current_unit) * unit_kwh
@@ -226,6 +233,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     charge_input = delta / eta_c
                     pv_to_bat = min(surplus, charge_input)
                     grid_charge = max(0.0, charge_input-pv_to_bat)
+                    if grid_charge > 1e-9 and not grid_charge_allowed:
+                        continue
                     grid_load = deficit
                     pv_export = max(0.0, surplus-pv_to_bat) if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_to_bat-pv_export)
@@ -649,7 +658,9 @@ def build_planner(a: PlannerAdapters):
                     raise RuntimeError(
                         f"SALE_FLOOR_VIOLATION:{index}:"
                         f"{flow.get('soc_end_pct')}<{optimized_floors[index]}")
-                if float(flow.get("soc_end_pct") or 0.0) + 1e-9 < targets[index]:
+                if (float(flow.get("soc_end_pct") or 0.0) + 1e-9 < targets[index]
+                        and float(flow.get("battery_charge_internal_kwh") or 0.0)
+                        <= flow_threshold):
                     raise RuntimeError(
                         f"SOC_TARGET_VIOLATION:{index}:"
                         f"{flow.get('soc_end_pct')}<{targets[index]}")
