@@ -47,6 +47,95 @@ def build_executor(a: ExecutorAdapters):
     record_event, local_now, db, slot_start = a.record_event, a.local_now, a.db, a.slot_start
     tou_program_snapshot, active_tou_program = a.tou_program_snapshot, a.active_tou_program
     number, ha_state, ha_service_response = a.number, a.ha_state, a.ha_service_response
+    program_restore_path = RUNTIME_SETTINGS_PATH.with_name("battery_program_soc_restore.json")
+
+    def read_program_restore() -> dict[str, float]:
+        try:
+            payload = json.loads(program_restore_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+        return {str(key): float(value) for key, value in payload.items()}
+
+    def write_program_restore(payload: dict[str, float]) -> None:
+        temporary = program_restore_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, program_restore_path)
+
+    def set_active_program_target(now: datetime, target_pct: float) -> dict:
+        """Persist the original TOU target, then apply the quantitative plan target."""
+        program = active_tou_program(now, tou_program_snapshot())
+        if not program:
+            raise RuntimeError("ACTIVE_TOU_PROGRAM_UNAVAILABLE")
+        program_number = int(program["program"])
+        entity_id = f"number.inverter_program_{program_number}_soc"
+        live_value = number(ha_state(entity_id))
+        if live_value is None:
+            raise RuntimeError("ACTIVE_TOU_SOC_UNAVAILABLE")
+        restore = read_program_restore()
+        try:
+            configured_baselines = json.loads(str(OPTIONS.get(
+                "deye_program_soc_baseline_json", "{}")))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("DEYE_PROGRAM_SOC_BASELINE_INVALID") from exc
+        configured_original = configured_baselines.get(str(program_number), live_value)
+        restore.setdefault(str(program_number), float(configured_original))
+        write_program_restore(restore)
+        requested = max(0.0, min(100.0, float(target_pct)))
+        response = ha_service_response("number", "set_value", {
+            "entity_id": entity_id, "value": round(requested),
+        })
+        if response is None:
+            raise RuntimeError("ACTIVE_TOU_SOC_WRITE_FAILED")
+        return {"program": program_number, "entity_id": entity_id,
+                "original_soc_pct": restore[str(program_number)],
+                "target_soc_pct": round(requested)}
+
+    def set_active_program_charging(now: datetime, option: str) -> dict:
+        """Set the active Deye TOU program charging source explicitly."""
+        program = active_tou_program(now, tou_program_snapshot())
+        if not program:
+            raise RuntimeError("ACTIVE_TOU_PROGRAM_UNAVAILABLE")
+        program_number = int(program["program"])
+        entity_id = f"select.inverter_program_{program_number}_charging"
+        response = ha_service_response("select", "select_option", {
+            "entity_id": entity_id, "option": option,
+        })
+        if response is None:
+            raise RuntimeError("ACTIVE_TOU_CHARGING_WRITE_FAILED")
+        return {"program": program_number, "entity_id": entity_id, "option": option}
+
+    def restore_program_targets() -> list[dict]:
+        """Restore every TOU target changed by EMS; retain failed entries for retry."""
+        restore = read_program_restore()
+        restored, pending = [], {}
+        for program_number, original in restore.items():
+            entity_id = f"number.inverter_program_{int(program_number)}_soc"
+            response = ha_service_response("number", "set_value", {
+                "entity_id": entity_id, "value": round(float(original)),
+            })
+            if response is None:
+                pending[program_number] = original
+            else:
+                restored.append({"program": int(program_number),
+                                 "entity_id": entity_id,
+                                 "restored_soc_pct": float(original)})
+        write_program_restore(pending)
+        return restored
+
+    def restore_program_targets_if_idle() -> list[dict]:
+        """Restore only after Deye confirms that neither grid charge nor export is active."""
+        grid_state = ha_state("switch.inverter_battery_grid_charging") or {}
+        mode_state = ha_state("select.inverter_work_mode") or {}
+        grid_off = str(grid_state.get("state") or "").lower() == "off"
+        export_off = str(mode_state.get("state") or "") != "Export First"
+        restore = read_program_restore()
+        program_grid_disabled = all(
+            str((ha_state(f"select.inverter_program_{int(program)}_charging") or {}).get("state") or "") == "Disabled"
+            for program in restore
+        )
+        if not (grid_off and export_off and program_grid_disabled):
+            return []
+        return restore_program_targets()
 
     def settings_payload() -> dict:
         result = {key: {"value": float(OPTIONS[key]), "min": spec[0], "max": spec[1],
@@ -341,8 +430,11 @@ def build_executor(a: ExecutorAdapters):
                     })
                     continue
                 command_id = str(uuid.uuid4())
+                battery_flow = row["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"}
                 safety = {"executor_enabled": True, "dry_run": dry_run, "connector_required": True,
-                          "soc_programs_1_6_write_allowed": False, "override_id": row.get("override_id")}
+                          "soc_programs_1_6_write_allowed": battery_flow,
+                          "soc_restore_required": battery_flow,
+                          "override_id": row.get("override_id")}
                 cur.execute("""INSERT IGNORE INTO ems_gpt_core_commands
                   (command_id,slot_start,slot_id,process_name,decision,plan_version,created_at,expires_at,
                    source,status,safety_json) VALUES(%s,%s,%s,%s,%s,%s,NOW(6),%s,%s,%s,%s)""",
@@ -387,12 +479,14 @@ def build_executor(a: ExecutorAdapters):
                                 (json.dumps({"reason": "PROTECTED_SOC_PROGRAM_MAPPING"}), command["command_id"]))
                     continue
                 if command["process_name"] == "BATTERY_EXPORT" and command["decision"] == "ON":
-                    live_programs = tou_program_snapshot()
-                    live_program = active_tou_program(now, live_programs)
                     live_soc = number(ha_state("sensor.inverter_battery"))
-                    if live_program is None or live_soc is None or live_soc <= float(live_program["soc"]) + 0.01:
-                        reason = ("TOU_FLOOR_UNAVAILABLE" if live_program is None or live_soc is None else
-                                  f"TOU_FLOOR_BLOCK: program={live_program['program']}, soc={live_program['soc']:.0f}%")
+                    cur.execute("""SELECT soc_floor_pct FROM ems_gpt_slots
+                      WHERE slot_start=%s LIMIT 1""", (current_slot,))
+                    floor_row = cur.fetchone() or {}
+                    plan_floor = number(floor_row.get("soc_floor_pct"))
+                    if live_soc is None or plan_floor is None or live_soc <= plan_floor + 0.01:
+                        reason = ("PLAN_FLOOR_UNAVAILABLE" if live_soc is None or plan_floor is None else
+                                  f"PLAN_FLOOR_BLOCK: soc_floor={plan_floor:.2f}%")
                         off_entity = process_map.get("OFF")
                         safe_response = ha_service_response("script", "turn_on", {"entity_id": off_entity}) \
                             if isinstance(off_entity, str) and off_entity.startswith("script.") else None
@@ -402,14 +496,64 @@ def build_executor(a: ExecutorAdapters):
                         record_event("battery_export_blocked_by_tou_floor", "executor",
                                      {"reason": reason, "live_soc": live_soc}, "WARNING")
                         continue
+                target_update = None
+                restored_targets = []
+                if command["process_name"] == "BATTERY_IMPORT" and command["decision"] == "ON":
+                    cur.execute("""SELECT soc_target_pct,soc_end_plan_pct FROM ems_gpt_slots
+                      WHERE slot_start=%s LIMIT 1""", (current_slot,))
+                    plan_target = cur.fetchone() or {}
+                    target = plan_target.get("soc_target_pct")
+                    if target is None:
+                        target = plan_target.get("soc_end_plan_pct")
+                    try:
+                        set_active_program_charging(now, "Grid")
+                        target_update = set_active_program_target(now, float(target))
+                    except (RuntimeError, TypeError, ValueError) as exc:
+                        cur.execute("UPDATE ems_gpt_core_commands SET status='FAILED',acknowledgement_json=%s WHERE command_id=%s",
+                                    (json.dumps({"reason": str(exc)}), command["command_id"]))
+                        record_event("battery_import_target_failed", "executor", {
+                            "reason": str(exc), "slot_start": current_slot,
+                        }, "ERROR")
+                        continue
+                if command["process_name"] == "BATTERY_EXPORT" and command["decision"] == "ON":
+                    cur.execute("""SELECT soc_floor_pct FROM ems_gpt_slots
+                      WHERE slot_start=%s LIMIT 1""", (current_slot,))
+                    export_plan = cur.fetchone() or {}
+                    try:
+                        set_active_program_charging(now, "Disabled")
+                        target_update = set_active_program_target(
+                            now, float(export_plan.get("soc_floor_pct")))
+                    except (RuntimeError, TypeError, ValueError) as exc:
+                        cur.execute("UPDATE ems_gpt_core_commands SET status='FAILED',acknowledgement_json=%s WHERE command_id=%s",
+                                    (json.dumps({"reason": str(exc)}), command["command_id"]))
+                        record_event("battery_export_floor_failed", "executor", {
+                            "reason": str(exc), "slot_start": current_slot,
+                        }, "ERROR")
+                        continue
                 response = ha_service_response("script", "turn_on", {"entity_id": entity_id})
                 if response is None:
                     cur.execute("UPDATE ems_gpt_core_commands SET status='FAILED',acknowledgement_json=%s WHERE command_id=%s",
                                 (json.dumps({"reason": "HA_SERVICE_FAILED", "entity_id": entity_id}), command["command_id"]))
+                    if target_update is not None:
+                        off_entity = process_map.get("OFF")
+                        if isinstance(off_entity, str) and off_entity.startswith("script."):
+                            ha_service_response("script", "turn_on", {"entity_id": off_entity})
+                        restore_program_targets_if_idle()
                     continue
+                if command["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"} and command["decision"] == "OFF":
+                    try:
+                        set_active_program_charging(now, "Disabled")
+                    except RuntimeError as exc:
+                        record_event("battery_program_grid_disable_failed", "executor", {
+                            "reason": str(exc), "slot_start": current_slot,
+                        }, "ERROR")
+                    restored_targets = restore_program_targets_if_idle()
                 cur.execute("""UPDATE ems_gpt_core_commands SET status='DISPATCHED',dispatched_at=NOW(6),
                   acknowledgement_json=%s WHERE command_id=%s AND status='READY_FOR_CONNECTOR'""",
-                  (json.dumps({"entity_id": entity_id, "ha_response": response}, ensure_ascii=False, default=str), command["command_id"]))
+                  (json.dumps({"entity_id": entity_id, "ha_response": response,
+                               "tou_target_update": target_update,
+                               "tou_targets_restored": restored_targets},
+                              ensure_ascii=False, default=str), command["command_id"]))
                 dispatched += cur.rowcount
             # Scripts are binary for the duration of a slot. Re-check the live
             # SOC every scheduler minute so a partial final slot stops at the
@@ -436,12 +580,28 @@ def build_executor(a: ExecutorAdapters):
                     response = ha_service_response("script", "turn_on", {"entity_id": entity_id})
                     if response is not None:
                         guard_actions.append("BATTERY_IMPORT_OFF")
+                        try:
+                            set_active_program_charging(now, "Disabled")
+                            guard_actions.append("TOU_GRID_DISABLED")
+                        except RuntimeError:
+                            pass
+                        restored = restore_program_targets_if_idle()
+                        if restored:
+                            guard_actions.append("TOU_SOC_RESTORED")
             if stop_export:
                 entity_id = service_map.get("BATTERY_EXPORT", {}).get("OFF")
                 if isinstance(entity_id, str) and entity_id.startswith("script."):
                     response = ha_service_response("script", "turn_on", {"entity_id": entity_id})
                     if response is not None:
                         guard_actions.append("BATTERY_EXPORT_OFF")
+                        try:
+                            set_active_program_charging(now, "Disabled")
+                            guard_actions.append("TOU_GRID_DISABLED")
+                        except RuntimeError:
+                            pass
+                        restored = restore_program_targets_if_idle()
+                        if restored:
+                            guard_actions.append("TOU_SOC_RESTORED")
             if guard_actions:
                 record_event("battery_soc_guard_applied", "executor", {
                     "actions": guard_actions, "live_soc": live_soc,
@@ -493,4 +653,8 @@ def build_executor(a: ExecutorAdapters):
         stage_executor_commands=stage_executor_commands,
         dispatch_ready_commands=dispatch_ready_commands,
         acknowledge_command=acknowledge_command,
+        set_active_program_target=set_active_program_target,
+        set_active_program_charging=set_active_program_charging,
+        restore_program_targets=restore_program_targets,
+        restore_program_targets_if_idle=restore_program_targets_if_idle,
     )
