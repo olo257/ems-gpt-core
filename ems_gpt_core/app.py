@@ -71,6 +71,16 @@ def database_catalog() -> dict:
 
 def ensure_runtime_schema() -> None:
     ensure_runtime_schema_service(db=db, app_version=APP_VERSION)
+    # 0.33 additions are deliberately additive.  Keep this release migration
+    # separate from legacy cleanup so an upgrade cannot remove history.
+    with db() as conn, conn.cursor() as cur:
+        for table in ("ems_gpt_slots", "ems_gpt_plan_stage_rows"):
+            for column in (
+                "soc_target_due DATETIME(6) NULL",
+                "soc_target_source VARCHAR(16) NULL",
+                "soc_target_reserved_pv_kwh DOUBLE NOT NULL DEFAULT 0",
+            ):
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
 
 
 _TIME = build_time_service(TimeAdapters(
