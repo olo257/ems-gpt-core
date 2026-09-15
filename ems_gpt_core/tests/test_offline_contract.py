@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.34.4"', APP_SOURCE)
-        self.assertIn('version: "0.34.4"', CONFIG)
+        self.assertIn('APP_VERSION = "0.34.5"', APP_SOURCE)
+        self.assertIn('version: "0.34.5"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -387,12 +387,16 @@ class OfflineContractTests(unittest.TestCase):
         self.assertLess(import_off, disable_grid)
         self.assertLess(disable_grid, restore_soc)
 
-    def test_tou_floor_blocks_impossible_battery_sale(self):
-        for marker in ("tou_program_snapshot", "active_tou_program", "effective_floor",
+    def test_dynamic_plan_floor_blocks_impossible_battery_sale(self):
+        for marker in ("tou_program_snapshot", "active_tou_program",
                        "PLAN_FLOOR_BLOCK", "PLAN_FLOOR_UNAVAILABLE",
                        "battery_export_blocked_by_tou_floor"):
             self.assertIn(marker, SOURCE)
         self.assertIn("live_soc <= plan_floor + 0.01", SOURCE)
+        planner = MODULE_SOURCES["planner_service.py"]
+        self.assertIn('sale_constraints.append(reserve if work["sale_window"] else 100.0)', planner)
+        self.assertIn('float(flow.get("soc_end_pct") or reserve)', planner)
+        self.assertNotIn('effective_floor=max(reserve,tou_floor)', planner)
 
     def test_outside_temperature_contract(self):
         self.assertIn('"outside_temperature": "sensor.klimat_w_ogrodzie_temperature"', SOURCE)
