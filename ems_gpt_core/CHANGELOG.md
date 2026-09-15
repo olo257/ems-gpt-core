@@ -1,3 +1,11 @@
+## 0.34.1
+
+- Planer publikuje wynik wieloprzebiegowy wyłącznie po zbieżności wybranych
+  slotów BUY z kontraktem `soc_target`; brak zbieżności kończy przebieg
+  bezpiecznym odrzuceniem.
+- Ponowne liczenie bez osieroconej ochrony SOC nie może po cichu zmienić ścieżki
+  zakupu. Taka zmiana również odrzuca plan zamiast publikować nieaktualny target.
+
 ## 0.34.0
 
 - Okno `BUY` jest wyłącznie zezwoleniem. Target nie jest już zerowany na każdym
