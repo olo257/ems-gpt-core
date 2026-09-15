@@ -71,6 +71,55 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(contract["targets"][0], 21.75)
         self.assertEqual(contract["targets"][1], 15.0)
 
+    def test_selected_buy_closes_earlier_energy_bridge(self):
+        rows = [
+            {"buy_window": index == 2, "forecast_load_kwh": 0.30,
+             "forecast_pv_total_kwh": 0.0, "slot_start": index,
+             "slot_end": index + 1}
+            for index in range(6)
+        ]
+        contract = backward_target_commitments(
+            rows, 15.0, 15.0, 1.0, 1.0, 0.0, 100.0, 15.0,
+            0.25, {2})
+
+        self.assertEqual(contract["source"][1], "BUY")
+        self.assertEqual(contract["due"][1], 3)
+        # BUY closes the earlier energy bridge, while its target remains the
+        # charge ceiling on the approach so preceding PV can displace import.
+        self.assertEqual(contract["targets"][1], contract["targets"][2])
+
+    def test_sufficient_pv_closes_bridge_before_later_load(self):
+        rows = [
+            {"buy_window": False, "forecast_load_kwh": 0.30,
+             "forecast_pv_total_kwh": 0.0, "slot_start": index,
+             "slot_end": index + 1}
+            for index in range(5)
+        ]
+        rows[2]["forecast_load_kwh"] = 0.0
+        rows[2]["forecast_pv_total_kwh"] = 1.20
+        contract = backward_target_commitments(
+            rows, 15.0, 15.0, 1.0, 1.0, 0.0, 100.0, 15.0)
+
+        self.assertEqual(contract["source"][1], "PV")
+        self.assertEqual(contract["due"][1], 3)
+        self.assertEqual(contract["targets"][1], 15.0)
+
+    def test_buy_boundary_keeps_requirement_above_its_power_limit(self):
+        rows = [
+            {"buy_window": index == 2, "forecast_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0, "slot_start": index,
+             "slot_end": index + 1}
+            for index in range(5)
+        ]
+        rows[3]["forecast_load_kwh"] = 1.50
+        rows[4]["forecast_load_kwh"] = 1.50
+        contract = backward_target_commitments(
+            rows, 15.0, 15.0, 1.0, 1.0, 0.0, 100.0, 15.0,
+            0.25, {2}, 5.0, 15)
+
+        self.assertGreater(contract["targets"][1], 15.0)
+        self.assertEqual(contract["due"][1], 3)
+
     def test_unselected_expensive_buy_does_not_reset_cheap_buy_target(self):
         rows = []
         for index in range(16):
