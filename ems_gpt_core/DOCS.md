@@ -108,6 +108,10 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
   autokonsumpcji i nie może uruchamiać zakupu.
 - W slocie sprzedaży publikowany `soc_target` nie może być niższy niż
   `soc_floor`, ale floor nadal nie ogranicza rozładowania na zwykłe zużycie.
+- Oba pola pozostają niezależne. Dla `SELL_BAT` efektywny próg zakończenia
+  sprzedaży wynosi `max(soc_floor, soc_target)`: floor jest progiem falownika,
+  a target zachowuje energię potrzebną do następnego wybranego PV/BUY. Jeśli
+  SOC jest niższy od targetu, planowana sprzedaż baterii wynosi zero.
 - Podstawowy bilans slotu to energia PV wykorzystana przez dom/baterię, energia
   baterii i zakup do baterii wobec zużycia oraz ładowania. Sprzedaż nadwyżki PV
   jest przepływem pozabilansowym tego rdzenia i podlega osobnej kontroli
