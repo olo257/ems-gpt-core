@@ -1,3 +1,12 @@
+## 0.35.5
+
+- Target końcowego slotu uzupełnienia PV jest propagowany wstecz na całe
+  podejście do tego okna. Wcześniejsza poranna nadwyżka ładuje baterię do
+  targetu zamiast być sprzedawana przy niskim SOC.
+- Techniczne minimum SOC pozostaje rezerwą awaryjną, a nie celem operacyjnym.
+- Dodano regresję dla przejścia nocnego minimum do wieloslotowego okna PV.
+- Wykonawca pozostaje domyślnie wyłączony.
+
 ## 0.35.4
 
 - Naprawiono odczyt bilansu aktywnego slotu po wdrożeniu 0.35.3. Import domu
