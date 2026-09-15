@@ -133,8 +133,8 @@ def build_handler(a: ApiAdapters):
                     cur.execute("""SELECT slot_start label,price_sell_pln_kwh sell_avg,
                       price_buy_pln_kwh buy_avg,price_sell_pln_kwh sell_min,
                       price_sell_pln_kwh sell_max,
-                      COALESCE(grid_buy_allowed,buy_window) buy_window,
-                      COALESCE(sell_bat_allowed,sale_window) sale_window
+                      (market_window='BUY') buy_window,
+                      (market_window='SELL') sale_window
                       FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s
                       AND price_sell_pln_kwh IS NOT NULL ORDER BY slot_start""",
                                 (now-timedelta(hours=24), now+timedelta(hours=24)))

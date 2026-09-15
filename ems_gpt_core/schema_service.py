@@ -199,18 +199,8 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             cur.execute(f"ALTER TABLE ems_gpt_core_todo ADD COLUMN IF NOT EXISTS {column}")
         cur.execute("""UPDATE ems_gpt_core_todo SET first_seen_day=COALESCE(first_seen_day,local_day),
           last_seen_day=COALESCE(last_seen_day,local_day)""")
-        ppd_columns = (
-            "grid_buy_allowed TINYINT(1) NOT NULL DEFAULT 0",
-            "grid_no_buy TINYINT(1) NOT NULL DEFAULT 0",
-            "grid_neutral TINYINT(1) NOT NULL DEFAULT 0",
-            "sell_bat_allowed TINYINT(1) NOT NULL DEFAULT 0",
-            "no_sell_bat TINYINT(1) NOT NULL DEFAULT 0",
-            "sell_pv_allowed TINYINT(1) NOT NULL DEFAULT 0",
-            "no_sell_pv TINYINT(1) NOT NULL DEFAULT 0",
-        )
         for table in ("ems_gpt_slots", "ems_gpt_plan_stage_rows"):
-            for column in ppd_columns:
-                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS market_window VARCHAR(8) NULL")
             for column in (
                 "soc_start_plan_pct DOUBLE NULL", "soc_end_plan_pct DOUBLE NULL",
                 "heat_pump_window TINYINT(1) NOT NULL DEFAULT 0",
@@ -220,6 +210,10 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
                 "planned_pv_curtail_kwh DOUBLE NOT NULL DEFAULT 0",
             ):
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
+        cur.execute("""UPDATE ems_gpt_slots SET market_window=CASE
+          WHEN COALESCE(sale_window,0)=1 THEN 'SELL'
+          WHEN COALESCE(buy_window,0)=1 THEN 'BUY' ELSE 'NEUTRAL' END
+          WHERE market_window IS NULL""")
         for table in ("ems_gpt_slots", "ems_gpt_plan_stage_rows", "ems_gpt_telemetry_snapshots"):
             for column in (
                 "slot_id VARCHAR(32) NULL", "slot_start_utc DATETIME(6) NULL",

@@ -22,6 +22,12 @@ wszystkich odbiorców oraz zachowaniu archiwum. Ilości energii są źródłem p
 flagi prezentacyjne mają być z nich wyliczane. Wykonawca pozostaje wyłączony
 podczas całej migracji.
 
+Od wersji 0.33.5 bieżący kontrakt używa jednego `market_window` (`BUY`, `SELL`,
+`NEUTRAL`), enumów decyzji oraz ilościowych pól `planned_*_kwh`. Dawne flagi
+`grid_*`, `sell_*`, `no_sell_*` i `pv_*_planned` nie są już zapisywane ani
+czytane przez planer, API i panel. Pozostają fizycznie wyłącznie na czas
+obserwacji zgodności przed osobną migracją usuwającą kolumny.
+
 ## Architektura 0.28
 
 - `app.py` — wyłącznie kompozycja usług i cykl życia procesu;

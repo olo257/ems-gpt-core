@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.33.4"', APP_SOURCE)
-        self.assertIn('version: "0.33.4"', CONFIG)
+        self.assertIn('APP_VERSION = "0.33.5"', APP_SOURCE)
+        self.assertIn('version: "0.33.5"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -276,13 +276,10 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("if(text[10]==='T')", SOURCE)
         self.assertIn("if(text.length===16)text+=':00'", SOURCE)
 
-    def test_explicit_ppd_matrix_is_persisted_and_validated(self):
-        for field in (
-            "grid_buy_allowed", "grid_no_buy", "grid_neutral",
-            "sell_bat_allowed", "no_sell_bat", "sell_pv_allowed", "no_sell_pv",
-        ):
-            self.assertIn(field, SOURCE)
-        self.assertIn("grid_buy_allowed+grid_no_buy+grid_neutral<>1", SOURCE)
+    def test_canonical_market_and_flow_contract_is_persisted_and_validated(self):
+        self.assertIn("market_window", SOURCE)
+        self.assertIn("market_window NOT IN ('BUY','SELL','NEUTRAL')", SOURCE)
+        self.assertIn("planned_battery_charge_kwh>0.000001 AND planned_battery_discharge_kwh>0.000001", SOURCE)
         self.assertIn("heat_pump_window NOT IN (0,1)", SOURCE)
         self.assertIn("CORE_0_33_0", SOURCE)
         self.assertIn("reason[:255]", SOURCE)
