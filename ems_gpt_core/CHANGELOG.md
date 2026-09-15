@@ -1,3 +1,11 @@
+## 0.34.5
+
+- `soc_floor` is now derived per accepted battery-sale slot from its planned
+  ending SOC; it is no longer copied from the active Deye TOU program.
+- Outside deliberate battery sale, `soc_floor` falls back to the technical
+  reserve and does not constrain battery discharge for native consumption.
+- `soc_target` remains the independent energy commitment and sale safeguard.
+
 ## 0.34.4
 
 - `soc_floor` pozostaje wyłącznie sprzętową podłogą celowej sprzedaży baterii;
