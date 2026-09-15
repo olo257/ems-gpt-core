@@ -3,6 +3,11 @@
 - Naprawiono odczyt bilansu aktywnego slotu po wdrożeniu 0.35.3. Import domu
   jest wyliczany z istniejących przepływów PV, baterii i obciążenia zamiast z
   nieistniejącej kolumny `grid_load_kwh`.
+- Prognoza zużycia jest uzupełniana dla całego otwartego horyzontu profilem
+  slotu, a przy zbyt krótkiej historii konserwatywną średnią z ostatnich trzech
+  dób. Planer blokuje publikację, jeśli mimo tego pozostanie `NULL`.
+- Pusty slot bez przepływów otrzymuje rekomendację `Neutralny`; etykieta
+  `Zasilanie z sieci` wymaga rzeczywistego, nieuniknionego importu domu.
 - Produkcyjny replan 0.35.3 potwierdził zbieżność: `ACCEPTED`, 124 sloty.
 - Wykonawca pozostaje domyślnie wyłączony.
 
