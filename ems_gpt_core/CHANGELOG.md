@@ -1,3 +1,18 @@
+## 0.35.2
+
+- Naprawiono zamykanie wstecznego kontraktu `soc_target`: faktycznie wybrany
+  BUY odcina wcześniejsze sloty od zapotrzebowania po tym oknie, a wystarczające
+  konserwatywne PV odcina most dopiero po pełnym pokryciu zobowiązania.
+- Granica BUY zachowuje przed oknem tę część energii, której nie można fizycznie
+  uzupełnić w wybranych slotach przy limicie 5 kW i sprawności ładowania.
+- Częściowe PV nadal pomniejsza wymagany target, ale nie usuwa niedoboru.
+- Kafelki modułów mają stałą wysokość i są tworzone tylko raz. Odświeżanie
+  zmienia wyłącznie ich tekst i klasy stanu, bez przebudowy całej siatki.
+- Kafelek RCE przeniesiono na ostatnią pozycję siatki modułów.
+- Kafelek aktywnego slotu pokazuje czas bez sufiksu strefy oraz obie strony
+  planowanego bilansu energii i ich odchylenie.
+- Wykonawca pozostaje domyślnie wyłączony.
+
 ## 0.35.0
 
 - Rozdzielono kompletność importu RCE od wyniku prognoz i planera. Pełny zestaw
