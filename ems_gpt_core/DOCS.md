@@ -109,6 +109,12 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
 - Przyszłe PV może odroczyć osiągnięcie targetu tylko wtedy, gdy jego
   zarezerwowana, konserwatywnie skorygowana nadwyżka gwarantuje osiągnięcie
   targetu w terminie. Pozostałe PV jest nadwyżką elastyczną.
+- Faktycznie wybrany BUY zamyka poprzedzający most energetyczny. Sloty przed
+  nim zachowują energię tylko do początku tego okna oraz część wymagania,
+  której wybrane sloty BUY nie zdołają uzupełnić przy limicie mocy i
+  sprawności. Target w samym BUY obejmuje odcinek po uzupełnieniu. Analogicznie PV zamyka most dopiero,
+  gdy konserwatywna nadwyżka pokrywa całe pozostałe zobowiązanie; częściowe PV
+  jedynie je zmniejsza.
 - `soc_floor` chroni wyłącznie celową sprzedaż z baterii. Nie jest minimum
   autokonsumpcji i nie może uruchamiać zakupu.
 - W slocie sprzedaży publikowany `soc_target` nie może być niższy niż
@@ -127,6 +133,12 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
 - Kafelki modułów pokazują stan, wykonywaną/ostatnią czynność i czas jej
   aktualizacji. Błąd planera degraduje planer oraz PPD i wskazuje zachowanie
   ostatnich poprawnych decyzji.
+- Siatka modułów ma stałe wymiary. Odświeżenie statusu zmienia wyłącznie tekst
+  i klasę istniejących pól DOM, bez przebudowy kafelków. RCE jest ostatnim
+  kafelkiem siatki modułów.
+- Kafelek aktywnego slotu pokazuje lokalny czas bez sufiksu strefy oraz
+  planowany bilans `PV + rozładowanie BAT + zakup = zużycie + ładowanie BAT +
+  sprzedaż BAT`, wraz z odchyleniem obu stron.
 - Oba pola pozostają niezależne. Dla `SELL_BAT` efektywny próg zakończenia
   sprzedaży wynosi `max(soc_floor, soc_target)`: floor jest progiem falownika,
   a target zachowuje energię potrzebną do następnego wybranego PV/BUY. Jeśli

@@ -524,7 +524,9 @@ def backward_target_commitments(rows: list[dict], capacity_kwh: float,
                                 uncertainty_weight: float, target_cap_pct: float,
                                 terminal_soc_pct: float,
                                 soc_step_pct: float = 0.25,
-                                selected_buy_indices: set[int] | None = None) -> dict:
+                                selected_buy_indices: set[int] | None = None,
+                                max_charge_kw: float = 5.0,
+                                slot_minutes: int = 15) -> dict:
     """Build the executable SOC contract before dispatch decisions.
 
     The pass walks the 15-minute table backwards.  Future PV surplus is
@@ -555,17 +557,12 @@ def backward_target_commitments(rows: list[dict], capacity_kwh: float,
         i for i in selected_buy_indices
         if i == 0 or i - 1 not in selected_buy_indices
     }
-    buy_ends = {i for i, value in enumerate(buy)
-                if value and (i + 1 == len(buy) or not buy[i + 1])}
-    end_for_member = {}
-    active_end = None
-    for i in range(len(rows) - 1, -1, -1):
-        if i in buy_ends:
-            active_end = i
-        if buy[i]:
-            end_for_member[i] = active_end
-        else:
-            active_end = None
+    selected_buy_end = {}
+    for start in selected_buy_starts:
+        end = start
+        while end + 1 in selected_buy_indices:
+            end += 1
+        selected_buy_end[start] = end
 
     targets = [reserve] * len(rows)
     due = [None] * len(rows)
@@ -593,12 +590,40 @@ def backward_target_commitments(rows: list[dict], capacity_kwh: float,
             # BUY sets the due point for the remaining requirement, but must
             # not lower the ceiling in earlier slots. Earlier PV has priority
             # and may economically displace grid energy bought in this window.
-            next_due = rows[end_for_member[i]].get("slot_end") or rows[end_for_member[i]].get("slot_start")
+            end = selected_buy_end[i]
+            next_due = rows[end].get("slot_end") or rows[end].get("slot_start")
             next_source = "BUY"
-        elif surplus_internal > 1e-9 and used_surplus > 1e-9:
+            # A selected BUY is an executable replenishment boundary.  The
+            # slots before it only need enough energy to reach that window;
+            # they must not inherit the requirement for the rest of the
+            # horizon.  The BUY slot itself keeps the full post-window target
+            # calculated above and the optimizer validates it at window end.
+            buy_capacity_internal = ((end - i + 1) * max(0.0, float(max_charge_kw))
+                                     * max(1, int(slot_minutes)) / 60.0
+                                     * charge_efficiency)
+            required_before = max(reserve_kwh, required_before - buy_capacity_internal)
+        elif (surplus_internal > 1e-9 and used_surplus > 1e-9
+              and before_surplus - used_surplus <= reserve_kwh + 1e-9):
+            # PV closes the bridge only when its conservative usable surplus
+            # covers the complete remaining requirement.  Partial PV reduces
+            # the target but cannot erase an unfunded remainder.
             next_due = row.get("slot_end") or row.get("slot_start")
             next_source = "PV"
+            required_before = reserve_kwh
         required_after = required_before
+    # ``target`` has two deliberately separate executor meanings: it is the
+    # charge ceiling in every slot and becomes a hard minimum only at the end
+    # of a selected replenishment window.  Before such a BUY, usable PV must
+    # be allowed to displace the future grid charge.  Give all preceding rows
+    # assigned to that BUY the window's final ceiling; do not turn it into an
+    # earlier minimum (``target_due_indices`` controls that independently).
+    for start in selected_buy_starts:
+        buy_target = targets[start]
+        buy_due = rows[selected_buy_end[start]].get("slot_end") or rows[selected_buy_end[start]].get("slot_start")
+        for i in range(start - 1, -1, -1):
+            if source[i] != "BUY" or due[i] != buy_due:
+                break
+            targets[i] = max(targets[i], buy_target)
     return {"targets": targets, "due": due, "source": source,
             "reserved_pv_kwh": reserved_pv}
 
@@ -907,7 +932,7 @@ def build_planner(a: PlannerAdapters):
                 commitment = backward_target_commitments(
                     horizon_rows, capacity, reserve, eta_c, eta_d,
                     uncertainty_weight, target_cap, terminal_soc, 0.25,
-                    new_selected)
+                    new_selected, max_kw, int(OPTIONS["slot_minutes"]))
                 targets = [
                     min(target_cap, max(reserve, commitment["targets"][i]))
                     for i, _row in enumerate(horizon_rows)
