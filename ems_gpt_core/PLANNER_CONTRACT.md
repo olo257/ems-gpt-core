@@ -9,6 +9,14 @@ może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 - Jednostką jest slot 15-minutowy w `ems_gpt_slots`.
 - Plan obejmuje wszystkie ciągłe, niezamknięte sloty z dostępną ceną RCE, a nie
   arbitralną liczbę sąsiednich slotów.
+- Granicą planu jest ostatni ciągły niezamknięty slot z zatwierdzoną ceną RCE.
+  Jeżeli dostępna jest część bieżącej doby i cała następna doba, oba odcinki
+  tworzą jeden plan. Replan nie może kończyć się na granicy dnia ani na 96
+  rekordach.
+- Dla każdego slotu tego horyzontu muszą istnieć prognozy zużycia i PV. Brak
+  prognozy nie oznacza zera: materializacja uzupełnia zużycie profilem slotu,
+  a przy krótkiej historii konserwatywną średnią z ostatnich trzech dób.
+  Pozostały `NULL` odrzuca cały przebieg.
 - Każdy przebieg pracuje na jednej migawce danych wejściowych i publikuje cały
   zaakceptowany plan atomowo. Plan częściowy nie może zastąpić ostatniego
   poprawnego planu.
@@ -197,6 +205,9 @@ generować nowych komend.
 Publikacja jest dozwolona wyłącznie, gdy:
 
 - horyzont jest ciągły, a ceny kompletne;
+- liczba opublikowanych wierszy jest równa liczbie wszystkich ciągłych,
+  niezamkniętych slotów wejściowych aż do końca dostępnego RCE;
+- prognoza zużycia nie ma `NULL` w żadnym slocie horyzontu;
 - każdy slot przechodzi bilans energii z tolerancją numeryczną;
 - SOC i wszystkie przepływy są wykonalne;
 - BUY/SELL/NEUTRAL oraz polityki PPD są jednoznaczne;
