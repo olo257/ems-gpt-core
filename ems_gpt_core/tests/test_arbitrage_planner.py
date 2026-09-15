@@ -78,6 +78,25 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(contract["targets"][1], 15.0)
         self.assertEqual(contract["targets"][1], contract["targets"][closing])
 
+    def test_continuous_pv_window_uses_its_largest_target_from_first_light(self):
+        rows = [
+            {"buy_window": False, "forecast_load_kwh": 0.10,
+             "forecast_pv_total_kwh": 0.0, "slot_start": index,
+             "slot_end": index + 1}
+            for index in range(10)
+        ]
+        for index, pv in enumerate((0.02, 0.20, 0.50, 0.80, 0.70, 0.30), 2):
+            rows[index]["forecast_pv_total_kwh"] = pv
+        rows[8]["forecast_load_kwh"] = 1.0
+        rows[9]["forecast_load_kwh"] = 1.0
+
+        contract = backward_target_commitments(
+            rows, 15.0, 15.0, 0.90, 0.95, 1.0, 100.0, 30.0)
+
+        daylight_targets = contract["targets"][2:8]
+        self.assertGreater(daylight_targets[0], 15.0)
+        self.assertEqual(len(set(daylight_targets)), 1)
+
     def test_backward_target_buy_boundary_covers_later_load(self):
         rows = [
             {"buy_window": True, "forecast_load_kwh": 0.0,
