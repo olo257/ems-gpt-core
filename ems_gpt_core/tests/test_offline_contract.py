@@ -218,8 +218,18 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_planner_uses_all_available_rce_slots(self):
         planner = MODULE_SOURCES["planner_service.py"]
+        materialization = MODULE_SOURCES["materialization_service.py"]
         self.assertNotIn("ORDER BY slot_start LIMIT 96", planner)
         self.assertIn("checks[\"n\"]==len(source)", planner)
+        self.assertIn("MISSING_LOAD_FORECAST", planner)
+        self.assertNotIn("ORDER BY slot_start LIMIT 192", materialization)
+        self.assertIn("LIMIT 288", materialization)
+        self.assertIn("ostatni ciągły niezamknięty slot", PLANNER_CONTRACT)
+        self.assertIn("Replan nie może kończyć się na granicy dnia", PLANNER_CONTRACT)
+
+    def test_grid_supply_label_requires_a_physical_grid_flow(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        self.assertIn('"Zasilanie z sieci" if item["grid_load_kwh"]>technical_threshold else "Neutralny"', planner)
 
     def test_migration_audit_closure(self):
         self.assertIn('\"ai_observer\": \"SHADOW_READ_ONLY\"', SOURCE)
