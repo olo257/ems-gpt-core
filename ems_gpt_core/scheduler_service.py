@@ -252,6 +252,8 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                     planner_health = "RUNNING" if replan.get("status") != "WAITING" else "WAITING"
                     module_activity("planner", "Plan opublikowany", planner_health)
                     module_activity("ppd", "Decyzje PPD odświeżone", planner_health)
+                    with a.lock:
+                        a.state["planner_failure_latched"] = None
                     a.record_event("slot_replan_completed", "planner", {
                         "slot_start": key, **replan,
                     })
@@ -259,6 +261,8 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                     planner_health = "DEGRADED"
                     module_activity("planner", f"Błąd przeliczenia: {exc}", "DEGRADED")
                     module_activity("ppd", "Zachowano ostatnie poprawne decyzje", "DEGRADED")
+                    with a.lock:
+                        a.state["planner_failure_latched"] = str(exc)
                     a.record_event("slot_replan_failed", "planner", {
                         "slot_start": key, "error": str(exc),
                         "last_published_at": last_run,
@@ -286,6 +290,8 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 if last_diag is None or a.local_now().replace(tzinfo=None) - last_diag >= timedelta(minutes=10):
                     a.run_serialized("diagnostics", a.generate_diagnostic_report, "scheduled")
             with a.lock:
+                if a.state.get("planner_failure_latched"):
+                    planner_health = "DEGRADED"
                 a.state["database"] = "CONNECTED"
                 a.state["status"] = "RUNNING" if health["readiness"] == "READY" else "DEGRADED"
                 a.state["appliances"] = appliance_result

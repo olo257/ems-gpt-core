@@ -110,7 +110,8 @@ def build_handler(a: ApiAdapters):
                     with db() as conn, conn.cursor() as cur:
                         cur.execute("""SELECT slot_start,forecast_pv_total_kwh,
                           forecast_load_kwh,planned_battery_discharge_kwh,
-                          planned_buy_kwh,planned_battery_charge_kwh,planned_sell_kwh
+                          planned_buy_kwh,planned_battery_charge_kwh,planned_sell_kwh,
+                          planned_pv_to_bat_kwh,grid_load_kwh
                           FROM ems_gpt_slots WHERE slot_start=%s LIMIT 1""", (current,))
                         row = cur.fetchone()
                     if row:
@@ -118,14 +119,25 @@ def build_handler(a: ApiAdapters):
                             "forecast_pv_total_kwh", "forecast_load_kwh",
                             "planned_battery_discharge_kwh", "planned_buy_kwh",
                             "planned_battery_charge_kwh", "planned_sell_kwh")}
-                        supply = (values["forecast_pv_total_kwh"]
-                                  + values["planned_battery_discharge_kwh"]
-                                  + values["planned_buy_kwh"])
-                        demand = (values["forecast_load_kwh"]
-                                  + values["planned_battery_charge_kwh"]
+                        extra = {key: max(0.0, float(row.get(key) or 0.0)) for key in (
+                            "planned_pv_to_bat_kwh", "grid_load_kwh")}
+                        settings = settings_payload()
+                        eta_c = max(0.01, float(settings["battery_charge_efficiency"]["value"]))
+                        eta_d = max(0.01, float(settings["battery_discharge_efficiency"]["value"]))
+                        pv_balance = min(values["forecast_pv_total_kwh"],
+                                         values["forecast_load_kwh"] + extra["planned_pv_to_bat_kwh"])
+                        battery_output = values["planned_battery_discharge_kwh"] * eta_d
+                        grid_import = values["planned_buy_kwh"] + extra["grid_load_kwh"]
+                        charge_input = values["planned_battery_charge_kwh"] / eta_c
+                        supply = pv_balance + battery_output + grid_import
+                        demand = (values["forecast_load_kwh"] + charge_input
                                   + values["planned_sell_kwh"])
                         payload["active_slot_balance"] = {
-                            "slot_start": row["slot_start"], **values,
+                            "slot_start": row["slot_start"], **values, **extra,
+                            "pv_balance_kwh": round(pv_balance, 6),
+                            "battery_discharge_output_kwh": round(battery_output, 6),
+                            "grid_import_kwh": round(grid_import, 6),
+                            "battery_charge_input_kwh": round(charge_input, 6),
                             "supply_kwh": round(supply, 6),
                             "demand_kwh": round(demand, 6),
                             "difference_kwh": round(supply - demand, 6),
@@ -263,6 +275,7 @@ def build_handler(a: ApiAdapters):
                         STATE["module_details"]["ppd"] = {
                             "activity": "Decyzje PPD odświeżone" if health == "RUNNING" else "Oczekiwanie na plan",
                             "updated_at": completed_at}
+                        STATE["planner_failure_latched"] = None
                     return self.json({"status":"ACCEPTED",**result})
                 except Exception as exc:
                     failed_at = datetime.now(timezone.utc).isoformat()
@@ -273,6 +286,7 @@ def build_handler(a: ApiAdapters):
                             "activity": f"Błąd przeliczenia: {exc}", "updated_at": failed_at}
                         STATE["module_details"]["ppd"] = {
                             "activity": "Zachowano ostatnie poprawne decyzje", "updated_at": failed_at}
+                        STATE["planner_failure_latched"] = str(exc)
                     LOG.exception("manual planner failed")
                     return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.CONFLICT)
             if path.endswith("/api/rce/refresh") or path=="/api/rce/refresh":

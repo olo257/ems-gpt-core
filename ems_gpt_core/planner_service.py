@@ -924,22 +924,29 @@ def build_planner(a: PlannerAdapters):
             # The backward pass then converts only those selected purchases
             # into executable SOC ceilings. A later expensive BUY therefore
             # cannot erase the duty already assigned to an earlier cheap BUY.
-            for planning_pass in range(1, 5):
+            # A replenishment window and the final imported energy are
+            # different facts. Earlier PV may reduce grid charge to zero
+            # without invalidating the selected BUY boundary. Keep candidate
+            # boundaries monotonically to avoid BUY/PV oscillation.
+            replenishment_indices: set[int] = set()
+            for planning_pass in range(1, 9):
                 new_selected = {
                     i for i, flow in enumerate(optimization["flows"])
                     if float(flow.get("grid_charge_kwh") or 0.0) > flow_threshold
                 }
+                previous_boundaries = set(replenishment_indices)
+                replenishment_indices.update(new_selected)
                 commitment = backward_target_commitments(
                     horizon_rows, capacity, reserve, eta_c, eta_d,
                     uncertainty_weight, target_cap, terminal_soc, 0.25,
-                    new_selected, max_kw, int(OPTIONS["slot_minutes"]))
+                    replenishment_indices, max_kw, int(OPTIONS["slot_minutes"]))
                 targets = [
                     min(target_cap, max(reserve, commitment["targets"][i]))
                     for i, _row in enumerate(horizon_rows)
                 ]
                 target_due_indices = {
-                    i for i in new_selected
-                    if i + 1 not in new_selected
+                    i for i in replenishment_indices
+                    if i + 1 not in replenishment_indices
                 }
                 refined = optimize_energy_horizon(
                     horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
@@ -952,13 +959,14 @@ def build_planner(a: PlannerAdapters):
                     if float(flow.get("grid_charge_kwh") or 0.0) > flow_threshold
                 }
                 optimization = refined
-                if refined_selected == new_selected:
+                if (refined_selected.issubset(replenishment_indices)
+                        and previous_boundaries == replenishment_indices):
                     selected_buy_indices = refined_selected
                     target_converged = True
                     break
                 selected_buy_indices = refined_selected
             if not target_converged:
-                raise RuntimeError("SOC_TARGET_PATH_NOT_CONVERGED:4")
+                raise RuntimeError("SOC_TARGET_PATH_NOT_CONVERGED:8")
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"economic multi-pass target; selected_buy_slots={len(selected_buy_indices)}")
             ensure_deadline("TARGET_COMMITMENT")
