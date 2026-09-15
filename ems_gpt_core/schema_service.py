@@ -214,6 +214,25 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
           WHEN COALESCE(sale_window,0)=1 THEN 'SELL'
           WHEN COALESCE(buy_window,0)=1 THEN 'BUY' ELSE 'NEUTRAL' END
           WHERE market_window IS NULL""")
+        legacy_flags = (
+            "grid_buy_allowed", "grid_no_buy", "grid_neutral",
+            "sell_bat_allowed", "no_sell_bat", "sell_pv_allowed", "no_sell_pv",
+            "pv_to_bat_planned", "pv_to_cwu_planned", "pv_to_ev_planned",
+            "pv_export_planned", "pv_curtail_planned",
+            "potential_sell_pv", "potential_no_export", "no_export_active", "surplus_enabled",
+        )
+        cur.execute("SELECT COUNT(*) n FROM ems_gpt_core_migrations WHERE migration_key=%s",
+                    ("slot_legacy_flags_removed_0_33_6",))
+        if not int(cur.fetchone()["n"]):
+            selected = ",".join(("slot_start",) + legacy_flags)
+            cur.execute(f"""CREATE TABLE IF NOT EXISTS ems_gpt_slot_legacy_flags_0335
+              AS SELECT {selected} FROM ems_gpt_slots""")
+            for table in ("ems_gpt_slots", "ems_gpt_plan_stage_rows"):
+                for column in legacy_flags:
+                    cur.execute(f"ALTER TABLE {table} DROP COLUMN IF EXISTS {column}")
+            cur.execute("""INSERT INTO ems_gpt_core_migrations(migration_key,applied_at,details_json)
+              VALUES(%s,NOW(6),%s)""", ("slot_legacy_flags_removed_0_33_6",
+              json.dumps({"archive": "ems_gpt_slot_legacy_flags_0335", "columns": legacy_flags})))
         for table in ("ems_gpt_slots", "ems_gpt_plan_stage_rows", "ems_gpt_telemetry_snapshots"):
             for column in (
                 "slot_id VARCHAR(32) NULL", "slot_start_utc DATETIME(6) NULL",

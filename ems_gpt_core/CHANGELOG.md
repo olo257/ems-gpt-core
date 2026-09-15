@@ -851,3 +851,8 @@
   źródłowego pozostaje jawnym `MISSING_OUTAGE`, bez syntetycznych pomiarów.
 - Bez zmian w planerze, PPD i semantyce wykonawcy LIVE. Observer pozostaje
   `SHADOW_READ_ONLY`, a `COOL_DHW` pozostaje nieaktywną zapowiedzią na lato.
+## 0.33.6
+
+- Zarchiwizowano historyczne flagi slotów w `ems_gpt_slot_legacy_flags_0335`, a następnie usunięto 16 nieużywanych kolumn dublujących polityki i ilościowe przepływy.
+- Migracja jest idempotentna, oznaczona w `ems_gpt_core_migrations` i nie usuwa żadnego rekordu slotu ani wartości bez wcześniejszej kopii.
+- Bez zmian w algorytmie SOC i wykonawcy; produkcja pozostaje wyłączona podczas porządkowania.
