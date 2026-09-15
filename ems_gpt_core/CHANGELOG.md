@@ -1,3 +1,11 @@
+## 0.34.2
+
+- Wybrane okno BUY wyznacza termin osiągnięcia `soc_target`, ale nie obniża
+  sufitu ładowania we wcześniejszych slotach PV.
+- Przy zachowaniu bilansu PV jest kierowane do baterii przed sprzedażą, jeżeli
+  zastępuje późniejszy, droższy zakup sieciowy. Dodano regresję dla sekwencji
+  `PV surplus → BUY`.
+
 ## 0.34.1
 
 - Planer publikuje wynik wieloprzebiegowy wyłącznie po zbieżności wybranych

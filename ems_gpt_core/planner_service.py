@@ -555,9 +555,9 @@ def backward_target_commitments(rows: list[dict], capacity_kwh: float,
         reserved_pv[i] = used_surplus / charge_efficiency
         required_before = max(reserve_kwh, before_surplus - used_surplus)
         if i in selected_buy_starts:
-            # Energy after this window can be supplied inside the window.  An
-            # earlier slot only has to bridge safely to the BUY boundary.
-            required_before = reserve_kwh
+            # BUY sets the due point for the remaining requirement, but must
+            # not lower the ceiling in earlier slots. Earlier PV has priority
+            # and may economically displace grid energy bought in this window.
             next_due = rows[end_for_member[i]].get("slot_end") or rows[end_for_member[i]].get("slot_start")
             next_source = "BUY"
         elif surplus_internal > 1e-9 and used_surplus > 1e-9:
