@@ -35,7 +35,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.33.1"
+APP_VERSION = "0.33.3"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -388,6 +388,7 @@ def startup_database_audit() -> None:
     try:
         database_audit()
         database_catalog()
+        slot_column_audit()
     except Exception:
         # An optional read-only inventory must never block or stop normal operation.
         LOG.exception("startup read-only database audit failed")

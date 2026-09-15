@@ -1,3 +1,14 @@
+## 0.33.3
+
+- Audyt kolumn `ems_gpt_slots` uruchamia się jednorazowo po starcie i zapisuje
+  podsumowanie do logu dodatku, dzięki czemu wynik jest dostępny przez
+  konektor Home Assistant bez tworzenia bocznego dostępu SQL.
+- Audyt pozostaje wyłącznie odczytowy; schemat, dane, planer i wykonawca nie są
+  modyfikowane.
+- Ujednolicono także wewnętrzny numer aplikacji z metadanymi dodatku; 0.33.2
+  raportowała w endpointach wcześniejszy numer wykonawczy mimo poprawnie
+  zainstalowanego pakietu.
+
 ## 0.33.2
 
 - Dodano wyłącznie odczytowy audyt kolumn kanonicznej tabeli
