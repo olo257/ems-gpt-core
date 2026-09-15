@@ -8,8 +8,10 @@ sys.path.insert(0, str(ROOT))
 
 from analytics_service import (
     _flow_metrics, _hp_execution_metrics, _is_core_quality_slot,
-    _native_load_kwh, _suggested_scale,
+    _native_load_kwh, _suggested_scale, _target_history,
+    _target_history_metrics, _target_load_kwh,
 )
+from datetime import datetime, timedelta
 
 
 class AnalyticsQualityWindowTests(unittest.TestCase):
@@ -83,6 +85,68 @@ class AnalyticsQualityWindowTests(unittest.TestCase):
     def test_explicit_outage_stays_in_quality_window(self):
         row = {"plan_published": 1, "actual_mode": "MISSING_OUTAGE"}
         self.assertTrue(_is_core_quality_slot(row))
+
+    def test_target_load_excludes_ev_but_keeps_hp_dhw_energy(self):
+        self.assertEqual(_target_load_kwh({
+            "actual_load_kwh": 2.0,
+            "detail_actual_ev_kwh": 0.4,
+            "detail_actual_dhw_kwh": 0.6,
+            "actual_heat_pump_electric_kwh": 0.5,
+        }), 1.6)
+
+    def test_target_history_reconstructs_need_until_confirmed_pv(self):
+        start = datetime(2026, 9, 14, 18, 30)
+        rows = []
+        for index in range(6):
+            rows.append({
+                "slot_start": start + timedelta(minutes=15 * index),
+                "soc_target_pct": 20.0,
+                "actual_load_kwh": 0.5,
+                "actual_pv_total_kwh": 0.2 if index >= 4 else 0.0,
+                "sample_count": 15,
+                "plan_published": 1,
+                "execution_reason": "CORE_TELEMETRY_15_SAMPLES",
+                "market_window": "NEUTRAL",
+            })
+        samples = _target_history(
+            rows, reserve_pct=15.0, capacity_kwh=10.0,
+            discharge_efficiency=1.0, pv_threshold_kwh=0.1,
+            slot_minutes=15, minimum_samples=10)
+        first = samples[0]
+        self.assertEqual(first["status"], "VALID")
+        self.assertEqual(first["relief_type"], "PV")
+        self.assertEqual(first["horizon_slots"], 4)
+        self.assertEqual(first["required_energy_kwh"], 2.0)
+        self.assertEqual(first["required_target_pct"], 35.0)
+        self.assertEqual(first["target_shortfall_pct"], 15.0)
+
+    def test_target_history_rejects_incomplete_tail(self):
+        start = datetime(2026, 9, 14, 23, 45)
+        rows = [{
+            "slot_start": start, "soc_target_pct": 15.0,
+            "actual_load_kwh": 0.3, "actual_pv_total_kwh": 0.0,
+            "sample_count": 15, "plan_published": 1,
+            "execution_reason": "CORE_TELEMETRY_15_SAMPLES",
+            "market_window": "NEUTRAL",
+        }]
+        sample = _target_history(
+            rows, reserve_pct=15.0, capacity_kwh=15.6,
+            discharge_efficiency=.95, pv_threshold_kwh=.1,
+            slot_minutes=15, minimum_samples=10)[0]
+        self.assertEqual(sample["status"], "INVALID")
+        self.assertEqual(sample["reason"], "NO_COMPLETE_RELIEF_HORIZON")
+
+    def test_target_correction_needs_minimum_samples_and_is_capped(self):
+        start = datetime(2026, 9, 1, 18, 30)
+        samples = [{"status": "VALID", "target_error_pct": value,
+                    "target_shortfall_pct": max(0, value),
+                    "slot_start": start + timedelta(days=index)}
+                   for index, value in enumerate((2, 4, 8, 20))]
+        immature = _target_history_metrics(samples, minimum_samples=5, correction_cap_pct=15)
+        mature = _target_history_metrics(samples, minimum_samples=4, correction_cap_pct=5)
+        self.assertIsNone(immature["target_suggested_correction_pct"])
+        self.assertEqual(mature["target_suggested_correction_pct"], 5.0)
+        self.assertEqual(mature["target_history_mode"], "SHADOW_READ_ONLY")
 
 
 if __name__ == "__main__":

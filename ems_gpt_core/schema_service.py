@@ -74,6 +74,16 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
           month_no TINYINT NOT NULL, hour_no TINYINT NOT NULL, minute_no TINYINT NOT NULL,
           sample_days INT NOT NULL, mean_share DOUBLE NOT NULL, updated_at DATETIME(6) NOT NULL,
           PRIMARY KEY(month_no,hour_no,minute_no)) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS ems_gpt_core_target_history (
+          slot_start DATETIME(6) PRIMARY KEY, slot_id VARCHAR(32) NULL,
+          relief_slot_start DATETIME(6) NULL, relief_type VARCHAR(8) NULL,
+          horizon_slots INT NULL, planned_target_pct DOUBLE NOT NULL,
+          required_target_pct DOUBLE NULL, target_error_pct DOUBLE NULL,
+          target_shortfall_pct DOUBLE NULL, required_energy_kwh DOUBLE NULL,
+          status VARCHAR(24) NOT NULL, reason VARCHAR(64) NOT NULL,
+          analytics_run_id VARCHAR(36) NOT NULL, updated_at DATETIME(6) NOT NULL,
+          INDEX ix_target_history_status_time(status,slot_start),
+          INDEX ix_target_history_run(analytics_run_id)) ENGINE=InnoDB""",
         """CREATE TABLE IF NOT EXISTS ems_gpt_core_process_decisions (
           slot_start DATETIME(6) NOT NULL, process_name VARCHAR(32) NOT NULL,
           decision VARCHAR(24) NOT NULL, eligible TINYINT(1) NOT NULL,
@@ -187,6 +197,16 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             "import_event_f1_pct DOUBLE NULL", "export_event_f1_pct DOUBLE NULL",
             "suggested_pv1_scale DOUBLE NULL", "suggested_pv2_scale DOUBLE NULL",
             "suggested_load_scale DOUBLE NULL",
+        ):
+            cur.execute(f"ALTER TABLE ems_gpt_core_analytics_runs ADD COLUMN IF NOT EXISTS {column}")
+        for column in (
+            "target_history_samples INT NOT NULL DEFAULT 0",
+            "target_history_invalid_samples INT NOT NULL DEFAULT 0",
+            "target_error_bias_pct DOUBLE NULL", "target_shortfall_p80_pct DOUBLE NULL",
+            "target_shortfall_p90_pct DOUBLE NULL", "target_suggested_correction_pct DOUBLE NULL",
+            "target_evening_1830_samples INT NOT NULL DEFAULT 0",
+            "target_evening_1830_shortfall_p90_pct DOUBLE NULL",
+            "target_history_mode VARCHAR(24) NOT NULL DEFAULT 'SHADOW_READ_ONLY'",
         ):
             cur.execute(f"ALTER TABLE ems_gpt_core_analytics_runs ADD COLUMN IF NOT EXISTS {column}")
         for column in (
@@ -341,6 +361,8 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
                     ("core_schema_0_27_0", json.dumps({"version": app_version, "scope": "analytics_confidence_daylight_intermittent_flows"})))
         cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
                     ("core_schema_0_29_0", json.dumps({"version": app_version, "scope": "configurable_appliance_daily_metering"})))
+        cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
+                    ("core_schema_0_35_7", json.dumps({"version": app_version, "scope": "shadow_historical_soc_target_analysis"})))
         # Normalize the historical/UI typo before the 0.24 slot-id cutover.
         for table, column in (
             ("ems_gpt_slots", "grid_policy_planned"),
