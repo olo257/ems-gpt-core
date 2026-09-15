@@ -1009,7 +1009,7 @@ def build_planner(a: PlannerAdapters):
                    grid_policy=="BUY_ALLOWED",grid_policy=="NO_BUY",grid_policy=="NEUTRAL",
                    sell_bat,not sell_bat,not no_sell_pv,no_sell_pv,
                    round(pv_to_bat,6),round(cwu_kwh,6),round(ev_kwh,6),
-                   round(pv_curtail_kwh,6),reason,run_id,row["slot_start"]))
+                   round(pv_curtail_kwh,6),reason[:255],run_id,row["slot_start"]))
                 hp_window = i in hp_selected_indices
                 night_day = str(row.get("local_day") or row["slot_start"].date())
                 night_min = night_min_by_day.get(night_day)
