@@ -108,6 +108,9 @@ również sufitem ładowania z PV w poprzedzającym odcinku prowadzącym do tego
 okna. Nie jest tam jeszcze obowiązkowym minimum SOC. Dzięki temu PV ma zawsze
 pierwszeństwo i może zmniejszyć albo całkowicie wyeliminować późniejszy zakup;
 obowiązek osiągnięcia targetu powstaje dopiero na końcu wybranego okna BUY.
+Wyzerowanie końcowego zakupu przez wcześniejsze PV nie usuwa samej granicy
+uzupełnienia w następnym przebiegu; okno i kupiona energia są odrębnymi polami
+kontraktu. Zapobiega to oscylacji ścieżki `BUY → PV → brak BUY → BUY`.
 
 Target obejmuje:
 
