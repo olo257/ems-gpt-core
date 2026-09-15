@@ -46,6 +46,17 @@ def build_runtime(app_name: str, app_version: str, log: Any):
             "appliances": "STARTING", "backup": "DISABLED",
             "diagnostics": "STARTING",
         },
+        "module_details": {
+            "core": {"activity": "Uruchamianie", "updated_at": None},
+            "planner": {"activity": "Oczekiwanie na pierwszy plan", "updated_at": None},
+            "ppd": {"activity": "Oczekiwanie na plan", "updated_at": None},
+            "analytics": {"activity": "Oczekiwanie", "updated_at": None},
+            "ai_observer": {"activity": "Tylko odczyt", "updated_at": None},
+            "executor": {"activity": "Oczekiwanie na konfigurację", "updated_at": None},
+            "appliances": {"activity": "Oczekiwanie", "updated_at": None},
+            "backup": {"activity": "Wyłączony", "updated_at": None},
+            "diagnostics": {"activity": "Oczekiwanie", "updated_at": None},
+        },
         "recovery_contract": "CORE_RECOVERY_0_24_2_R6",
     }
     return SimpleNamespace(lock=lock, state=state, run_serialized=run_serialized)

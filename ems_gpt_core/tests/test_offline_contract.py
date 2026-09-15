@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.35.0"', APP_SOURCE)
-        self.assertIn('version: "0.35.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.35.1"', APP_SOURCE)
+        self.assertIn('version: "0.35.1"', CONFIG)
 
     def test_planner_contract_is_versioned_and_keeps_core_definitions(self):
         self.assertIn("kanoniczny kontrakt RCE, planera i SOC", PLANNER_CONTRACT)

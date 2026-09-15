@@ -272,6 +272,22 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["battery_to_load_kwh"],0.0)
         self.assertLessEqual(result["flows"][0]["grid_load_kwh"],0.04)
 
+    def test_minimum_soc_uses_only_unavoidable_grid_load_and_remains_feasible(self):
+        rows = [{
+            "price_buy_pln_kwh": 3.0,
+            "price_sell_pln_kwh": 0.0,
+            "buy_window": False,
+            "sale_window": False,
+            "forecast_load_kwh": 0.30,
+            "forecast_pv_total_kwh": 0.0,
+        }]
+        result = self.optimize(rows, 15.0, 15.0, [15.0])
+        flow = result["flows"][0]
+
+        self.assertAlmostEqual(flow["soc_end_pct"], 15.0)
+        self.assertAlmostEqual(flow["grid_load_kwh"], 0.30)
+        self.assertEqual(flow["grid_charge_kwh"], 0.0)
+
     def test_grid_load_may_hold_soc_for_materially_better_sale(self):
         rows=[
             {"price_buy_pln_kwh":1.0,"price_sell_pln_kwh":0.0,

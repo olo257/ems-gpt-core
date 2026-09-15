@@ -210,9 +210,37 @@ def build_handler(a: ApiAdapters):
                 except (ValueError,TypeError,json.JSONDecodeError) as exc:
                     return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.CONFLICT)
             if path.endswith("/api/planner/run") or path=="/api/planner/run":
+                started_at = datetime.now(timezone.utc).isoformat()
+                with LOCK:
+                    STATE["modules"]["planner"] = "RUNNING"
+                    STATE["modules"]["ppd"] = "WAITING"
+                    STATE.setdefault("module_details", {})["planner"] = {
+                        "activity": "Ręczne przeliczanie planu", "updated_at": started_at}
+                    STATE["module_details"]["ppd"] = {
+                        "activity": "Oczekiwanie na wynik planera", "updated_at": started_at}
                 try:
-                    return self.json({"status":"ACCEPTED",**run_serialized("planner", run_planner, "manual_api")})
+                    result = run_serialized("planner", run_planner, "manual_api")
+                    completed_at = datetime.now(timezone.utc).isoformat()
+                    health = "RUNNING" if result.get("status") != "WAITING" else "WAITING"
+                    with LOCK:
+                        STATE["modules"]["planner"] = health
+                        STATE["modules"]["ppd"] = health
+                        STATE["module_details"]["planner"] = {
+                            "activity": "Plan opublikowany" if health == "RUNNING" else "Oczekiwanie na komplet danych",
+                            "updated_at": completed_at}
+                        STATE["module_details"]["ppd"] = {
+                            "activity": "Decyzje PPD odświeżone" if health == "RUNNING" else "Oczekiwanie na plan",
+                            "updated_at": completed_at}
+                    return self.json({"status":"ACCEPTED",**result})
                 except Exception as exc:
+                    failed_at = datetime.now(timezone.utc).isoformat()
+                    with LOCK:
+                        STATE["modules"]["planner"] = "DEGRADED"
+                        STATE["modules"]["ppd"] = "DEGRADED"
+                        STATE["module_details"]["planner"] = {
+                            "activity": f"Błąd przeliczenia: {exc}", "updated_at": failed_at}
+                        STATE["module_details"]["ppd"] = {
+                            "activity": "Zachowano ostatnie poprawne decyzje", "updated_at": failed_at}
                     LOG.exception("manual planner failed")
                     return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.CONFLICT)
             if path.endswith("/api/rce/refresh") or path=="/api/rce/refresh":
