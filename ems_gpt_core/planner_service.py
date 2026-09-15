@@ -856,11 +856,12 @@ def build_planner(a: PlannerAdapters):
             targets = [reserve] * len(horizon_rows)
             selected_buy_indices: set[int] = set()
             target_due_indices: set[int] = set()
+            target_converged = False
             # Multi-pass convergence: selected BUY is a result of economics.
             # The backward pass then converts only those selected purchases
             # into executable SOC ceilings. A later expensive BUY therefore
             # cannot erase the duty already assigned to an earlier cheap BUY.
-            for planning_pass in range(1, 4):
+            for planning_pass in range(1, 5):
                 new_selected = {
                     i for i, flow in enumerate(optimization["flows"])
                     if float(flow.get("grid_charge_kwh") or 0.0) > flow_threshold
@@ -894,8 +895,11 @@ def build_planner(a: PlannerAdapters):
                 optimization = refined
                 if refined_selected == new_selected:
                     selected_buy_indices = refined_selected
+                    target_converged = True
                     break
                 selected_buy_indices = refined_selected
+            if not target_converged:
+                raise RuntimeError("SOC_TARGET_PATH_NOT_CONVERGED:4")
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"economic multi-pass target; selected_buy_slots={len(selected_buy_indices)}")
             ensure_deadline("TARGET_COMMITMENT")
@@ -915,6 +919,12 @@ def build_planner(a: PlannerAdapters):
                     max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
                     terminal_soc,0.25,target_cap,targets,target_due_indices,
                     False,target_due_indices)
+                final_selected = {
+                    i for i, flow in enumerate(optimization["flows"])
+                    if float(flow.get("grid_charge_kwh") or 0.0) > flow_threshold
+                }
+                if final_selected != selected_buy_indices:
+                    raise RuntimeError("SOC_TARGET_PATH_CHANGED_AFTER_GRID_HOLD")
             ensure_deadline("DISPATCH")
             bridge_floors = list(sale_constraints)
             for index, flow in enumerate(optimization["flows"]):
