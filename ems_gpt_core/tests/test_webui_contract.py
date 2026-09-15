@@ -51,6 +51,8 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("sprzedaż BAT ${n(eb.planned_sell_kwh)}", HTML)
         self.assertIn('payload["active_slot_balance"]', API)
         self.assertIn('battery_output = values["planned_battery_discharge_kwh"] * eta_d', API)
+        self.assertNotIn("planned_pv_to_bat_kwh,grid_load_kwh", API)
+        self.assertIn('grid_load = max(0.0, values["forecast_load_kwh"]', API)
         self.assertIn('"difference_kwh": round(supply - demand, 6)', API)
 
     def test_diagnostics_are_newest_first_and_show_refresh_time(self):
