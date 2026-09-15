@@ -1,3 +1,8 @@
+## 0.33.1
+
+- Ograniczono diagnostykę `ppd_reason` do trwałego kontraktu kolumny, aby
+  rozszerzone dane audytowe 0.33 nie blokowały atomowej publikacji planu.
+
 ## 0.33.0
 
 - Planer wykonuje jawne przebiegi po wspólnej tabeli slotów 15-minutowych:
