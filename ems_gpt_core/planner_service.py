@@ -624,11 +624,28 @@ def backward_target_commitments(rows: list[dict], capacity_kwh: float,
             if source[i] != "BUY" or due[i] != buy_due:
                 break
             targets[i] = max(targets[i], buy_target)
-    # PV is a replenishment *window*, not a single late slot.  When a later
-    # slot closes the backward bridge, every earlier row assigned to that same
-    # due point must expose the closing slot's target as its charge ceiling.
-    # Otherwise early morning surplus sees a local target equal to the
-    # technical reserve and is exported while the battery is still depleted.
+    # PV is a replenishment *window*, not a single late slot.  The largest SOC
+    # requirement reached within one continuous daylight block is its charge
+    # ceiling from the first forecast PV.  Split at an actually selected BUY,
+    # because grid replenishment starts a new energy bridge.  Without this
+    # pass, early morning surplus is exported while a later slot in the same
+    # PV window still carries the energy requirement for the evening/night.
+    window_start = None
+    for boundary in range(len(rows) + 1):
+        pv_active = (boundary < len(rows)
+                     and float(rows[boundary].get("forecast_pv_total_kwh") or 0.0) > 1e-9
+                     and boundary not in selected_buy_starts)
+        if pv_active and window_start is None:
+            window_start = boundary
+        if window_start is not None and not pv_active:
+            window_end = boundary - 1
+            window_target = max(targets[window_start:window_end + 1])
+            for index in range(window_start, window_end + 1):
+                targets[index] = max(targets[index], window_target)
+            window_start = None
+
+    # When a later PV slot closes the backward bridge, preceding non-PV rows
+    # assigned to that due point inherit the already propagated window ceiling.
     due_index = {
         row.get("slot_end") or row.get("slot_start"): i
         for i, row in enumerate(rows)
