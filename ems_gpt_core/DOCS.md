@@ -83,19 +83,25 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
 - brak cen RCE nie jest zastępowany zerem ani stałą ceną;
 - watchdog kontroluje połączenie z MariaDB i pracę procesu.
 
-## Kontrakt energii i SOC 0.33
+## Kontrakt energii i SOC 0.34
 
 - Każdy slot cenowy ma dokładnie jeden stan `BUY`, `SELL` albo `NEUTRAL`.
   `BUY` i `SELL` nie mogą się nakładać.
-- `soc_target` oznacza energię potrzebną do najbliższego wykonalnego
-  uzupełnienia przez PV albo BUY. Jest liczony wstecz przed decyzjami o
-  rozładowaniu i sprzedaży, ma `soc_target_due`, `soc_target_source` oraz
-  `soc_target_reserved_pv_kwh` i jest sufitem zakupu do baterii.
+- `soc_target` oznacza energię potrzebną do następnego **faktycznie wybranego**
+  uzupełnienia przez PV albo BUY. Jest jednocześnie sufitem ładowania baterii.
+  Samo oznaczenie slotu jako `BUY` daje zezwolenie, ale nie tworzy granicy
+  bilansu ani obowiązku zakupu.
+- Planer najpierw optymalizuje pełny horyzont cenowy, następnie wyprowadza
+  target z wybranej ścieżki uzupełnień i ponawia optymalizację do zbieżności.
+  Dzięki temu tani wcześniejszy BUY może pokryć zużycie ponad późniejszym,
+  drogim oknem BUY, jeżeli pozwalają na to pojemność i moc 5 kW.
 - Przyszłe PV może odroczyć osiągnięcie targetu tylko wtedy, gdy jego
   zarezerwowana, konserwatywnie skorygowana nadwyżka gwarantuje osiągnięcie
   targetu w terminie. Pozostałe PV jest nadwyżką elastyczną.
 - `soc_floor` chroni wyłącznie celową sprzedaż z baterii. Nie jest minimum
   autokonsumpcji i nie może uruchamiać zakupu.
+- W slocie sprzedaży publikowany `soc_target` nie może być niższy niż
+  `soc_floor`, ale floor nadal nie ogranicza rozładowania na zwykłe zużycie.
 - Podstawowy bilans slotu to energia PV wykorzystana przez dom/baterię, energia
   baterii i zakup do baterii wobec zużycia oraz ładowania. Sprzedaż nadwyżki PV
   jest przepływem pozabilansowym tego rdzenia i podlega osobnej kontroli
@@ -105,6 +111,9 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
   występuje dopiero po wyczerpaniu wszystkich wykonalnych odbiorów.
 - Niepowodzenie bilansu powoduje ponowną ocenę z kolejnym możliwym oknem BUY;
   jeżeli żaden pełny wariant nie jest wykonalny, plan jest odrzucany.
+- Zakup sieciowy służy wyłącznie ładowaniu baterii. Zasilanie domu z sieci jest
+  dopuszczalne tylko jako jawna, opłacalna ochrona energii przed późniejszą
+  sprzedażą; ścieżka bez wykonanej sprzedaży jest ponownie liczona bez wyjątku.
 
 ## Panel
 

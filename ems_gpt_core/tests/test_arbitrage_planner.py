@@ -71,6 +71,57 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(contract["targets"][0], 21.75)
         self.assertEqual(contract["targets"][1], 15.0)
 
+    def test_unselected_expensive_buy_does_not_reset_cheap_buy_target(self):
+        rows = []
+        for index in range(16):
+            rows.append({
+                "price_buy_pln_kwh": 0.50 if index < 4 else (4.00 if index == 8 else 3.00),
+                "price_sell_pln_kwh": 0.0,
+                "buy_window": index < 4 or index == 8,
+                "sale_window": False,
+                "forecast_load_kwh": 0.25 if index >= 4 else 0.0,
+                "forecast_pv_total_kwh": 0.0,
+                "slot_start": index,
+                "slot_end": index + 1,
+            })
+        seed = optimize_energy_horizon(
+            rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * len(rows), 15.0, 0.25, 100.0,
+            allow_grid_hold=False)
+        selected = {i for i, flow in enumerate(seed["flows"])
+                    if flow["grid_charge_kwh"] > 0.02}
+        contract = backward_target_commitments(
+            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0,
+            0.25, selected)
+        due = {i for i in selected if i + 1 not in selected}
+        result = optimize_energy_horizon(
+            rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * len(rows), 15.0, 0.25, 100.0,
+            contract["targets"], due, False, due)
+
+        self.assertGreater(sum(result["flows"][i]["grid_charge_kwh"] for i in range(4)), 3.0)
+        self.assertEqual(result["flows"][8]["grid_charge_kwh"], 0.0)
+        self.assertGreater(contract["targets"][3], contract["targets"][8])
+
+    def test_partial_pv_reduces_target_but_does_not_erase_remaining_need(self):
+        rows = [
+            {"buy_window": index == 0, "forecast_load_kwh": 0.30,
+             "forecast_pv_total_kwh": 0.0, "slot_start": index,
+             "slot_end": index + 1}
+            for index in range(6)
+        ]
+        rows[3]["forecast_pv_total_kwh"] = 0.60
+        no_pv = [dict(row, forecast_pv_total_kwh=0.0) for row in rows]
+        with_pv = backward_target_commitments(
+            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0,
+            0.25, {0})
+        without_pv = backward_target_commitments(
+            no_pv, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0,
+            0.25, {0})
+
+        self.assertGreater(with_pv["targets"][0], 15.0)
+        self.assertLess(with_pv["targets"][0], without_pv["targets"][0])
+
     def test_hard_target_rejects_unfunded_discharge(self):
         rows = [{"price_buy_pln_kwh": 2.0, "price_sell_pln_kwh": 0.0,
                  "buy_window": False, "sale_window": False,

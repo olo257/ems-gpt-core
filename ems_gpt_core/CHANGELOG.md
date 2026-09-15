@@ -1,3 +1,19 @@
+## 0.34.0
+
+- Okno `BUY` jest wyłącznie zezwoleniem. Target nie jest już zerowany na każdym
+  kolejnym oknie, lecz na faktycznie wybranym ekonomicznie uzupełnieniu.
+- Dodano wieloprzebiegowe planowanie: pełnohoryzontowy dispatch, wsteczny
+  kontrakt SOC z wybranej ścieżki oraz ponowną optymalizację do zbieżności.
+- Wcześniejszy tani BUY może zasilić baterię ponad późniejszym drogim oknem,
+  z zachowaniem pojemności, sprawności, limitu 5 kW i końcowego SOC.
+- `soc_target` pozostaje sufitem ładowania, a w slocie sprzedaży jest co
+  najmniej równy podłodze sprzedaży `soc_floor`.
+- Zablokowano niejawne zasilanie domu z sieci przy technicznym minimum SOC;
+  wyjątek pozostaje wyłącznie dla potwierdzonej ekonomicznej ochrony SOC przed
+  późniejszą sprzedażą.
+- Dodano regresje dla taniego wieczornego BUY, drogiego porannego BUY oraz
+  częściowej odbudowy przez PV. Wykonawca pozostaje domyślnie wyłączony.
+
 ## 0.33.5
 
 - Wprowadzono pojedyncze kanoniczne pole `market_window` o wartościach `BUY`, `SELL` albo `NEUTRAL`; wykres RCE i walidacja planu korzystają wyłącznie z niego.
