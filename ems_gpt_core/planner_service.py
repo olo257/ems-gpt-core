@@ -205,7 +205,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             max_soc_pct: float = 100.0,
                             minimum_soc_targets: list[float] | None = None,
                             hard_target_indices: set[int] | None = None,
-                            allow_grid_hold: bool = True) -> dict:
+                            allow_grid_hold: bool = True,
+                            target_due_indices: set[int] | None = None) -> dict:
     """Minimize total energy cost across every available slot and SOC state."""
     if not rows:
         return {"flows": [], "objective_pln": 0.0, "soc_step_pct": soc_step_pct}
@@ -244,6 +245,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         index for index, value in enumerate(buy_permissions)
         if value and (index + 1 == len(buy_permissions) or not buy_permissions[index + 1])
     }
+    target_due_indices = buy_window_ends if target_due_indices is None else set(target_due_indices)
     predecessors: list[dict[int, tuple[int, dict]]] = []
     for index, row in enumerate(rows):
         buy_price = float(row.get("price_buy_pln_kwh") or 0.0)
@@ -304,8 +306,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # Do not choose grid-only supply for the house while usable
                 # battery energy exists. The sole exception is an economic
                 # hold for a later sale; normal BUY always charges the battery.
-                if (grid_load > unit_kwh * eta_d + 1e-9 and grid_charge <= 1e-9
-                        and current_energy > capacity * reserve / 100.0 + 1e-9):
+                if grid_load > unit_kwh * eta_d + 1e-9 and grid_charge <= 1e-9:
                     if not allow_grid_hold:
                         continue
                     later_sell = future_sell[index]
@@ -335,7 +336,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # At the end of a replenishment window the calculated energy
                 # requirement must be present. Earlier slots in the same window
                 # may share the charge according to price and power limits.
-                if (minimum_soc_targets is not None and index in buy_window_ends
+                if (minimum_soc_targets is not None and index in target_due_indices
                         and next_unit < requested_target_unit):
                     continue
                 slot_cost = ((grid_load+grid_charge)*buy_price
@@ -487,7 +488,8 @@ def backward_target_commitments(rows: list[dict], capacity_kwh: float,
                                 reserve_pct: float, eta_c: float, eta_d: float,
                                 uncertainty_weight: float, target_cap_pct: float,
                                 terminal_soc_pct: float,
-                                soc_step_pct: float = 0.25) -> dict:
+                                soc_step_pct: float = 0.25,
+                                selected_buy_indices: set[int] | None = None) -> dict:
     """Build the executable SOC contract before dispatch decisions.
 
     The pass walks the 15-minute table backwards.  Future PV surplus is
@@ -508,7 +510,16 @@ def backward_target_commitments(rows: list[dict], capacity_kwh: float,
     uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
     step = max(0.001, float(soc_step_pct))
     buy = [strict_database_bool(row.get("buy_window", False), "buy_window") for row in rows]
-    buy_starts = {i for i, value in enumerate(buy) if value and (i == 0 or not buy[i - 1])}
+    if selected_buy_indices is None:
+        selected_buy_indices = {i for i, value in enumerate(buy) if value}
+    selected_buy_indices = {i for i in selected_buy_indices if 0 <= i < len(rows) and buy[i]}
+    # Only a BUY window actually selected by the economic dispatch is a
+    # replenishment boundary. Merely being marked BUY is permission, not an
+    # obligation to postpone energy until that (possibly expensive) window.
+    selected_buy_starts = {
+        i for i in selected_buy_indices
+        if i == 0 or i - 1 not in selected_buy_indices
+    }
     buy_ends = {i for i, value in enumerate(buy)
                 if value and (i + 1 == len(buy) or not buy[i + 1])}
     end_for_member = {}
@@ -543,7 +554,7 @@ def backward_target_commitments(rows: list[dict], capacity_kwh: float,
         used_surplus = min(max(0.0, before_surplus - reserve_kwh), surplus_internal)
         reserved_pv[i] = used_surplus / charge_efficiency
         required_before = max(reserve_kwh, before_surplus - used_surplus)
-        if i in buy_starts:
+        if i in selected_buy_starts:
             # Energy after this window can be supplied inside the window.  An
             # earlier slot only has to bridge safely to the BUY boundary.
             required_before = reserve_kwh
@@ -671,7 +682,7 @@ def build_planner(a: PlannerAdapters):
         min_margin = max(0.0, float(OPTIONS.get("minimum_arbitrage_margin_pln_kwh", 0.05)))
         uncertainty_weight = max(0.0, min(2.0, float(OPTIONS.get("forecast_uncertainty_weight", 1.0))))
         floor_cap = max(reserve, min(100.0, float(OPTIONS.get("soc_floor_max_pct", 90.0))))
-        target_cap = max(floor_cap, min(100.0, float(OPTIONS.get("soc_target_max_pct", 95.0))))
+        target_cap = max(floor_cap, min(100.0, float(OPTIONS.get("soc_target_max_pct", 100.0))))
         flow_threshold = max(0.0, float(OPTIONS.get("planned_flow_threshold_kwh", 0.02)))
         technical_threshold = max(
             flow_threshold, float(OPTIONS.get("technical_flow_threshold_kwh", 0.05)))
@@ -735,7 +746,7 @@ def build_planner(a: PlannerAdapters):
             cur.execute("""INSERT INTO ems_gpt_plan_runs
               (run_id,plan_day,run_type,stage_version,expected_slots,status,current_stage,created_at,updated_at)
               VALUES(%s,%s,%s,%s,%s,'RUNNING','RCE_RAW',NOW(6),NOW(6))""",
-              (run_id, cutoff.date(), run_type, "CORE_0_33_0", len(source)))
+              (run_id, cutoff.date(), run_type, "CORE_0_34_0", len(source)))
             stage_columns = [
                 "slot_start","slot_end","slot_id","slot_start_utc","slot_start_local","utc_offset_minutes",
                 "local_fold","local_day","slot_index_local","price_sell_pln_kwh","price_buy_pln_kwh","price_source",
@@ -834,23 +845,60 @@ def build_planner(a: PlannerAdapters):
             audit_stage(cur,run_id,"LOAD","OK",len(rows),"pass 2: native and controllable load")
             audit_stage(cur,run_id,"PV","OK",len(rows),"pass 3: corrected PV balance")
             ensure_deadline("PV")
-            # Pass 4: build the energy contract backwards before dispatch.
-            # Future PV is reserved first; BUY is only a possible boundary for
-            # the remaining shortage. Sale floor never enters this load bridge.
+            # Pass 4 starts without invented BUY obligations. The economic DP
+            # chooses actual replenishment slots over the complete horizon.
             optimized_floors = list(sale_constraints)
-            commitment = backward_target_commitments(
-                horizon_rows, capacity, reserve, eta_c, eta_d,
-                uncertainty_weight, target_cap, terminal_soc, 0.25)
-            audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
-                        "backward pass: requirement to nearest feasible PV or BUY")
-            ensure_deadline("TARGET_COMMITMENT")
-            targets = commitment["targets"]
             optimization = optimize_energy_horizon(
                 horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
                 max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
-                terminal_soc,0.25,target_cap,targets,
-                {i for i, row in enumerate(horizon_rows)
-                 if not strict_database_bool(row.get("buy_window"), "buy_window")})
+                terminal_soc,0.25,target_cap)
+            commitment = None
+            targets = [reserve] * len(horizon_rows)
+            selected_buy_indices: set[int] = set()
+            target_due_indices: set[int] = set()
+            # Multi-pass convergence: selected BUY is a result of economics.
+            # The backward pass then converts only those selected purchases
+            # into executable SOC ceilings. A later expensive BUY therefore
+            # cannot erase the duty already assigned to an earlier cheap BUY.
+            for planning_pass in range(1, 4):
+                new_selected = {
+                    i for i, flow in enumerate(optimization["flows"])
+                    if float(flow.get("grid_charge_kwh") or 0.0) > flow_threshold
+                }
+                commitment = backward_target_commitments(
+                    horizon_rows, capacity, reserve, eta_c, eta_d,
+                    uncertainty_weight, target_cap, terminal_soc, 0.25,
+                    new_selected)
+                targets = [
+                    min(target_cap, max(
+                        commitment["targets"][i],
+                        optimized_floors[i] if strict_database_bool(
+                            row.get("sale_window"), "sale_window") else reserve,
+                    ))
+                    for i, row in enumerate(horizon_rows)
+                ]
+                target_due_indices = {
+                    i for i in new_selected
+                    if i + 1 not in new_selected
+                }
+                refined = optimize_energy_horizon(
+                    horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
+                    max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
+                    terminal_soc,0.25,target_cap,targets,target_due_indices,
+                    True,target_due_indices)
+                ensure_deadline(f"TARGET_PASS_{planning_pass}")
+                refined_selected = {
+                    i for i, flow in enumerate(refined["flows"])
+                    if float(flow.get("grid_charge_kwh") or 0.0) > flow_threshold
+                }
+                optimization = refined
+                if refined_selected == new_selected:
+                    selected_buy_indices = refined_selected
+                    break
+                selected_buy_indices = refined_selected
+            audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
+                        f"economic multi-pass target; selected_buy_slots={len(selected_buy_indices)}")
+            ensure_deadline("TARGET_COMMITMENT")
             # A prospective grid hold is legal only if the selected complete
             # path really performs a material later battery sale. If DP merely
             # saw a theoretical future peak, solve again with grid hold closed.
@@ -865,21 +913,10 @@ def build_planner(a: PlannerAdapters):
                 optimization = optimize_energy_horizon(
                     horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
                     max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
-                    terminal_soc,0.25,target_cap,targets,
-                    {i for i, row in enumerate(horizon_rows)
-                     if not strict_database_bool(row.get("buy_window"), "buy_window")},
-                    False)
+                    terminal_soc,0.25,target_cap,targets,target_due_indices,
+                    False,target_due_indices)
             ensure_deadline("DISPATCH")
             bridge_floors = list(sale_constraints)
-            buy_permissions = [
-                strict_database_bool(row.get("buy_window"), "buy_window")
-                for row in horizon_rows
-            ]
-            buy_window_ends = {
-                index for index, value in enumerate(buy_permissions)
-                if value and (index + 1 == len(buy_permissions)
-                              or not buy_permissions[index + 1])
-            }
             for index, flow in enumerate(optimization["flows"]):
                 row = horizon_rows[index]
                 battery_sell = float(flow.get("battery_sell_kwh") or 0.0)
@@ -897,7 +934,7 @@ def build_planner(a: PlannerAdapters):
                 if grid_charge > flow_threshold and soc_end > targets[index] + 0.01:
                     raise RuntimeError(
                         f"BUY_TARGET_EXCEEDED:{index}:{soc_end}>{targets[index]}")
-                if index in buy_window_ends and soc_end + 0.01 < targets[index]:
+                if index in target_due_indices and soc_end + 0.01 < targets[index]:
                     raise RuntimeError(
                         f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{targets[index]}")
                 load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
@@ -1074,8 +1111,8 @@ def build_planner(a: PlannerAdapters):
               p.planned_pv_curtail_kwh=s.planned_pv_curtail_kwh,
               p.heat_pump_window=s.heat_pump_window,
               p.ppd_reason=s.ppd_reason,p.ppd_run_type=%s,
-              p.ppd_version='CORE_0_33_0',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
-              p.plan_stage_version='CORE_0_33_0',p.plan_stage_updated_at=NOW(6),
+              p.ppd_version='CORE_0_34_0',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
+              p.plan_stage_version='CORE_0_34_0',p.plan_stage_updated_at=NOW(6),
               p.plan_validation_status='ACCEPTED',p.plan_validation_reason='OK',
               p.plan_published_at=NOW(6),p.plan_published=1 WHERE p.actual_recorded_at IS NULL AND p.slot_start>=%s""",
               (run_id,run_type,run_id,cutoff))
