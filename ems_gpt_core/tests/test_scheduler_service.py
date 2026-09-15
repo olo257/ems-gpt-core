@@ -7,7 +7,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scheduler_service import rce_event_keys, update_telemetry_health
+from scheduler_service import (
+    publish_current_slot_prices,
+    rce_event_keys,
+    update_telemetry_health,
+)
 
 
 class ImmediateLock:
@@ -15,7 +19,60 @@ class ImmediateLock:
     def __exit__(self, *args): return False
 
 
+class PriceCursor:
+    def __init__(self, row): self.row = row
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def execute(self, query, params): self.query, self.params = query, params
+    def fetchone(self): return self.row
+
+
+class PriceConnection:
+    def __init__(self, row): self.row = row
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def cursor(self): return PriceCursor(self.row)
+
+
 class RceRestoreKeysTests(unittest.TestCase):
+    def test_current_prices_come_from_the_same_active_slot(self):
+        writes = []
+        result = publish_current_slot_prices(
+            lambda: PriceConnection({
+                "price_buy_pln_kwh": 1.1524,
+                "price_sell_pln_kwh": 0.5624,
+            }),
+            datetime(2026, 9, 15, 12, 15),
+            lambda domain, service, payload: writes.append(
+                (domain, service, payload)) or [],
+        )
+
+        self.assertEqual(result["status"], "OK")
+        self.assertEqual(writes, [
+            ("input_number", "set_value", {
+                "entity_id": "input_number.optymalizator_deye_cena_zakupu",
+                "value": 1.152,
+            }),
+            ("input_number", "set_value", {
+                "entity_id": "input_number.ems_gpt_cena_sprzedazy_biezaca",
+                "value": 0.562,
+            }),
+        ])
+
+    def test_missing_active_slot_price_does_not_publish_partial_pair(self):
+        writes = []
+        result = publish_current_slot_prices(
+            lambda: PriceConnection({
+                "price_buy_pln_kwh": 1.152,
+                "price_sell_pln_kwh": None,
+            }),
+            datetime(2026, 9, 15, 12, 15),
+            lambda *args: writes.append(args),
+        )
+
+        self.assertEqual(result["status"], "MISSING_SLOT_PRICE")
+        self.assertEqual(writes, [])
+
     def test_before_14_accepts_previous_day_next_marker(self):
         self.assertEqual(rce_event_keys(datetime(2026, 9, 13, 5, 30)), (
             "RCE_2026-09-13_TODAY", "RCE_2026-09-12_NEXT"))
