@@ -23,8 +23,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.33.0"', APP_SOURCE)
-        self.assertIn('version: "0.33.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.33.1"', APP_SOURCE)
+        self.assertIn('version: "0.33.1"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -285,6 +285,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("grid_buy_allowed+grid_no_buy+grid_neutral<>1", SOURCE)
         self.assertIn("heat_pump_window NOT IN (0,1)", SOURCE)
         self.assertIn("CORE_0_33_0", SOURCE)
+        self.assertIn("reason[:255]", SOURCE)
 
     def test_executor_is_safe_by_default(self):
         self.assertIn("executor_enabled: false", CONFIG)
