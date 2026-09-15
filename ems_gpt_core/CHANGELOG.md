@@ -1,3 +1,23 @@
+## 0.35.0
+
+- Rozdzielono kompletność importu RCE od wyniku prognoz i planera. Pełny zestaw
+  `96/96` pozostaje zatwierdzonym importem również wtedy, gdy późniejszy przebieg
+  planera kończy się błędem.
+- Błąd przebiegu zależnego ma osobny status `planner=ERROR` i zdarzenie
+  `rce_dependent_cycle_failed`; nie uruchamia ponownego importu ani nie zastępuje
+  kompletnych cen częściowym zestawem.
+- Ręczne odświeżenie RCE zwraca wynik kompletności cen niezależnie od błędu
+  późniejszego planowania.
+- Plan po RCE i późniejsze replany korzystają z tej samej serializowanej ścieżki
+  planowania oraz atomowej publikacji.
+- Zastąpiono godzinny replan przebiegiem dla każdego slotu 15-minutowego. Start
+  następuje po ustabilizowaniu wejść; nieudany przebieg może zostać ponowiony w
+  tym samym bezpiecznym oknie bez usuwania ostatniego zaakceptowanego planu.
+- Replan jest blokowany bez zatwierdzonego RCE oraz podczas odświeżania prognoz
+  po północy. Błąd replanu degraduje moduł planera, ale nie oznacza awarii bazy.
+- Dodano kanoniczny `PLANNER_CONTRACT.md`: trwałe definicje bilansu,
+  `soc_target`, `soc_floor`, priorytetu PV, BUY/SELL, etapów i walidacji.
+
 ## 0.34.5
 
 - `soc_floor` is now derived per accepted battery-sale slot from its planned

@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 from scheduler_service import (
     publish_current_slot_prices,
     rce_event_keys,
+    should_run_slot_replan,
     update_telemetry_health,
 )
 
@@ -80,6 +81,23 @@ class RceRestoreKeysTests(unittest.TestCase):
     def test_after_14_uses_current_day_next_marker(self):
         self.assertEqual(rce_event_keys(datetime(2026, 9, 13, 14, 0)), (
             "RCE_2026-09-13_NEXT",))
+
+    def test_replan_runs_once_for_each_settled_slot_with_complete_rce(self):
+        slot = datetime(2026, 9, 15, 15, 15)
+        self.assertTrue(should_run_slot_replan(
+            datetime(2026, 9, 15, 15, 17), slot,
+            datetime(2026, 9, 15, 15, 14), True))
+        self.assertFalse(should_run_slot_replan(
+            datetime(2026, 9, 15, 15, 18), slot,
+            datetime(2026, 9, 15, 15, 17), True))
+
+    def test_replan_waits_for_rce_and_forecast_refresh_blackout(self):
+        slot = datetime(2026, 9, 15, 14, 0)
+        self.assertFalse(should_run_slot_replan(
+            datetime(2026, 9, 15, 14, 2), slot, None, False))
+        midnight = datetime(2026, 9, 16, 0, 0)
+        self.assertFalse(should_run_slot_replan(
+            datetime(2026, 9, 16, 0, 2), midnight, None, True))
 
     def test_missing_telemetry_is_not_masked_by_engine_heartbeat(self):
         state = {"last_telemetry_success": "2026-09-13T21:40:00+00:00",
