@@ -190,7 +190,7 @@ def build_handler(a: ApiAdapters):
                 return self.json({"range":chart_range,"unit":"PLN/kWh",
                                   "current_slot":slot_start().replace(tzinfo=None),
                                   "count":len(rows),"rows":rows})
-            if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs","appliances")):
+            if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","target-history","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs","appliances")):
                 name=path.rsplit("/",1)[-1]; params=parse_qs(urlparse(self.path).query); limit=min(500,max(1,int(params.get("limit",["96"])[0])))
                 if name == "plan":
                     limit = 500
@@ -205,6 +205,7 @@ def build_handler(a: ApiAdapters):
                   "daily":("SELECT * FROM ems_gpt_daily ORDER BY day_date DESC LIMIT %s",(limit,)),
                   "runs":("SELECT * FROM ems_gpt_plan_runs ORDER BY created_at DESC LIMIT %s",(limit,)),
                   "analytics":("SELECT * FROM ems_gpt_core_analytics_runs ORDER BY started_at DESC LIMIT %s",(limit,)),
+                  "target-history":("SELECT * FROM ems_gpt_core_target_history ORDER BY slot_start DESC LIMIT %s",(limit,)),
                   "diagnostics":("SELECT * FROM ems_gpt_core_diagnostic_reports ORDER BY created_at DESC LIMIT %s",(limit,)),
                   "processes":("SELECT * FROM ems_gpt_core_process_decisions WHERE slot_start>=%s ORDER BY slot_start,process_name LIMIT %s",(slot_start().replace(tzinfo=None),limit)),
                   "overrides":("SELECT * FROM ems_gpt_core_process_overrides ORDER BY requested_at DESC LIMIT %s",(limit,)),

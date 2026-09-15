@@ -1,3 +1,21 @@
+## 0.35.7
+
+- Dodano obserwacyjny moduł historycznej oceny `soc_target`. Moduł rekonstruuje
+  wymagany target z rzeczywistego zużycia pomniejszonego wyłącznie o EV do pierwszego
+  potwierdzonego odciążenia PV albo następnego okna BUY; nie uczy się z dawnych
+  targetów jako prawdy i nie zapisuje niczego do planera ani wykonawcy.
+- Zużycie ogrzewania i DHW pompy ciepła pozostaje częścią wymaganego targetu;
+  produkcyjnego `actual_dhw_kwh` nie uznano błędnie za elastyczną grzałkę.
+- Próbki z luką slotów, awarią, niedostateczną telemetrią, brakującą energią lub
+  niezamkniętym horyzontem są jawnie odrzucane. Brak danych kolejnej doby nie
+  jest zastępowany sztucznym zerem ani targetem 15%.
+- Dodano metryki niedoszacowania P80/P90, limitowaną sugestię korekty oraz
+  osobną kontrolę slotu 18:30. Sugestia pojawia się dopiero po minimalnej
+  liczbie poprawnych próbek i pozostaje `SHADOW_READ_ONLY`.
+- Dodano tabelę i widok `Historia targetu` oraz parametry zakresu analizy,
+  minimalnej liczby próbek, limitu korekty i progu odciążenia PV.
+- Wykonawca pozostaje domyślnie wyłączony.
+
 ## 0.35.6
 
 - Rozszerzono ciągłość targetu z pojedynczego punktu PV na całe ciągłe okno

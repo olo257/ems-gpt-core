@@ -24,8 +24,16 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.35.6"', APP_SOURCE)
-        self.assertIn('version: "0.35.6"', CONFIG)
+        self.assertIn('APP_VERSION = "0.35.7"', APP_SOURCE)
+        self.assertIn('version: "0.35.7"', CONFIG)
+
+    def test_target_history_is_observational_only(self):
+        analytics = MODULE_SOURCES["analytics_service.py"]
+        planner = MODULE_SOURCES["planner_service.py"]
+        self.assertIn('target_history_mode": "SHADOW_READ_ONLY"', analytics)
+        self.assertIn("ems_gpt_core_target_history", analytics)
+        self.assertNotIn("ems_gpt_core_target_history", planner)
+        self.assertNotIn("target_suggested_correction_pct", planner)
 
     def test_planner_contract_is_versioned_and_keeps_core_definitions(self):
         self.assertIn("kanoniczny kontrakt RCE, planera i SOC", PLANNER_CONTRACT)
