@@ -1,3 +1,12 @@
+## 0.35.6
+
+- Rozszerzono ciągłość targetu z pojedynczego punktu PV na całe ciągłe okno
+  produkcji. Największy wymagany target okna obowiązuje jako sufit ładowania od
+  pierwszego prognozowanego PV, z podziałem przy faktycznie wybranym BUY.
+- Naprawiono produkcyjny przypadek 07:00–09:00, w którym SOC pozostawał na
+  17,75%, a poranna nadwyżka PV była eksportowana do 11:45.
+- Wykonawca pozostaje domyślnie wyłączony.
+
 ## 0.35.5
 
 - Target końcowego slotu uzupełnienia PV jest propagowany wstecz na całe
