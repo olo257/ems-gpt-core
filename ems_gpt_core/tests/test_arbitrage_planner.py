@@ -122,6 +122,29 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(with_pv["targets"][0], 15.0)
         self.assertLess(with_pv["targets"][0], without_pv["targets"][0])
 
+    def test_pv_before_selected_buy_can_displace_more_expensive_grid_energy(self):
+        rows = [
+            {"price_buy_pln_kwh": 0.90, "price_sell_pln_kwh": 0.35,
+             "buy_window": index == 2, "sale_window": False,
+             "forecast_load_kwh": 0.285,
+             "forecast_pv_total_kwh": 0.80 if index < 2 else 0.0,
+             "slot_start": index, "slot_end": index + 1}
+            for index in range(5)
+        ]
+        selected = {2}
+        contract = backward_target_commitments(
+            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 30.0,
+            0.25, selected)
+        result = optimize_energy_horizon(
+            rows, 30.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * len(rows), 30.0, 0.25, 100.0,
+            contract["targets"], {2}, False, {2})
+
+        self.assertGreater(result["flows"][0]["pv_to_bat_kwh"], 0.0)
+        self.assertGreater(result["flows"][1]["pv_to_bat_kwh"], 0.0)
+        self.assertLess(result["flows"][0]["pv_export_kwh"], 0.02)
+        self.assertLess(result["flows"][2]["grid_charge_kwh"], 0.75)
+
     def test_hard_target_rejects_unfunded_discharge(self):
         rows = [{"price_buy_pln_kwh": 2.0, "price_sell_pln_kwh": 0.0,
                  "buy_window": False, "sale_window": False,
