@@ -1,3 +1,11 @@
+## 0.35.4
+
+- Naprawiono odczyt bilansu aktywnego slotu po wdrożeniu 0.35.3. Import domu
+  jest wyliczany z istniejących przepływów PV, baterii i obciążenia zamiast z
+  nieistniejącej kolumny `grid_load_kwh`.
+- Produkcyjny replan 0.35.3 potwierdził zbieżność: `ACCEPTED`, 124 sloty.
+- Wykonawca pozostaje domyślnie wyłączony.
+
 ## 0.35.3
 
 - Usunięto oscylację ścieżki targetu, gdy PV przed wybranym BUY całkowicie
