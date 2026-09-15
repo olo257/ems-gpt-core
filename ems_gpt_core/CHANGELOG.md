@@ -1,3 +1,16 @@
+## 0.33.5
+
+- Wprowadzono pojedyncze kanoniczne pole `market_window` o wartościach `BUY`, `SELL` albo `NEUTRAL`; wykres RCE i walidacja planu korzystają wyłącznie z niego.
+- Planer przestał zapisywać i publikować dublujące flagi polityk oraz przepływów. Decyzje zachowują enumy, a źródłem prawdy dla energii są pola `planned_*_kwh`.
+- Panel Planer nie pokazuje dublujących flag. Historyczne kolumny pozostają czasowo w tabeli jako nieużywana warstwa zgodności przed fizyczną migracją.
+- Walidacja odrzuca niepoprawne okno rynku, ujemne przepływy oraz jednoczesne ładowanie i rozładowanie baterii. Wykonawca pozostaje domyślnie wyłączony.
+
+## 0.33.4
+
+- Rozszerzono bezpieczny, tylko-do-odczytu audyt `ems_gpt_slots` o osobne wyniki dla całej historii, wszystkich niezamkniętych slotów oraz niezamkniętych slotów bieżącego kontraktu `CORE_0_33_0`.
+- Log startowy zawiera teraz pełny słownik 128 kolumn wraz z typem, pozycją, kluczem, wartością domyślną i liczbą wypełnionych rekordów oraz grupy potencjalnie dublujących się pól.
+- Nie wykonuje migracji ani zapisu do tabeli slotów; dane audytu są podstawą kolejnego, jawnego etapu porządkowania schematu.
+
 ## 0.33.3
 
 - Audyt kolumn `ems_gpt_slots` uruchamia się jednorazowo po starcie i zapisuje
@@ -838,8 +851,3 @@
   źródłowego pozostaje jawnym `MISSING_OUTAGE`, bez syntetycznych pomiarów.
 - Bez zmian w planerze, PPD i semantyce wykonawcy LIVE. Observer pozostaje
   `SHADOW_READ_ONLY`, a `COOL_DHW` pozostaje nieaktywną zapowiedzią na lato.
-## 0.33.4
-
-- Rozszerzono bezpieczny, tylko-do-odczytu audyt `ems_gpt_slots` o osobne wyniki dla całej historii, wszystkich niezamkniętych slotów oraz niezamkniętych slotów bieżącego kontraktu `CORE_0_33_0`.
-- Log startowy zawiera teraz pełny słownik 128 kolumn wraz z typem, pozycją, kluczem, wartością domyślną i liczbą wypełnionych rekordów oraz grupy potencjalnie dublujących się pól.
-- Nie wykonuje migracji ani zapisu do tabeli slotów; dane audytu są podstawą kolejnego, jawnego etapu porządkowania schematu.

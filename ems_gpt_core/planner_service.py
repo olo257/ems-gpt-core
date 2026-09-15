@@ -726,10 +726,11 @@ def build_planner(a: PlannerAdapters):
                     raise RuntimeError(f"WINDOW_OVERLAP:{row['slot_start']}")
                 work = dict(row)
                 work["sale_window"], work["buy_window"] = sale_window, buy_window
+                work["market_window"] = "SELL" if sale_window else ("BUY" if buy_window else "NEUTRAL")
                 normalized_source.append(work)
-                cur.execute("""UPDATE ems_gpt_slots SET sale_window=%s,buy_window=%s
+                cur.execute("""UPDATE ems_gpt_slots SET sale_window=%s,buy_window=%s,market_window=%s
                   WHERE slot_start=%s AND actual_recorded_at IS NULL""",
-                  (sale_window, buy_window, row["slot_start"]))
+                  (sale_window, buy_window, work["market_window"], row["slot_start"]))
             source = normalized_source
             cur.execute("""INSERT INTO ems_gpt_plan_runs
               (run_id,plan_day,run_type,stage_version,expected_slots,status,current_stage,created_at,updated_at)
@@ -738,7 +739,7 @@ def build_planner(a: PlannerAdapters):
             stage_columns = [
                 "slot_start","slot_end","slot_id","slot_start_utc","slot_start_local","utc_offset_minutes",
                 "local_fold","local_day","slot_index_local","price_sell_pln_kwh","price_buy_pln_kwh","price_source",
-                "price_fetched_at","sale_window","buy_window","forecast_pv1_kwh","forecast_pv2_kwh",
+                "price_fetched_at","sale_window","buy_window","market_window","forecast_pv1_kwh","forecast_pv2_kwh",
                 "forecast_pv_total_kwh","forecast_load_kwh","forecast_temperature_c",
                 "forecast_cloud_coverage_pct","forecast_precipitation_mm","pv_correction",
                 "load_correction","forecast_pv_source","planned_sell_kwh",
@@ -994,20 +995,14 @@ def build_planner(a: PlannerAdapters):
                   soc_floor_pct=%s,soc_target_pct=%s,soc_target_due=%s,soc_target_source=%s,
                   soc_target_reserved_pv_kwh=%s,planned_buy_kwh=%s,planned_battery_charge_kwh=%s,
                   planned_battery_discharge_kwh=%s,planned_sell_kwh=%s,planned_pv_export_kwh=%s,
-                  recommendation=%s,grid_policy_planned=%s,export_policy_planned=%s,pv_to_bat_planned=%s,
-                  pv_to_cwu_planned=%s,pv_to_ev_planned=%s,pv_export_planned=%s,pv_curtail_planned=%s,
-                  grid_buy_allowed=%s,grid_no_buy=%s,grid_neutral=%s,sell_bat_allowed=%s,no_sell_bat=%s,
-                  sell_pv_allowed=%s,no_sell_pv=%s,
+                  recommendation=%s,grid_policy_planned=%s,export_policy_planned=%s,
                   planned_pv_to_bat_kwh=%s,planned_pv_to_cwu_kwh=%s,planned_pv_to_ev_kwh=%s,
                   planned_pv_curtail_kwh=%s,ppd_reason=%s,soc_updated_at=NOW(6),ppd_updated_at=NOW(6)
                   WHERE run_id=%s AND slot_start=%s""",
                   (round(item["start"],2),round(item["end"],2),round(floor,2),round(target,2),
                    commitment["due"][i],commitment["source"][i],round(commitment["reserved_pv_kwh"][i],6),round(buy,6),
                    round(item["charge"],6),round(item["discharge"],6),round(item["sell"],6),round(item["pv_export"],6),
-                   recommendation,grid_policy,export_policy,item["charge"]>flow_threshold,pv_cwu,pv_ev,
-                   item["pv_export"]>flow_threshold and not no_sell_pv,no_sell_pv and pv_flex>flow_threshold,
-                   grid_policy=="BUY_ALLOWED",grid_policy=="NO_BUY",grid_policy=="NEUTRAL",
-                   sell_bat,not sell_bat,not no_sell_pv,no_sell_pv,
+                   recommendation,grid_policy,export_policy,
                    round(pv_to_bat,6),round(cwu_kwh,6),round(ev_kwh,6),
                    round(pv_curtail_kwh,6),reason[:255],run_id,row["slot_start"]))
                 hp_window = i in hp_selected_indices
@@ -1045,10 +1040,11 @@ def build_planner(a: PlannerAdapters):
             cur.execute("""SELECT COUNT(*) n,
               SUM(price_buy_pln_kwh IS NULL OR price_sell_pln_kwh IS NULL) bad_price,
               SUM(soc_floor_pct IS NULL OR soc_target_pct IS NULL) bad_soc,
-              SUM(grid_policy_planned IS NULL OR export_policy_planned IS NULL
-                OR grid_buy_allowed+grid_no_buy+grid_neutral<>1
-                OR sell_bat_allowed+no_sell_bat<>1
-                OR sell_pv_allowed+no_sell_pv<>1
+              SUM(market_window NOT IN ('BUY','SELL','NEUTRAL')
+                OR grid_policy_planned IS NULL OR export_policy_planned IS NULL
+                OR planned_buy_kwh<0 OR planned_sell_kwh<0
+                OR planned_battery_charge_kwh<0 OR planned_battery_discharge_kwh<0
+                OR (planned_battery_charge_kwh>0.000001 AND planned_battery_discharge_kwh>0.000001)
                 OR heat_pump_window NOT IN (0,1)) bad_ppd
               FROM ems_gpt_plan_stage_rows WHERE run_id=%s""",(run_id,))
             checks=cur.fetchone()
@@ -1066,21 +1062,16 @@ def build_planner(a: PlannerAdapters):
               p.soc_floor_pct=s.soc_floor_pct,p.soc_target_pct=s.soc_target_pct,
               p.soc_target_due=s.soc_target_due,p.soc_target_source=s.soc_target_source,
               p.soc_target_reserved_pv_kwh=s.soc_target_reserved_pv_kwh,
+              p.market_window=s.market_window,
               p.planned_buy_kwh=s.planned_buy_kwh,
               p.planned_sell_kwh=s.planned_sell_kwh,p.planned_pv_export_kwh=s.planned_pv_export_kwh,
               p.planned_battery_charge_kwh=s.planned_battery_charge_kwh,
               p.planned_battery_discharge_kwh=s.planned_battery_discharge_kwh,p.recommendation=s.recommendation,
               p.grid_policy_planned=s.grid_policy_planned,p.export_policy_planned=s.export_policy_planned,
-              p.pv_to_bat_planned=s.pv_to_bat_planned,p.pv_to_cwu_planned=s.pv_to_cwu_planned,
-              p.pv_to_ev_planned=s.pv_to_ev_planned,p.pv_export_planned=s.pv_export_planned,
-              p.pv_curtail_planned=s.pv_curtail_planned,
               p.planned_pv_to_bat_kwh=s.planned_pv_to_bat_kwh,
               p.planned_pv_to_cwu_kwh=s.planned_pv_to_cwu_kwh,
               p.planned_pv_to_ev_kwh=s.planned_pv_to_ev_kwh,
               p.planned_pv_curtail_kwh=s.planned_pv_curtail_kwh,
-              p.grid_buy_allowed=s.grid_buy_allowed,p.grid_no_buy=s.grid_no_buy,p.grid_neutral=s.grid_neutral,
-              p.sell_bat_allowed=s.sell_bat_allowed,p.no_sell_bat=s.no_sell_bat,
-              p.sell_pv_allowed=s.sell_pv_allowed,p.no_sell_pv=s.no_sell_pv,
               p.heat_pump_window=s.heat_pump_window,
               p.ppd_reason=s.ppd_reason,p.ppd_run_type=%s,
               p.ppd_version='CORE_0_33_0',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
