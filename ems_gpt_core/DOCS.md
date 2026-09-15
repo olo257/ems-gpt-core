@@ -127,6 +127,11 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
 
 ## Panel
 
+Bieżące ceny aktywnego slotu są publikowane parami do Home Assistant jako
+`sensor.gpt_ems_cena_zakupu` i `sensor.gpt_ems_cena_sprzedazy`. Źródłem obu
+jest ten sam rekord `ems_gpt_slots`; brak jednej ceny blokuje aktualizację całej
+pary, aby encje nigdy nie przedstawiały dwóch różnych slotów.
+
 Panel Ingress zawiera status modułów oraz widoki Planer, Wykonanie,
 Godzinowe, Dobowe, Analityka, AI Observer, Sugestie / TODO i Diagnostyka.
 
