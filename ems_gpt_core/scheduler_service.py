@@ -131,6 +131,14 @@ def run_scheduler(a: SchedulerAdapters) -> None:
     previous = None
     recovery_rebuild_day = None
     todo_archive_day = None
+    def module_activity(module: str, activity: str, status: str | None = None) -> None:
+        with a.lock:
+            if status is not None:
+                a.state["modules"][module] = status
+            a.state.setdefault("module_details", {})[module] = {
+                "activity": activity,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
     while True:
         clock = a.local_now()
         start = a.slot_start(clock)
@@ -237,14 +245,20 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                     a.log.exception("RCE import failed: target=%s", target)
                     raise
             if should_run_slot_replan(clock, start, last_run, rce_done):
+                module_activity("planner", "Przeliczanie planu dla bieżącego slotu", "RUNNING")
+                module_activity("ppd", "Oczekiwanie na wynik planera", "WAITING")
                 try:
                     replan = a.run_serialized("planner", a.run_planner, "slot_replan")
                     planner_health = "RUNNING" if replan.get("status") != "WAITING" else "WAITING"
+                    module_activity("planner", "Plan opublikowany", planner_health)
+                    module_activity("ppd", "Decyzje PPD odświeżone", planner_health)
                     a.record_event("slot_replan_completed", "planner", {
                         "slot_start": key, **replan,
                     })
                 except Exception as exc:
                     planner_health = "DEGRADED"
+                    module_activity("planner", f"Błąd przeliczenia: {exc}", "DEGRADED")
+                    module_activity("ppd", "Zachowano ostatnie poprawne decyzje", "DEGRADED")
                     a.record_event("slot_replan_failed", "planner", {
                         "slot_start": key, "error": str(exc),
                         "last_published_at": last_run,
@@ -285,6 +299,12 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                     backup=backup_result.get("status"),
                     ai_observer="DISABLED" if not a.options.get("ai_observer_enabled") else "SHADOW_READ_ONLY",
                 )
+                stamp = datetime.now(timezone.utc).isoformat()
+                details = a.state.setdefault("module_details", {})
+                details["core"] = {"activity": "Cykl kontrolny zakończony", "updated_at": stamp}
+                details["executor"] = {"activity": "Sterowanie wyłączone" if a.state.get("executor") == "OFF" else "Realizacja zatwierdzonego planu", "updated_at": stamp}
+                details["appliances"] = {"activity": "Odczyt liczników urządzeń", "updated_at": stamp}
+                details["backup"] = {"activity": "Wyłączony" if backup_result.get("status") == "DISABLED" else "Kontrola kopii zapasowej", "updated_at": stamp}
         except Exception as exc:
             error = str(exc)
             a.log.exception("engine cycle failed")

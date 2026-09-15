@@ -64,6 +64,22 @@ alokację energii. Nie wolno naprawiać błędu przez kopiowanie `soc_floor` do
 
 ## 4. Bilans energii slotu
 
+### Import technicznie nieunikniony a decyzja BUY
+
+Jeżeli po wykorzystaniu PV i całej energii baterii dostępnej ponad techniczną
+rezerwę nadal pozostaje zapotrzebowanie domu, sieć fizycznie pokrywa ten
+niedobór. Taki `grid_load_kwh` jest przepływem resztowym bilansu, a nie decyzją
+ekonomiczną `BUY` i nie tworzy okna zakupu.
+
+- `BUY` oznacza wyłącznie zaplanowane ładowanie baterii (`grid_charge_kwh > 0`);
+- planer nie może dobrowolnie zasilać domu z sieci, gdy bateria może pokryć
+  zużycie, z wyjątkiem jawnie ekonomicznej ochrony energii przed późniejszą
+  sprzedażą;
+- osiągnięcie technicznego minimum SOC nie może uczynić horyzontu
+  niewykonalnym — niepokryty przez PV i baterię dom przechodzi na sieć;
+- przepływ wymuszony nie podnosi `soc_target` i nie jest oznaczany jako zakup
+  do baterii.
+
 Dla każdego slotu musi zachodzić, z jedną konwencją punktu pomiarowego:
 
 `PV + rozładowanie baterii + import = zużycie + ładowanie baterii + eksport`

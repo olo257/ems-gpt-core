@@ -113,6 +113,20 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
   autokonsumpcji i nie może uruchamiać zakupu.
 - W slocie sprzedaży publikowany `soc_target` nie może być niższy niż
   `soc_floor`, ale floor nadal nie ogranicza rozładowania na zwykłe zużycie.
+
+### Stała reguła importu i ręcznego replanu
+
+- `BUY` jest decyzją o ładowaniu baterii, nigdy samodzielną decyzją zakupu dla
+  odbiorników.
+- Gdy SOC osiągnął techniczne minimum, brakująca po PV energia domu jest
+  nieuniknionym importem bilansowym. Plan pozostaje wykonalny, ale nie zapisuje
+  tego przepływu jako ładowania baterii ani okna BUY.
+- Przycisk **Przelicz plan** uruchamia tę samą serializowaną ścieżkę co replan
+  automatyczny. Równoległy przebieg nie jest dopuszczony, ostatni poprawny plan
+  pozostaje aktywny do czasu atomowej publikacji nowego.
+- Kafelki modułów pokazują stan, wykonywaną/ostatnią czynność i czas jej
+  aktualizacji. Błąd planera degraduje planer oraz PPD i wskazuje zachowanie
+  ostatnich poprawnych decyzji.
 - Oba pola pozostają niezależne. Dla `SELL_BAT` efektywny próg zakończenia
   sprzedaży wynosi `max(soc_floor, soc_target)`: floor jest progiem falownika,
   a target zachowuje energię potrzebną do następnego wybranego PV/BUY. Jeśli

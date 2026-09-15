@@ -936,3 +936,16 @@
 - Zarchiwizowano historyczne flagi slotów w `ems_gpt_slot_legacy_flags_0335`, a następnie usunięto 16 nieużywanych kolumn dublujących polityki i ilościowe przepływy.
 - Migracja jest idempotentna, oznaczona w `ems_gpt_core_migrations` i nie usuwa żadnego rekordu slotu ani wartości bez wcześniejszej kopii.
 - Bez zmian w algorytmie SOC i wykonawcy; produkcja pozostaje wyłączona podczas porządkowania.
+## 0.35.1
+
+- Rozdzielono technicznie nieunikniony import domu przy minimalnym SOC od
+  decyzji `BUY`, która nadal służy wyłącznie ładowaniu baterii. Planer nie
+  kończy już błędem `No feasible SOC state at horizon slot 0`, gdy PV i energia
+  ponad rezerwę nie wystarczają do pokrycia pierwszego slotu.
+- Panel pokazuje dla każdego modułu stan, aktualną/ostatnią czynność i czas jej
+  odświeżenia.
+- Dodano przycisk **Przelicz plan**, korzystający z tej samej serializowanej,
+  atomowej ścieżki publikacji co replan automatyczny. Panel pokazuje trwanie,
+  sukces albo dokładny błąd przebiegu.
+- Stały kontrakt importu wymuszonego, BUY i ręcznego replanu zapisano w
+  `PLANNER_CONTRACT.md` i `DOCS.md`.

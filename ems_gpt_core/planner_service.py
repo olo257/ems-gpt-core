@@ -318,10 +318,22 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     pv_export = surplus if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_export)
                     battery_charge_internal = 0.0
-                # Do not choose grid-only supply for the house while usable
-                # battery energy exists. The sole exception is an economic
-                # hold for a later sale; normal BUY always charges the battery.
-                if grid_load > unit_kwh * eta_d + 1e-9 and grid_charge <= 1e-9:
+                # Grid energy that is physically unavoidable after PV and all
+                # battery energy available above the technical reserve have
+                # been exhausted is a residual flow, not an EMS BUY decision.
+                # Reject only *voluntary* grid supply that preserves usable
+                # battery energy.  This distinction keeps the horizon feasible
+                # when a replan starts at minimum SOC while preserving the
+                # contract that planned BUY exists only to charge the battery.
+                usable_internal = min(
+                    max_internal_discharge,
+                    max(0.0, current_energy - first_unit * unit_kwh),
+                )
+                unavoidable_grid_load = max(
+                    0.0, deficit - usable_internal * eta_d,
+                )
+                voluntary_grid_load = max(0.0, grid_load - unavoidable_grid_load)
+                if voluntary_grid_load > unit_kwh * eta_d + 1e-9 and grid_charge <= 1e-9:
                     if not allow_grid_hold:
                         continue
                     later_sell = future_sell[index]

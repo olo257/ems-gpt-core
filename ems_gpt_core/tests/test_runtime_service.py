@@ -19,6 +19,8 @@ class RuntimeServiceTests(unittest.TestCase):
         runtime = build_runtime("EMS-GPT Core", "test", SilentLog())
         self.assertEqual(runtime.state["status"], "STARTING")
         self.assertEqual(runtime.state["modules"]["ai_observer"], "SHADOW_READ_ONLY")
+        self.assertEqual(runtime.state["module_details"]["planner"]["activity"],
+                         "Oczekiwanie na pierwszy plan")
         self.assertEqual(runtime.state["recovery_contract"], "CORE_RECOVERY_0_24_2_R6")
         self.assertEqual(runtime.run_serialized("test", lambda value: value + 1, 4), 5)
 
