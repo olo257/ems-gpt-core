@@ -838,3 +838,8 @@
   źródłowego pozostaje jawnym `MISSING_OUTAGE`, bez syntetycznych pomiarów.
 - Bez zmian w planerze, PPD i semantyce wykonawcy LIVE. Observer pozostaje
   `SHADOW_READ_ONLY`, a `COOL_DHW` pozostaje nieaktywną zapowiedzią na lato.
+## 0.33.4
+
+- Rozszerzono bezpieczny, tylko-do-odczytu audyt `ems_gpt_slots` o osobne wyniki dla całej historii, wszystkich niezamkniętych slotów oraz niezamkniętych slotów bieżącego kontraktu `CORE_0_33_0`.
+- Log startowy zawiera teraz pełny słownik 128 kolumn wraz z typem, pozycją, kluczem, wartością domyślną i liczbą wypełnionych rekordów oraz grupy potencjalnie dublujących się pól.
+- Nie wykonuje migracji ani zapisu do tabeli slotów; dane audytu są podstawą kolejnego, jawnego etapu porządkowania schematu.
