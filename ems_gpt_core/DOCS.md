@@ -98,6 +98,9 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
 - Termin BUY nie obniża targetu w poprzedzających slotach. Wcześniejsze PV
   ładuje baterię do targetu, gdy zastępuje droższą energię sieciową; dopiero
   nadwyżka ponad ten kontrakt może zostać skierowana do sprzedaży/CWU/EV.
+- Rozdzielczość prognozy SOC 0,25% nie ogranicza fizycznego przepływu PV.
+  Pozostałość mniejsza od kroku jest nadal księgowana jako PV→bateria i nie
+  może zostać oznaczona jako eksport, dopóki SOC nie osiągnie targetu.
 - Przyszłe PV może odroczyć osiągnięcie targetu tylko wtedy, gdy jego
   zarezerwowana, konserwatywnie skorygowana nadwyżka gwarantuje osiągnięcie
   targetu w terminie. Pozostałe PV jest nadwyżką elastyczną.
