@@ -1,3 +1,15 @@
+## 0.35.3
+
+- Usunięto oscylację ścieżki targetu, gdy PV przed wybranym BUY całkowicie
+  zastępuje zakup. Okno uzupełnienia pozostaje granicą targetu niezależnie od
+  końcowej liczby kupionych kWh.
+- Bilans aktywnego slotu używa jednej strony pomiarowej: uwzględnia sprawność
+  ładowania i rozładowania, import domu oraz tylko PV należące do bilansu
+  podstawowego. Elastyczna nadwyżka PV pozostaje poza bilansem targetu.
+- Błąd replanu jest zatrzaskiwany jako `DEGRADED` do czasu kolejnego
+  poprawnego planu i nie jest nadpisywany przez cykl statusowy.
+- Wykonawca pozostaje domyślnie wyłączony.
+
 ## 0.35.2
 
 - Naprawiono zamykanie wstecznego kontraktu `soc_target`: faktycznie wybrany
