@@ -1,3 +1,17 @@
+## 0.34.4
+
+- `soc_floor` pozostaje wyłącznie sprzętową podłogą celowej sprzedaży baterii;
+  nie jest podnoszony do `soc_target` i nie ogranicza autokonsumpcji.
+- Energia dostępna dla `SELL_BAT` jest liczona wyłącznie ponad efektywnym
+  progiem `max(soc_floor, soc_target)`. Gdy bieżący SOC jest niższy od targetu,
+  planowana sprzedaż baterii wynosi zero również w ekonomicznym oknie SELL.
+- Publikacja planu jest blokowana przez `SALE_TARGET_VIOLATION`, jeżeli celowa
+  sprzedaż kończy slot poniżej targetu energetycznego.
+- Przy każdym otwarciu slotu Core publikuje do Home Assistant obie ceny z tego
+  samego rekordu `ems_gpt_slots`. Sensory `sensor.gpt_ems_cena_zakupu` oraz
+  `sensor.gpt_ems_cena_sprzedazy` nie zależą już od starego modelu RCE.
+- Wykonawca pozostaje domyślnie wyłączony.
+
 ## 0.34.3
 
 - Cała nadwyżka PV poniżej `soc_target` jest przypisywana do baterii, także

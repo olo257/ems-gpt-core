@@ -231,6 +231,36 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(flow["battery_sell_kwh"],0.0)
         self.assertGreaterEqual(flow["soc_end_pct"],40.0)
 
+    def test_battery_sale_uses_target_without_redefining_sale_floor(self):
+        rows = [{
+            "price_buy_pln_kwh": 4.0,
+            "price_sell_pln_kwh": 10.0,
+            "sale_window": True,
+            "forecast_load_kwh": 0.0,
+            "forecast_pv_total_kwh": 0.0,
+        }]
+        result = optimize_energy_horizon(
+            rows, 95.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [40.0], 15.0, 0.25, 100.0, [90.0])
+        flow = result["flows"][0]
+
+        self.assertGreater(flow["battery_sell_kwh"], 0.0)
+        self.assertGreaterEqual(flow["soc_end_pct"], 90.0)
+
+    def test_battery_sale_is_zero_when_soc_is_below_target(self):
+        rows = [{
+            "price_buy_pln_kwh": 4.0,
+            "price_sell_pln_kwh": 10.0,
+            "sale_window": True,
+            "forecast_load_kwh": 0.0,
+            "forecast_pv_total_kwh": 0.0,
+        }]
+        result = optimize_energy_horizon(
+            rows, 40.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [20.0], 15.0, 0.25, 100.0, [90.0])
+
+        self.assertEqual(result["flows"][0]["battery_sell_kwh"], 0.0)
+
     def test_grid_only_load_is_rejected_without_profitable_future_sale(self):
         rows=[
             {"price_buy_pln_kwh":1.0,"price_sell_pln_kwh":0.0,

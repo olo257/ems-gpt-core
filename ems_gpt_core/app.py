@@ -24,7 +24,7 @@ from ha_gateway_service import HomeAssistantAdapters, build_home_assistant_gatew
 from ingestion_service import IngestionAdapters, build_ingestion
 from materialization_service import MaterializationAdapters, build_materializations
 from planner_service import PlannerAdapters, build_planner
-from scheduler_service import SchedulerAdapters, run_scheduler
+from scheduler_service import SchedulerAdapters, publish_current_slot_prices, run_scheduler
 from schema_service import ensure_runtime_schema as ensure_runtime_schema_service
 from slot_calendar_service import SlotCalendarAdapters, build_slot_calendar
 from observer_service import run_ai_observer as run_observer_service
@@ -35,7 +35,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.34.3"
+APP_VERSION = "0.34.4"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -108,6 +108,10 @@ ha_service_response = _HA_GATEWAY.ha_service_response
 number = _HA_GATEWAY.number
 tou_program_snapshot = _HA_GATEWAY.tou_program_snapshot
 active_tou_program = _HA_GATEWAY.active_tou_program
+
+
+def publish_current_prices(current_slot) -> dict:
+    return publish_current_slot_prices(db, current_slot, ha_service_response)
 
 
 ENTITIES = {
@@ -344,6 +348,7 @@ def engine_loop() -> None:
         run_analytics=run_analytics, run_ai_observer=run_ai_observer,
         generate_diagnostic_report=generate_diagnostic_report,
         capture_appliances=capture_appliances, maintain_backup=maintain_backup,
+        publish_current_prices=publish_current_prices,
     ))
 
 HTML = Path(__file__).with_name("webui.html").read_text(encoding="utf-8")
