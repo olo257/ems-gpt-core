@@ -624,6 +624,20 @@ def backward_target_commitments(rows: list[dict], capacity_kwh: float,
             if source[i] != "BUY" or due[i] != buy_due:
                 break
             targets[i] = max(targets[i], buy_target)
+    # PV is a replenishment *window*, not a single late slot.  When a later
+    # slot closes the backward bridge, every earlier row assigned to that same
+    # due point must expose the closing slot's target as its charge ceiling.
+    # Otherwise early morning surplus sees a local target equal to the
+    # technical reserve and is exported while the battery is still depleted.
+    due_index = {
+        row.get("slot_end") or row.get("slot_start"): i
+        for i, row in enumerate(rows)
+    }
+    for i in range(len(rows)):
+        if source[i] != "PV" or due[i] not in due_index:
+            continue
+        closing_index = due_index[due[i]]
+        targets[i] = max(targets[i], targets[closing_index])
     return {"targets": targets, "due": due, "source": source,
             "reserved_pv_kwh": reserved_pv}
 
