@@ -330,9 +330,17 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     if hold_value < buy_price + min_margin:
                         continue
                 # During deliberate export the complete slot, including the
-                # native load, must close at or above the protected sale floor.
-                if battery_sell > 1e-9 and next_unit * step < floor_pct - 1e-9:
-                    continue
+                # native load, must close at or above both independent
+                # contracts. ``soc_floor`` remains the inverter's sale-only
+                # stop threshold. ``soc_target`` is not rewritten as floor;
+                # it separately reserves the energy needed until the selected
+                # PV/BUY replenishment. Only energy above max(floor, target)
+                # is therefore available for deliberate battery export.
+                if battery_sell > 1e-9:
+                    sale_stop_pct = (floor_pct if minimum_soc_targets is None
+                                     else max(floor_pct, target_pct))
+                    if next_unit * step < sale_stop_pct - 1e-9:
+                        continue
                 # Outside a BUY window the backward energy contract is a hard
                 # feasibility boundary. It protects future native load while
                 # still allowing ordinary consumption below the unrelated
@@ -956,6 +964,11 @@ def build_planner(a: PlannerAdapters):
                     raise RuntimeError(
                         f"SALE_FLOOR_VIOLATION:{index}:"
                         f"{flow.get('soc_end_pct')}<{optimized_floors[index]}")
+                if (battery_sell > flow_threshold
+                        and soc_end + 0.01 < targets[index]):
+                    raise RuntimeError(
+                        f"SALE_TARGET_VIOLATION:{index}:"
+                        f"{soc_end}<{targets[index]}")
                 if grid_charge > flow_threshold and soc_end > targets[index] + 0.01:
                     raise RuntimeError(
                         f"BUY_TARGET_EXCEEDED:{index}:{soc_end}>{targets[index]}")
