@@ -96,6 +96,102 @@ def catalog_database_tables(*, db, schema_name: str, log) -> dict:
     return result
 
 
+def audit_slot_columns(*, db, schema_name: str, log) -> dict:
+    """Inventory the canonical slot table and quantify known duplicate fields.
+
+    This endpoint is intentionally read-only.  A destructive schema migration
+    must use its results as a precondition instead of guessing from source code.
+    """
+    table = "ems_gpt_slots"
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT column_name,ordinal_position,column_type,is_nullable,
+                      column_default,column_key,extra
+                 FROM information_schema.columns
+                WHERE table_schema=%s AND table_name=%s
+                ORDER BY ordinal_position""",
+            (schema_name, table),
+        )
+        columns = list(cur.fetchall())
+        names = {row["column_name"] for row in columns}
+
+        cur.execute(f"SELECT COUNT(*) n FROM `{table}`")
+        row_count = int(cur.fetchone()["n"])
+
+        populated = {}
+        for name in sorted(names):
+            cur.execute(f"SELECT COUNT(*) n FROM `{table}` WHERE `{name}` IS NOT NULL")
+            populated[name] = int(cur.fetchone()["n"])
+
+        checks = {}
+        check_sql = {
+            "market_window_overlap": "COALESCE(buy_window,0)=1 AND COALESCE(sale_window,0)=1",
+            "grid_policy_flag_mismatch": """(grid_policy_planned='BUY_ALLOWED')<>COALESCE(grid_buy_allowed,0)
+                OR (grid_policy_planned='NO_BUY')<>COALESCE(grid_no_buy,0)
+                OR (grid_policy_planned='NEUTRAL')<>COALESCE(grid_neutral,0)""",
+            "battery_export_flag_mismatch": """(export_policy_planned='SELL_BAT')<>COALESCE(sell_bat_allowed,0)
+                OR (export_policy_planned<>'SELL_BAT')<>COALESCE(no_sell_bat,0)""",
+            "pv_export_flag_mismatch": """(export_policy_planned='SELL_PV')<>COALESCE(sell_pv_allowed,0)
+                OR (export_policy_planned='NO_SELL_PV')<>COALESCE(no_sell_pv,0)""",
+            "pv_to_bat_flag_mismatch": "(COALESCE(planned_pv_to_bat_kwh,0)>0.000001)<>COALESCE(pv_to_bat_planned,0)",
+            "pv_to_cwu_flag_mismatch": "(COALESCE(planned_pv_to_cwu_kwh,0)>0.000001)<>COALESCE(pv_to_cwu_planned,0)",
+            "pv_to_ev_flag_mismatch": "(COALESCE(planned_pv_to_ev_kwh,0)>0.000001)<>COALESCE(pv_to_ev_planned,0)",
+            "pv_export_quantity_flag_mismatch": "(COALESCE(planned_pv_export_kwh,0)>0.000001)<>COALESCE(pv_export_planned,0)",
+            "pv_curtail_quantity_flag_mismatch": "(COALESCE(planned_pv_curtail_kwh,0)>0.000001)<>COALESCE(pv_curtail_planned,0)",
+        }
+        for key, predicate in check_sql.items():
+            referenced = {
+                token for token in (
+                    "buy_window", "sale_window", "grid_policy_planned",
+                    "grid_buy_allowed", "grid_no_buy", "grid_neutral",
+                    "export_policy_planned", "sell_bat_allowed", "no_sell_bat",
+                    "sell_pv_allowed", "no_sell_pv", "planned_pv_to_bat_kwh",
+                    "planned_pv_to_cwu_kwh", "planned_pv_to_ev_kwh",
+                    "planned_pv_export_kwh", "planned_pv_curtail_kwh",
+                    "pv_to_bat_planned", "pv_to_cwu_planned", "pv_to_ev_planned",
+                    "pv_export_planned", "pv_curtail_planned",
+                ) if token in predicate
+            }
+            if referenced.issubset(names):
+                cur.execute(f"SELECT COUNT(*) n FROM `{table}` WHERE {predicate}")
+                checks[key] = int(cur.fetchone()["n"])
+            else:
+                checks[key] = None
+
+    duplicate_groups = {
+        "time_projection": [name for name in (
+            "slot_start", "slot_end", "slot_id", "slot_start_utc",
+            "slot_start_local", "utc_offset_minutes", "local_fold",
+            "local_day", "slot_index_local") if name in names],
+        "market_window": [name for name in (
+            "buy_window", "sale_window", "grid_window") if name in names],
+        "grid_policy": [name for name in (
+            "grid_policy_planned", "grid_buy_allowed", "grid_no_buy",
+            "grid_neutral") if name in names],
+        "export_policy": [name for name in (
+            "export_policy_planned", "sell_bat_allowed", "no_sell_bat",
+            "sell_pv_allowed", "no_sell_pv") if name in names],
+        "pv_flow_flags": [name for name in (
+            "pv_to_bat_planned", "pv_to_cwu_planned", "pv_to_ev_planned",
+            "pv_export_planned", "pv_curtail_planned",
+            "planned_pv_to_bat_kwh", "planned_pv_to_cwu_kwh",
+            "planned_pv_to_ev_kwh", "planned_pv_export_kwh",
+            "planned_pv_curtail_kwh") if name in names],
+    }
+    result = {
+        "status": "OK", "schema": schema_name, "table": table,
+        "read_only": True, "row_count": row_count,
+        "column_count": len(columns), "columns": columns,
+        "populated_rows": populated, "duplicate_groups": duplicate_groups,
+        "consistency_checks": checks,
+    }
+    log.info("slot_column_audit_summary %s", json.dumps({
+        "table": table, "row_count": row_count, "column_count": len(columns),
+        "consistency_checks": checks,
+    }, ensure_ascii=False, default=str))
+    return result
+
+
 def audit_v3_tables(*, db, qname, schema_name: str, log) -> dict:
     """Inventory every object containing ``v3`` without changing the database."""
     with db() as conn, conn.cursor() as cur:

@@ -17,7 +17,7 @@ from appliance_service import ApplianceAdapters, build_appliance_meter
 from backup_service import BackupAdapters, build_backup_service
 from config_service import CONFIG_SETTINGS, OPERATIONAL_SETTINGS, load_options
 from database_service import build_database
-from database_audit_service import audit_v3_tables, catalog_database_tables
+from database_audit_service import audit_slot_columns, audit_v3_tables, catalog_database_tables
 from diagnostics_service import generate_diagnostic_report as run_diagnostics_service
 from executor_service import ExecutorAdapters, build_executor
 from ha_gateway_service import HomeAssistantAdapters, build_home_assistant_gateway
@@ -67,6 +67,10 @@ def database_audit() -> dict:
 
 def database_catalog() -> dict:
     return catalog_database_tables(db=db, schema_name=OPTIONS["db_name"], log=LOG)
+
+
+def slot_column_audit() -> dict:
+    return audit_slot_columns(db=db, schema_name=OPTIONS["db_name"], log=LOG)
 
 
 def ensure_runtime_schema() -> None:
@@ -357,6 +361,7 @@ Handler = build_handler(ApiAdapters(
     generate_diagnostic_report=generate_diagnostic_report, review_todo=review_todo, html=HTML,
     database_audit=database_audit,
     database_catalog=database_catalog,
+    slot_column_audit=slot_column_audit,
 ))
 
 

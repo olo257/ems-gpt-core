@@ -24,7 +24,7 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_version_is_consistent(self):
         self.assertIn('APP_VERSION = "0.33.1"', APP_SOURCE)
-        self.assertIn('version: "0.33.1"', CONFIG)
+        self.assertIn('version: "0.33.2"', CONFIG)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)

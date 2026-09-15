@@ -1,3 +1,15 @@
+## 0.33.2
+
+- Dodano wyłącznie odczytowy audyt kolumn kanonicznej tabeli
+  `ems_gpt_slots` pod endpointem `/api/slot-column-audit`.
+- Audyt zwraca pełny kontrakt `information_schema`, liczbę wypełnionych
+  rekordów, grupy pól potencjalnie dublujących się oraz liczniki rozbieżności
+  enumów, flag PPD i ilościowych przepływów PV.
+- Ta wersja jest obowiązkowym etapem przed migracją kompaktującą: nie usuwa,
+  nie przemianowuje i nie nadpisuje żadnej kolumny ani danych historycznych.
+- Algorytm planera oraz wykonawca pozostają bez zmian; wykonawca nadal jest
+  domyślnie wyłączony.
+
 ## 0.33.1
 
 - Ograniczono diagnostykę `ppd_reason` do trwałego kontraktu kolumny, aby
