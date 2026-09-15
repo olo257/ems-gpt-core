@@ -12,6 +12,16 @@ danych w MariaDB ani algorytmu planowania.
 
 Niezależny silnik EMS uruchamiany jako lokalna aplikacja Home Assistant.
 
+## Porządkowanie kanonicznej tabeli slotów
+
+Kompaktowanie `ems_gpt_slots` zawsze przebiega w osobnych wydaniach od zmian
+algorytmu. Pierwszym etapem jest odczyt `/api/slot-column-audit`, porównujący
+enumy, flagi PPD i ilościowe przepływy. Usunięcie pola jest dopuszczalne dopiero
+po zerowym wyniku kontroli rozbieżności, trwałym backfillu, przełączeniu
+wszystkich odbiorców oraz zachowaniu archiwum. Ilości energii są źródłem prawdy;
+flagi prezentacyjne mają być z nich wyliczane. Wykonawca pozostaje wyłączony
+podczas całej migracji.
+
 ## Architektura 0.28
 
 - `app.py` — wyłącznie kompozycja usług i cykl życia procesu;

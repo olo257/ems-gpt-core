@@ -1,7 +1,7 @@
 import unittest
 from contextlib import contextmanager
 
-from database_audit_service import audit_v3_tables, catalog_database_tables
+from database_audit_service import audit_slot_columns, audit_v3_tables, catalog_database_tables
 
 
 class Cursor:
@@ -59,6 +59,44 @@ class Log:
 
 
 class DatabaseAuditTests(unittest.TestCase):
+    def test_slot_column_audit_is_read_only_and_checks_duplicate_contracts(self):
+        connection = Connection()
+        cursor = connection.cursor_instance
+
+        def execute(sql, params=None):
+            cursor.executed.append((sql, params))
+            normalized = " ".join(sql.split()).lower()
+            if "from information_schema.columns" in normalized:
+                names = (
+                    "buy_window", "sale_window", "grid_policy_planned",
+                    "grid_buy_allowed", "grid_no_buy", "grid_neutral",
+                )
+                cursor.rows = [{
+                    "column_name": name, "ordinal_position": index,
+                    "column_type": "tinyint(1)", "is_nullable": "NO",
+                    "column_default": "0", "column_key": "", "extra": "",
+                } for index, name in enumerate(names, 1)]
+            elif "count(*)" in normalized:
+                cursor.rows = [{"n": 0 if " where " in normalized else 3}]
+            else:
+                raise AssertionError(sql)
+
+        cursor.execute = execute
+
+        @contextmanager
+        def db():
+            yield connection
+
+        result = audit_slot_columns(db=db, schema_name="ems_gpt", log=Log())
+
+        self.assertTrue(result["read_only"])
+        self.assertEqual(result["row_count"], 3)
+        self.assertEqual(result["column_count"], 6)
+        self.assertEqual(result["consistency_checks"]["market_window_overlap"], 0)
+        statements = "\n".join(sql for sql, _ in cursor.executed).lower()
+        for verb in ("delete", "update", "insert", "alter", "drop"):
+            self.assertNotIn(f" {verb} ", f" {statements} ")
+
     def test_catalog_does_not_scan_table_contents(self):
         connection = Connection()
 
