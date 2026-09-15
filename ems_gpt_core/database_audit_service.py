@@ -123,7 +123,6 @@ def audit_slot_columns(*, db, schema_name: str, log) -> dict:
             cur.execute(f"SELECT COUNT(*) n FROM `{table}` WHERE `{name}` IS NOT NULL")
             populated[name] = int(cur.fetchone()["n"])
 
-        checks = {}
         check_sql = {
             "market_window_overlap": "COALESCE(buy_window,0)=1 AND COALESCE(sale_window,0)=1",
             "grid_policy_flag_mismatch": """(grid_policy_planned='BUY_ALLOWED')<>COALESCE(grid_buy_allowed,0)
@@ -139,24 +138,41 @@ def audit_slot_columns(*, db, schema_name: str, log) -> dict:
             "pv_export_quantity_flag_mismatch": "(COALESCE(planned_pv_export_kwh,0)>0.000001)<>COALESCE(pv_export_planned,0)",
             "pv_curtail_quantity_flag_mismatch": "(COALESCE(planned_pv_curtail_kwh,0)>0.000001)<>COALESCE(pv_curtail_planned,0)",
         }
-        for key, predicate in check_sql.items():
-            referenced = {
-                token for token in (
-                    "buy_window", "sale_window", "grid_policy_planned",
-                    "grid_buy_allowed", "grid_no_buy", "grid_neutral",
-                    "export_policy_planned", "sell_bat_allowed", "no_sell_bat",
-                    "sell_pv_allowed", "no_sell_pv", "planned_pv_to_bat_kwh",
-                    "planned_pv_to_cwu_kwh", "planned_pv_to_ev_kwh",
-                    "planned_pv_export_kwh", "planned_pv_curtail_kwh",
-                    "pv_to_bat_planned", "pv_to_cwu_planned", "pv_to_ev_planned",
-                    "pv_export_planned", "pv_curtail_planned",
-                ) if token in predicate
-            }
-            if referenced.issubset(names):
-                cur.execute(f"SELECT COUNT(*) n FROM `{table}` WHERE {predicate}")
-                checks[key] = int(cur.fetchone()["n"])
-            else:
-                checks[key] = None
+        referenced_columns = (
+            "buy_window", "sale_window", "grid_policy_planned",
+            "grid_buy_allowed", "grid_no_buy", "grid_neutral",
+            "export_policy_planned", "sell_bat_allowed", "no_sell_bat",
+            "sell_pv_allowed", "no_sell_pv", "planned_pv_to_bat_kwh",
+            "planned_pv_to_cwu_kwh", "planned_pv_to_ev_kwh",
+            "planned_pv_export_kwh", "planned_pv_curtail_kwh",
+            "pv_to_bat_planned", "pv_to_cwu_planned", "pv_to_ev_planned",
+            "pv_export_planned", "pv_curtail_planned",
+        )
+
+        scopes = {"all_history": None}
+        if "actual_recorded_at" in names:
+            scopes["open_slots"] = "actual_recorded_at IS NULL"
+        if {"actual_recorded_at", "plan_stage_version"}.issubset(names):
+            scopes["current_contract_open_slots"] = (
+                "actual_recorded_at IS NULL AND plan_stage_version='CORE_0_33_0'"
+            )
+
+        scope_checks = {}
+        for scope, scope_predicate in scopes.items():
+            where = f" WHERE {scope_predicate}" if scope_predicate else ""
+            cur.execute(f"SELECT COUNT(*) n FROM `{table}`{where}")
+            scope_result = {"row_count": int(cur.fetchone()["n"]), "checks": {}}
+            for key, predicate in check_sql.items():
+                referenced = {token for token in referenced_columns if token in predicate}
+                if referenced.issubset(names):
+                    conjunction = f"({scope_predicate}) AND ({predicate})" if scope_predicate else predicate
+                    cur.execute(f"SELECT COUNT(*) n FROM `{table}` WHERE {conjunction}")
+                    scope_result["checks"][key] = int(cur.fetchone()["n"])
+                else:
+                    scope_result["checks"][key] = None
+            scope_checks[scope] = scope_result
+
+        checks = scope_checks["all_history"]["checks"]
 
     duplicate_groups = {
         "time_projection": [name for name in (
@@ -183,12 +199,16 @@ def audit_slot_columns(*, db, schema_name: str, log) -> dict:
         "read_only": True, "row_count": row_count,
         "column_count": len(columns), "columns": columns,
         "populated_rows": populated, "duplicate_groups": duplicate_groups,
-        "consistency_checks": checks,
+        "consistency_checks": checks, "scope_checks": scope_checks,
     }
     log.info("slot_column_audit_summary %s", json.dumps({
         "table": table, "row_count": row_count, "column_count": len(columns),
-        "consistency_checks": checks,
+        "duplicate_groups": duplicate_groups, "scope_checks": scope_checks,
     }, ensure_ascii=False, default=str))
+    for column in columns:
+        detail = dict(column)
+        detail["populated_rows"] = populated[column["column_name"]]
+        log.info("slot_column_audit_column %s", json.dumps(detail, ensure_ascii=False, default=str))
     return result
 
 
