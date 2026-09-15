@@ -45,9 +45,12 @@ class WebUiContractTests(unittest.TestCase):
     def test_active_slot_has_compact_local_time_and_energy_balance(self):
         self.assertIn("id='slotBalance'", HTML)
         self.assertIn("slot.textContent=formatInstantWarsaw(s.active_slot)", HTML)
-        self.assertIn("PV ${n(eb.forecast_pv_total_kwh)} + BAT", HTML)
+        self.assertIn("PV ${n(eb.pv_balance_kwh)} + BAT", HTML)
+        self.assertIn("zakup ${n(eb.grid_import_kwh)}", HTML)
+        self.assertIn("ładowanie ${n(eb.battery_charge_input_kwh)}", HTML)
         self.assertIn("sprzedaż BAT ${n(eb.planned_sell_kwh)}", HTML)
         self.assertIn('payload["active_slot_balance"]', API)
+        self.assertIn('battery_output = values["planned_battery_discharge_kwh"] * eta_d', API)
         self.assertIn('"difference_kwh": round(supply - demand, 6)', API)
 
     def test_diagnostics_are_newest_first_and_show_refresh_time(self):
