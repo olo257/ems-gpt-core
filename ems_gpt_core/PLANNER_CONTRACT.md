@@ -120,12 +120,12 @@ Wyzerowanie końcowego zakupu przez wcześniejsze PV nie usuwa samej granicy
 uzupełnienia w następnym przebiegu; okno i kupiona energia są odrębnymi polami
 kontraktu. Zapobiega to oscylacji ścieżki `BUY → PV → brak BUY → BUY`.
 
-Ta sama zasada dotyczy okna PV: target wymagany na końcu wykonalnego okna PV
-jest propagowany wstecz jako sufit ładowania na wszystkie wcześniejsze sloty
-przypisane do tego uzupełnienia. Pierwsza dostępna nadwyżka PV ładuje baterię
-do tego targetu. Planer nie może pozostawić lokalnego targetu na technicznym
-minimum i eksportować wcześniejszego PV w oczekiwaniu na późniejszy slot tego
-samego okna.
+Ta sama zasada dotyczy całego ciągłego okna produkcji PV: największy wymagany
+target tego okna jest jego sufitem ładowania od pierwszego slotu z prognozowaną
+produkcją. Pierwsza dostępna nadwyżka PV ładuje baterię do tego targetu.
+Wybrany BUY rozdziela dwa mosty energetyczne. Planer nie może pozostawić
+lokalnego targetu na technicznym minimum i eksportować wcześniejszego PV w
+oczekiwaniu na późniejszy slot tego samego okna.
 
 Techniczne minimum SOC jest granicą awaryjną, nie celem operacyjnym. Planowana
 ścieżka nie może celowo sprowadzać baterii do tej wartości ani uzależniać
