@@ -7,6 +7,9 @@
   planowana sprzedaż baterii wynosi zero również w ekonomicznym oknie SELL.
 - Publikacja planu jest blokowana przez `SALE_TARGET_VIOLATION`, jeżeli celowa
   sprzedaż kończy slot poniżej targetu energetycznego.
+- Przy każdym otwarciu slotu Core publikuje do Home Assistant obie ceny z tego
+  samego rekordu `ems_gpt_slots`. Sensory `sensor.gpt_ems_cena_zakupu` oraz
+  `sensor.gpt_ems_cena_sprzedazy` nie zależą już od starego modelu RCE.
 - Wykonawca pozostaje domyślnie wyłączony.
 
 ## 0.34.3
