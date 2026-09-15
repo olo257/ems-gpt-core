@@ -133,16 +133,17 @@ class PairedArbitrageTests(unittest.TestCase):
         ]
         selected = {2}
         contract = backward_target_commitments(
-            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 30.0,
+            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 35.0,
             0.25, selected)
         result = optimize_energy_horizon(
             rows, 30.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * len(rows), 30.0, 0.25, 100.0,
+            5.0, 15, [15.0] * len(rows), 35.0, 0.25, 100.0,
             contract["targets"], {2}, False, {2})
 
         self.assertGreater(result["flows"][0]["pv_to_bat_kwh"], 0.0)
         self.assertGreater(result["flows"][1]["pv_to_bat_kwh"], 0.0)
-        self.assertLess(result["flows"][0]["pv_export_kwh"], 0.02)
+        self.assertEqual(result["flows"][0]["pv_export_kwh"], 0.0)
+        self.assertEqual(result["flows"][1]["pv_export_kwh"], 0.0)
         self.assertLess(result["flows"][2]["grid_charge_kwh"], 0.75)
 
     def test_hard_target_rejects_unfunded_discharge(self):

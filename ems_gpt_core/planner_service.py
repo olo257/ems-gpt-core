@@ -291,6 +291,20 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     pv_export = max(0.0, surplus-pv_to_bat) if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_to_bat-pv_export)
                     battery_discharge = 0.0
+                    battery_charge_internal = max(0.0, delta)
+                    # SOC is intentionally quantized to 0.25%, while physical
+                    # PV energy is continuous. Below target the sub-step
+                    # remainder still belongs to the battery; it must never be
+                    # reclassified as export merely because it cannot advance
+                    # the displayed SOC state by a complete step.
+                    if (minimum_soc_targets is not None
+                            and next_unit < requested_target_unit
+                            and pv_export > 1e-9):
+                        fractional_pv = pv_export
+                        pv_to_bat += fractional_pv
+                        battery_charge_internal += fractional_pv * eta_c
+                        pv_export = 0.0
+                        pv_curtail = 0.0
                 else:
                     battery_discharge = -delta
                     delivered = battery_discharge * eta_d
@@ -303,6 +317,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     grid_load = max(0.0, deficit-battery_to_load)
                     pv_export = surplus if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_export)
+                    battery_charge_internal = 0.0
                 # Do not choose grid-only supply for the house while usable
                 # battery energy exists. The sole exception is an economic
                 # hold for a later sale; normal BUY always charges the battery.
@@ -352,7 +367,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                         "grid_charge_kwh": grid_charge, "grid_load_kwh": grid_load,
                         "battery_to_load_kwh": battery_to_load, "battery_sell_kwh": battery_sell,
                         "battery_discharge_internal_kwh": battery_discharge,
-                        "battery_charge_internal_kwh": max(0.0, delta),
+                        "battery_charge_internal_kwh": battery_charge_internal,
                         "pv_export_kwh": pv_export, "pv_curtail_kwh": pv_curtail,
                         "slot_cost_pln": slot_cost})
         if not next_costs:

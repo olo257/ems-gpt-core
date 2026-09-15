@@ -1,3 +1,9 @@
+## 0.34.3
+
+- Cała nadwyżka PV poniżej `soc_target` jest przypisywana do baterii, także
+  gdy jest mniejsza niż krok prognozy SOC 0,25%. Kwantyzacja SOC nie może już
+  tworzyć fałszywego eksportu ani rekomendacji `Sprzedaż PV`.
+
 ## 0.34.2
 
 - Wybrane okno BUY wyznacza termin osiągnięcia `soc_target`, ale nie obniża
