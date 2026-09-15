@@ -13,6 +13,7 @@ WEBUI = (ROOT / "webui.html").read_text(encoding="utf-8")
 PYTHON_SOURCE = "\n".join([APP_SOURCE, *MODULE_SOURCES.values()])
 SOURCE = PYTHON_SOURCE + "\n" + WEBUI
 CONFIG = (ROOT / "config.yaml").read_text(encoding="utf-8")
+PLANNER_CONTRACT = (ROOT / "PLANNER_CONTRACT.md").read_text(encoding="utf-8")
 
 
 class OfflineContractTests(unittest.TestCase):
@@ -23,8 +24,16 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.34.5"', APP_SOURCE)
-        self.assertIn('version: "0.34.5"', CONFIG)
+        self.assertIn('APP_VERSION = "0.35.0"', APP_SOURCE)
+        self.assertIn('version: "0.35.0"', CONFIG)
+
+    def test_planner_contract_is_versioned_and_keeps_core_definitions(self):
+        self.assertIn("kanoniczny kontrakt RCE, planera i SOC", PLANNER_CONTRACT)
+        self.assertIn("`soc_target` jest zapotrzebowaniem energetycznym", PLANNER_CONTRACT)
+        self.assertIn("`soc_floor` jest wyłącznie dolną granicą", PLANNER_CONTRACT)
+        self.assertIn("PV + rozładowanie baterii + import", PLANNER_CONTRACT)
+        self.assertIn("ładowanie baterii do `soc_target`", PLANNER_CONTRACT)
+        self.assertIn("pozostawia ostatni poprawny plan", PLANNER_CONTRACT)
 
     def test_modular_runtime_boundaries(self):
         self.assertIn("from observer_service import", APP_SOURCE)
@@ -92,6 +101,13 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('json.loads(prior_rce.get("payload_json")', loop)
         self.assertIn('"RCE import completed: status=%s rows=%s/%s planner=%s"', loop)
         self.assertIn('"RCE import failed: target=%s"', loop)
+        self.assertIn('"rce_dependent_cycle_failed"', APP_SOURCE)
+        self.assertIn('"planner": {"status": "ERROR", "error": str(exc)}', APP_SOURCE)
+        self.assertIn('"RCE dependent cycle failed after complete import"', APP_SOURCE)
+        self.assertIn('should_run_slot_replan(clock, start, last_run, rce_done)', loop)
+        self.assertIn('"slot_replan"', loop)
+        self.assertNotIn('"hourly_replan"', loop)
+        self.assertIn('"slot_replan_failed"', loop)
         self.assertIn('"RCE state restored: status=ALREADY_COMPLETED rows=%s/%s target=%s"', loop)
         self.assertIn("id='rceStatus'", WEBUI)
         self.assertIn("rs.rows??'—'", WEBUI)

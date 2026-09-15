@@ -43,6 +43,21 @@ def rce_event_keys(clock: datetime) -> tuple[str, ...]:
             f"RCE_{clock.date() - timedelta(days=1)}_NEXT")
 
 
+def should_run_slot_replan(clock: datetime, current_slot: datetime,
+                           last_published_at: datetime | None,
+                           rce_ready: bool) -> bool:
+    """Run at most once per open slot, after inputs settle and only with valid RCE."""
+    if not rce_ready or clock.hour == 0:
+        return False
+    minute_in_slot = clock.minute % 15
+    if minute_in_slot < 2 or minute_in_slot > 6:
+        return False
+    if last_published_at is None:
+        return True
+    published = last_published_at.replace(tzinfo=None)
+    return published < current_slot.replace(tzinfo=None)
+
+
 def update_telemetry_health(state: dict, lock: Any, telemetry_ok: bool,
                             now_utc: datetime, degraded_after: int = 120,
                             stale_after: int = 300) -> dict:
@@ -121,6 +136,7 @@ def run_scheduler(a: SchedulerAdapters) -> None:
         start = a.slot_start(clock)
         key = start.isoformat()
         error = None
+        planner_health = a.state.get("modules", {}).get("planner", "STARTING")
         try:
             telemetry_ok = a.capture_telemetry()
             health = update_telemetry_health(
@@ -156,7 +172,6 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 previous = key
             minute = clock.minute
             hour = clock.hour
-            blackout = hour in (0, 14)
             with a.db() as conn, conn.cursor() as cur:
                 cur.execute("SELECT MAX(published_at) last_run FROM ems_gpt_plan_runs WHERE status='PUBLISHED'")
                 last_run = cur.fetchone()["last_run"]
@@ -201,6 +216,7 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                         a.record_event(rce_key, "core", result)
                         completed = a.complete_rce_cycle(result, "rce_import")
                     planner_status = completed.get("planner", {}).get("status")
+                    planner_health = "RUNNING" if planner_status == "ACCEPTED" else "DEGRADED"
                     with a.lock:
                         a.state["rce"] = {
                             "status": result.get("status"), "target_day": str(target),
@@ -220,11 +236,20 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                         }
                     a.log.exception("RCE import failed: target=%s", target)
                     raise
-            due = minute in (7, 22, 37, 52) and not blackout and (
-                last_run is None or a.local_now().replace(tzinfo=None) - last_run >= timedelta(minutes=55)
-            )
-            if due:
-                a.run_serialized("planner", a.run_planner, "hourly_replan")
+            if should_run_slot_replan(clock, start, last_run, rce_done):
+                try:
+                    replan = a.run_serialized("planner", a.run_planner, "slot_replan")
+                    planner_health = "RUNNING" if replan.get("status") != "WAITING" else "WAITING"
+                    a.record_event("slot_replan_completed", "planner", {
+                        "slot_start": key, **replan,
+                    })
+                except Exception as exc:
+                    planner_health = "DEGRADED"
+                    a.record_event("slot_replan_failed", "planner", {
+                        "slot_start": key, "error": str(exc),
+                        "last_published_at": last_run,
+                    }, "ERROR")
+                    a.log.exception("slot replan failed: slot=%s", key)
             # Never issue fresh control commands from stale or absent HA input.
             if telemetry_ok:
                 a.stage_executor_commands()
@@ -252,7 +277,9 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 a.state["appliances"] = appliance_result
                 a.state["backup"] = backup_result
                 a.state["modules"].update(
-                    core="RUNNING", planner="RUNNING", ppd="RUNNING", analytics="RUNNING",
+                    core="RUNNING", planner=planner_health,
+                    ppd="RUNNING" if planner_health == "RUNNING" else planner_health,
+                    analytics="RUNNING",
                     diagnostics="RUNNING",
                     appliances="RUNNING" if appliance_result.get("status") == "OK" else appliance_result.get("status"),
                     backup=backup_result.get("status"),

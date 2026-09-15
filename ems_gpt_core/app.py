@@ -35,7 +35,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.34.5"
+APP_VERSION = "0.35.0"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -320,13 +320,24 @@ maintain_backup = build_backup_service(BackupAdapters(
 
 
 def complete_rce_cycle(result: dict, run_type: str) -> dict:
-    """Refresh dependent inputs and atomically publish PPD after a complete RCE day."""
+    """Run post-import work without changing the outcome of a complete RCE import."""
     if result.get("status") != "OK" or int(result.get("rows") or 0) != int(result.get("expected") or 0):
         return {**result, "planner": {"status": "WAITING_FOR_COMPLETE_RCE_DAY"}}
-    pv = refresh_pv_forecast()
-    weather = refresh_weather_forecast()
-    learned = learn_missing_load()
-    plan = run_planner(run_type)
+    try:
+        pv = refresh_pv_forecast()
+        weather = refresh_weather_forecast()
+        learned = learn_missing_load()
+        plan = run_serialized("planner", run_planner, run_type)
+    except Exception as exc:
+        # RCE completeness is an ingestion fact. A downstream failure must not
+        # turn 96 imported prices into a failed or retryable import.
+        failed = {
+            **result,
+            "planner": {"status": "ERROR", "error": str(exc)},
+        }
+        record_event("rce_dependent_cycle_failed", "core", failed, "ERROR")
+        LOG.exception("RCE dependent cycle failed after complete import")
+        return failed
     completed = {**result, "pv": pv, "weather": weather,
                  "load_slots_filled": learned, "planner": {"status": "ACCEPTED", **plan}}
     record_event("rce_dependent_cycle_completed", "core", completed)

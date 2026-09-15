@@ -1,5 +1,10 @@
 # EMS-GPT Core
 
+Kanoniczne, obowiązujące definicje oraz kolejność działania RCE, planera,
+replanów, bilansu energii, `soc_target` i `soc_floor` znajdują się w
+[`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Kod i testy nie mogą być z nim
+sprzeczne.
+
 ## Dostosowanie tabel
 
 W panelu dodatku otwórz kartę **Konfiguracja**, a następnie sekcję **Kolumny tabel**.
@@ -180,3 +185,16 @@ RCE bieżącego slotu jest pobierane bezpośrednio z `ems_gpt_slots`; aplikacja 
 sensora `sensor.ems_gpt_rce_pse_current`. Po awarii aplikacja domyślnie odbudowuje
 SLOT/HOUR/DAILY z ostatnich 7 dni. Zakres można zmienić w karcie Konfiguracja parametrem
 „Zakres odtwarzania po awarii [dni]”.
+# Kontrakt importu RCE i planera
+
+- Import RCE jest zakończony wyłącznie po walidacji kompletnego dnia cenowego
+  (`rows == expected`, standardowo `96/96`; dni zmiany czasu mogą mieć inną
+  liczbę slotów).
+- Kompletność cen i wykonalność planu są niezależnymi stanami. Zatwierdzony
+  import pozostaje poprawny, gdy późniejsze odświeżenie prognoz lub planer
+  zgłosi błąd.
+- Błąd etapu zależnego ma status `planner=ERROR` i zdarzenie
+  `rce_dependent_cycle_failed`. Nie wolno raportować go jako błędu importu RCE,
+  ponawiać z tego powodu pobierania ani zastępować kompletnego dnia częściowym.
+- Plan może zostać opublikowany dopiero po kompletnym imporcie RCE i własnej
+  walidacji wykonalności.
