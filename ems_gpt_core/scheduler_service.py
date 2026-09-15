@@ -8,6 +8,33 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 
+def publish_current_slot_prices(db: Callable, current_slot: datetime,
+                                ha_service_response: Callable) -> dict:
+    """Publish both prices from the same active Core slot to HA helpers."""
+    start = current_slot.replace(tzinfo=None)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT price_buy_pln_kwh,price_sell_pln_kwh
+          FROM ems_gpt_slots WHERE slot_start=%s LIMIT 1""", (start,))
+        row = cur.fetchone()
+    if not row or row.get("price_buy_pln_kwh") is None or row.get("price_sell_pln_kwh") is None:
+        return {"status": "MISSING_SLOT_PRICE", "slot_start": start.isoformat()}
+    prices = {
+        "input_number.optymalizator_deye_cena_zakupu": round(
+            float(row["price_buy_pln_kwh"]), 3),
+        "input_number.ems_gpt_cena_sprzedazy_biezaca": round(
+            float(row["price_sell_pln_kwh"]), 3),
+    }
+    for entity_id, value in prices.items():
+        result = ha_service_response(
+            "input_number", "set_value",
+            {"entity_id": entity_id, "value": value},
+        )
+        if result is None:
+            return {"status": "HA_WRITE_FAILED", "slot_start": start.isoformat(),
+                    "entity_id": entity_id}
+    return {"status": "OK", "slot_start": start.isoformat(), "prices": prices}
+
+
 def rce_event_keys(clock: datetime) -> tuple[str, ...]:
     """Return valid completion markers for the price day visible after restart."""
     if clock.hour >= 14:
@@ -81,6 +108,7 @@ class SchedulerAdapters:
     generate_diagnostic_report: Callable
     capture_appliances: Callable
     maintain_backup: Callable
+    publish_current_prices: Callable
 
 
 def run_scheduler(a: SchedulerAdapters) -> None:
@@ -120,6 +148,9 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 a.run_serialized("slot_materializations", a.rebuild_recovery_materializations, 1)
                 a.refresh_pv_forecast()
                 a.refresh_weather_forecast()
+                price_result = a.publish_current_prices(start)
+                if price_result.get("status") != "OK":
+                    a.log.warning("current slot price publication failed: %s", price_result)
                 a.record_event("slot_opened", "core",
                                {"slot_start": key, "recovered_after_restart": previous is None})
                 previous = key
