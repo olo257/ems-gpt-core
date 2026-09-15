@@ -862,8 +862,11 @@ def build_planner(a: PlannerAdapters):
                 horizon_rows.append(work)
                 program = active_tou_program(row["slot_start"], tou_programs)
                 tou_by_index.append(program)
-                sale_constraints.append(max(reserve, float(program["soc"])) if program else 100.0)
-            terminal_soc = sale_constraints[-1] if sale_constraints[-1] < 100 else reserve
+                # The TOU program SOC is an executor baseline, not a planning
+                # floor.  Deliberate export is allowed only in SELL windows;
+                # its exact stop SOC is derived from the accepted flow below.
+                sale_constraints.append(reserve if work["sale_window"] else 100.0)
+            terminal_soc = reserve
             audit_stage(cur,run_id,"WINDOW_CANDIDATES","OK",len(rows),"pass 1: full horizon")
             audit_stage(cur,run_id,"LOAD","OK",len(rows),"pass 2: native and controllable load")
             audit_stage(cur,run_id,"PV","OK",len(rows),"pass 3: corrected PV balance")
@@ -894,12 +897,8 @@ def build_planner(a: PlannerAdapters):
                     uncertainty_weight, target_cap, terminal_soc, 0.25,
                     new_selected)
                 targets = [
-                    min(target_cap, max(
-                        commitment["targets"][i],
-                        optimized_floors[i] if strict_database_bool(
-                            row.get("sale_window"), "sale_window") else reserve,
-                    ))
-                    for i, row in enumerate(horizon_rows)
+                    min(target_cap, max(reserve, commitment["targets"][i]))
+                    for i, _row in enumerate(horizon_rows)
                 ]
                 target_due_indices = {
                     i for i in new_selected
@@ -949,7 +948,7 @@ def build_planner(a: PlannerAdapters):
                 if final_selected != selected_buy_indices:
                     raise RuntimeError("SOC_TARGET_PATH_CHANGED_AFTER_GRID_HOLD")
             ensure_deadline("DISPATCH")
-            bridge_floors = list(sale_constraints)
+            bridge_floors = [reserve] * len(horizon_rows)
             for index, flow in enumerate(optimization["flows"]):
                 row = horizon_rows[index]
                 battery_sell = float(flow.get("battery_sell_kwh") or 0.0)
@@ -999,8 +998,15 @@ def build_planner(a: PlannerAdapters):
             purchase_slots=sum(float(flow["grid_charge_kwh"])>flow_threshold for flow in optimization["flows"])
             audit_stage(cur,run_id,"REPLENISHMENT","OK",purchase_slots,
                         "pass 5: load, falling PV, sale preparation and recovery")
-            floors = [max(sale_constraints[index], bridge_floors[index])
-                      for index in range(len(rows))]
+            # ``soc_floor`` is the stop level of a concrete, accepted battery
+            # sale.  It is not copied from TOU and it never limits native-load
+            # discharge.  Non-sale slots publish only the technical reserve.
+            floors = [
+                max(reserve, min(100.0, float(flow.get("soc_end_pct") or reserve)))
+                if float(flow.get("battery_sell_kwh") or 0.0) > flow_threshold
+                else reserve
+                for flow in optimization["flows"]
+            ]
             base=[{"row":row,**flow} for row,flow in zip(rows,optimization["flows"])]
             # Flexible PV is outside the core battery/load balance.  Its
             # opportunity cost is the next feasible battery BUY: use surplus
@@ -1010,8 +1016,6 @@ def build_planner(a: PlannerAdapters):
             for i,item in enumerate(base):
                 row=item["row"]
                 tou_program=tou_by_index[i]
-                tou_floor=float(tou_program["soc"]) if tou_program else None
-                effective_floor=max(reserve,tou_floor) if tou_floor is not None else reserve
                 tou_block_reason=None if tou_program else "TOU_FLOOR_UNAVAILABLE"
                 target=targets[i]
                 item["start"],item["end"]=item["soc_start_pct"],item["soc_end_pct"]
@@ -1028,7 +1032,7 @@ def build_planner(a: PlannerAdapters):
                 item["sell"]=item["battery_sell_kwh"]
                 sell_price=float(row.get("price_sell_pln_kwh") or 0)
                 sell_bat=item["sell"]>flow_threshold
-                floor=min(floor_cap,max(reserve,floors[i],effective_floor if sell_bat else reserve))
+                floor=floors[i]
                 paired_buy=buy>flow_threshold and any(float(previous["battery_sell_kwh"])>flow_threshold for previous in optimization["flows"][:i])
                 buy_purpose="POST_SALE_RECOVERY" if paired_buy else "FUTURE_LOAD_OR_SALE_PREPARATION" if buy>flow_threshold else "NONE"
                 grid_hold=(item["grid_load_kwh"]>technical_threshold and buy<=flow_threshold
