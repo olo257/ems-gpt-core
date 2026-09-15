@@ -53,10 +53,30 @@ class PairedArbitrageTests(unittest.TestCase):
         contract = backward_target_commitments(
             rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0)
 
-        self.assertEqual(contract["targets"][0], 15.0)
+        self.assertEqual(contract["targets"][0], contract["targets"][1])
         self.assertGreater(contract["targets"][1], 15.0)
         self.assertGreater(contract["reserved_pv_kwh"][1], 0.5)
         self.assertEqual(contract["source"][0], "PV")
+
+    def test_early_pv_in_same_replenishment_window_inherits_closing_target(self):
+        rows = [
+            {"buy_window": False, "forecast_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0, "slot_start": index,
+             "slot_end": index + 1}
+            for index in range(4)
+        ]
+        rows[1]["forecast_pv_total_kwh"] = 0.20
+        rows[2]["forecast_pv_total_kwh"] = 1.00
+        rows[3]["forecast_load_kwh"] = 0.50
+
+        contract = backward_target_commitments(
+            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0)
+
+        self.assertEqual(contract["source"][1], "PV")
+        closing = next(i for i, row in enumerate(rows)
+                       if row["slot_end"] == contract["due"][1])
+        self.assertGreater(contract["targets"][1], 15.0)
+        self.assertEqual(contract["targets"][1], contract["targets"][closing])
 
     def test_backward_target_buy_boundary_covers_later_load(self):
         rows = [
@@ -102,7 +122,8 @@ class PairedArbitrageTests(unittest.TestCase):
 
         self.assertEqual(contract["source"][1], "PV")
         self.assertEqual(contract["due"][1], 3)
-        self.assertEqual(contract["targets"][1], 15.0)
+        self.assertEqual(contract["targets"][1], contract["targets"][2])
+        self.assertGreater(contract["targets"][1], 15.0)
 
     def test_buy_boundary_keeps_requirement_above_its_power_limit(self):
         rows = [
