@@ -761,6 +761,11 @@ def build_planner(a: PlannerAdapters):
             source = list(cur.fetchall())
             if not source:
                 raise RuntimeError("No open forecast rows for planner horizon")
+            missing_load = [str(row["slot_start"]) for row in source
+                            if row.get("forecast_load_kwh") is None]
+            if missing_load:
+                raise RuntimeError(
+                    f"MISSING_LOAD_FORECAST:{len(missing_load)}:{missing_load[0]}")
             continuity = all(
                 source[i]["slot_start"] - source[i - 1]["slot_start"] == timedelta(minutes=15)
                 for i in range(1, len(source))
@@ -1106,7 +1111,8 @@ def build_planner(a: PlannerAdapters):
                 recommendation=("Zakup ładowanie" if buy>flow_threshold else "Sprzedaż z baterii" if sell_bat else
                     "Sprzedaż PV" if item["pv_export"]>flow_threshold else "Ładowanie PV" if item["charge"]>flow_threshold else
                     "Autokonsumpcja PV" if pv>flow_threshold else "Autokonsumpcja z baterii" if item["battery_to_load_kwh"]>flow_threshold else
-                    "Ochrona SOC przed sprzedażą" if grid_hold else "Zasilanie z sieci")
+                    "Ochrona SOC przed sprzedażą" if grid_hold else
+                    "Zasilanie z sieci" if item["grid_load_kwh"]>technical_threshold else "Neutralny")
                 reason=(f"optimizer=FULL_HORIZON; horizon_slots={len(base)}; objective_pln={optimization['objective_pln']:.3f}; "
                         f"slot_cost_pln={item['slot_cost_pln']:.3f}; grid={grid_policy}; export={export_policy}; "
                         f"soc={item['end']:.2f}; floor={floor:.2f}; target={target:.2f}; hp_load_kwh={hp_load:.3f}; "
