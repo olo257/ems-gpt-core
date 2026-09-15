@@ -34,6 +34,22 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("window.fetch=(url,options={})=>nativeFetch(url,{cache:'no-store',...options})", HTML)
         self.assertIn('self.send_header("Cache-Control", "no-store")', API)
 
+    def test_module_tiles_are_stable_and_only_text_is_refreshed(self):
+        self.assertIn("grid-auto-rows:92px", HTML)
+        self.assertIn("height:92px", HTML)
+        self.assertIn("window.updateModuleTiles=state=>", HTML)
+        self.assertIn("tile.value.textContent=status", HTML)
+        self.assertNotIn("modules.innerHTML=Object.entries", HTML)
+        self.assertIn("id='rceModuleTile' class='module-tile'", HTML)
+
+    def test_active_slot_has_compact_local_time_and_energy_balance(self):
+        self.assertIn("id='slotBalance'", HTML)
+        self.assertIn("slot.textContent=formatInstantWarsaw(s.active_slot)", HTML)
+        self.assertIn("PV ${n(eb.forecast_pv_total_kwh)} + BAT", HTML)
+        self.assertIn("sprzedaż BAT ${n(eb.planned_sell_kwh)}", HTML)
+        self.assertIn('payload["active_slot_balance"]', API)
+        self.assertIn('"difference_kwh": round(supply - demand, 6)', API)
+
     def test_diagnostics_are_newest_first_and_show_refresh_time(self):
         self.assertIn("ems_gpt_core_diagnostic_reports ORDER BY created_at DESC", API)
         self.assertIn("Ostatnie odświeżenie:", HTML)
