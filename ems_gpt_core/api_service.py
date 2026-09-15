@@ -103,7 +103,39 @@ def build_handler(a: ApiAdapters):
                                "last_telemetry_success": STATE.get("last_telemetry_success")}
                 return self.json(payload, HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE)
             if path.endswith("/api/status") or path == "/api/status":
-                with LOCK: return self.json(dict(STATE))
+                with LOCK:
+                    payload = dict(STATE)
+                try:
+                    current = slot_start().replace(tzinfo=None)
+                    with db() as conn, conn.cursor() as cur:
+                        cur.execute("""SELECT slot_start,forecast_pv_total_kwh,
+                          forecast_load_kwh,planned_battery_discharge_kwh,
+                          planned_buy_kwh,planned_battery_charge_kwh,planned_sell_kwh
+                          FROM ems_gpt_slots WHERE slot_start=%s LIMIT 1""", (current,))
+                        row = cur.fetchone()
+                    if row:
+                        values = {key: max(0.0, float(row.get(key) or 0.0)) for key in (
+                            "forecast_pv_total_kwh", "forecast_load_kwh",
+                            "planned_battery_discharge_kwh", "planned_buy_kwh",
+                            "planned_battery_charge_kwh", "planned_sell_kwh")}
+                        supply = (values["forecast_pv_total_kwh"]
+                                  + values["planned_battery_discharge_kwh"]
+                                  + values["planned_buy_kwh"])
+                        demand = (values["forecast_load_kwh"]
+                                  + values["planned_battery_charge_kwh"]
+                                  + values["planned_sell_kwh"])
+                        payload["active_slot_balance"] = {
+                            "slot_start": row["slot_start"], **values,
+                            "supply_kwh": round(supply, 6),
+                            "demand_kwh": round(demand, 6),
+                            "difference_kwh": round(supply - demand, 6),
+                        }
+                    else:
+                        payload["active_slot_balance"] = None
+                except Exception as exc:
+                    LOG.warning("active slot balance unavailable: %s", type(exc).__name__)
+                    payload["active_slot_balance"] = None
+                return self.json(payload)
             if path.endswith("/api/settings") or path == "/api/settings":
                 return self.json({"settings": settings_payload()})
             if path.endswith("/api/database-audit") or path == "/api/database-audit":
