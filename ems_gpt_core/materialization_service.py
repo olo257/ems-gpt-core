@@ -453,16 +453,32 @@ def build_materializations(a: MaterializationAdapters):
         updated=0; cutoff=slot_start().replace(tzinfo=None)
         with db() as conn,conn.cursor() as cur:
             cur.execute("""SELECT slot_start FROM ems_gpt_slots WHERE slot_start>=%s
-              AND actual_recorded_at IS NULL AND forecast_load_kwh IS NULL ORDER BY slot_start LIMIT 192""",(cutoff,))
+              AND actual_recorded_at IS NULL AND forecast_load_kwh IS NULL ORDER BY slot_start""",(cutoff,))
             for row in cur.fetchall():
                 s=row["slot_start"]
                 cur.execute("""SELECT trimmed_mean_kwh,sample_count FROM ems_gpt_core_load_profiles
                   WHERE weekday_no=%s AND hour_no=%s AND minute_no=%s""",(s.weekday(),s.hour,s.minute))
                 profile=cur.fetchone()
-                if profile and int(profile["sample_count"] or 0)>=3:
+                if profile and int(profile["sample_count"] or 0)>=1:
                     value=float(profile["trimmed_mean_kwh"])
                     cur.execute("UPDATE ems_gpt_slots SET forecast_load_kwh=%s,load_correction=1 WHERE slot_start=%s",(round(value,6),s))
                     updated+=cur.rowcount
+                    continue
+                # A complete price horizon must never become an apparent
+                # zero-load horizon merely because a specific weekday profile
+                # has fewer than three samples. Use the recent measured base
+                # load as a conservative temporary forecast until learning
+                # provides the slot-specific profile.
+                cur.execute("""SELECT AVG(actual_load_kwh) value FROM (
+                  SELECT actual_load_kwh FROM ems_gpt_slots
+                  WHERE actual_load_kwh IS NOT NULL AND actual_load_kwh>0
+                    AND slot_start<%s ORDER BY slot_start DESC LIMIT 288
+                ) recent""", (s,))
+                fallback=cur.fetchone()
+                value=float((fallback or {}).get("value") or 0.3125)
+                cur.execute("UPDATE ems_gpt_slots SET forecast_load_kwh=%s,load_correction=1 WHERE slot_start=%s",
+                            (round(max(0.05,value),6),s))
+                updated+=cur.rowcount
         return updated
 
     return SimpleNamespace(

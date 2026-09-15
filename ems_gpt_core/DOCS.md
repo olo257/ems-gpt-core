@@ -100,6 +100,10 @@ Nie ma dostępu do bazy rekordera Home Assistant. Migracja początkowa 50 tabel
   target z wybranej ścieżki uzupełnień i ponawia optymalizację do zbieżności.
   Dzięki temu tani wcześniejszy BUY może pokryć zużycie ponad późniejszym,
   drogim oknem BUY, jeżeli pozwalają na to pojemność i moc 5 kW.
+- Pełny horyzont oznacza wszystkie ciągłe, niezamknięte sloty z zatwierdzonym
+  RCE aż do ostatniego dostępnego slotu, także po przejściu do następnej doby.
+  Plan nie jest ograniczany do 96 rekordów. Brak prognozy zużycia w choćby
+  jednym slocie blokuje publikację zamiast tworzyć pozornie neutralny odcinek.
 - Termin BUY nie obniża targetu w poprzedzających slotach. Wcześniejsze PV
   ładuje baterię do targetu, gdy zastępuje droższą energię sieciową; dopiero
   nadwyżka ponad ten kontrakt może zostać skierowana do sprzedaży/CWU/EV.
