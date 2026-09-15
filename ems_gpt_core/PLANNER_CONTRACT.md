@@ -103,6 +103,12 @@ SOC, sprawność i progi techniczne.
 wykonalnego źródła uzupełnienia: prognozowanego PV albo wybranego okna BUY.
 Jednocześnie jest sufitem ładowania z sieci w oknie BUY.
 
+Jeżeli ekonomiczny przebieg wybrał przyszłe okno BUY, jego wynikowy target jest
+również sufitem ładowania z PV w poprzedzającym odcinku prowadzącym do tego
+okna. Nie jest tam jeszcze obowiązkowym minimum SOC. Dzięki temu PV ma zawsze
+pierwszeństwo i może zmniejszyć albo całkowicie wyeliminować późniejszy zakup;
+obowiązek osiągnięcia targetu powstaje dopiero na końcu wybranego okna BUY.
+
 Target obejmuje:
 
 - prognozowane zużycie do granicy uzupełnienia;
