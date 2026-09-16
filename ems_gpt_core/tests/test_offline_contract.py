@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.1"', APP_SOURCE)
-        self.assertIn('version: "0.36.1"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.2"', APP_SOURCE)
+        self.assertIn('version: "0.36.2"', CONFIG)
 
     def test_target_history_is_observational_only(self):
         analytics = MODULE_SOURCES["analytics_service.py"]
@@ -135,17 +135,16 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("database_ok and status_ok", api)
 
     def test_hp_manual_duration_and_external_priority(self):
-        self.assertIn('OPTIONS.get("hp_min_cycle_hours", 2.0)', SOURCE)
         self.assertNotIn("hpManualHours", SOURCE)
-        self.assertIn("if(process!=='HP_HEAT_DHW')body.minutes=60", SOURCE)
+        self.assertNotIn("body.minutes=60", SOURCE)
         self.assertIn("externally_started_hp_is_running", SOURCE)
         self.assertIn('"OVERRIDE" if requested else', SOURCE)
         self.assertIn('"EXTERNAL_MANUAL" if external_hp_on else "PLAN"', SOURCE)
         self.assertIn('requested != "FORCE_OFF"', SOURCE)
         self.assertIn('True if value.get("external_manual_on")', SOURCE)
-        self.assertIn('datetime(9999, 12, 31, 23, 59, 59)', SOURCE)
-        self.assertIn('BLOKADA BEZTERMINOWA', SOURCE)
-        self.assertIn("hpBlocked?'danger'", SOURCE)
+        self.assertIn('indefinite_override = requested in {"FORCE_ON", "FORCE_OFF"}', SOURCE)
+        self.assertIn("manualOff?'WYŁĄCZONY':'AUTO'", SOURCE)
+        self.assertIn("manualOff?'danger'", SOURCE)
         observed_position = SOURCE.index('observed = None if energy_value is None')
         external_position = SOURCE.index('external_manual = requested is None and observed == "RUNNING"')
         self.assertLess(observed_position, external_position)
