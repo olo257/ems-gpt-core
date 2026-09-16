@@ -81,14 +81,6 @@ def appliance_settings() -> dict:
 
 
 CONFIG_SETTINGS = {**BACKUP_SETTINGS, **appliance_settings()}
-CONFIG_SETTINGS.update({
-    "pv_cwu_automation_enabled": {
-        "type": "boolean", "label": "Automatyka PV→CWU", "group": "Prognozy i procesy"
-    },
-    "pv_ev_automation_enabled": {
-        "type": "boolean", "label": "Automatyka PV→EV", "group": "Prognozy i procesy"
-    },
-})
 CONFIG_SETTINGS["deye_program_soc_baseline_json"] = {
     "type": "text", "label": "Bazowe SOC programów Deye [JSON]", "group": "Bateria"
 }
@@ -108,8 +100,6 @@ DEFAULT_OPTIONS = {
     "minimum_arbitrage_margin_pln_kwh": 0.05,
     "pv_cwu_min_surplus_kw": 2.0,
     "pv_ev_min_surplus_kw": 1.5,
-    "pv_cwu_automation_enabled": True,
-    "pv_ev_automation_enabled": True,
     "forecast_uncertainty_weight": 1.0,
     "buy_window_tolerance_pln_kwh": 0.05,
     "planned_flow_threshold_kwh": 0.02,
