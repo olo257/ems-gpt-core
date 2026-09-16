@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Callable
 
 from ingestion_service import derive_price_windows
+from ppd_service import build_flexible_ppd
 
 
 def strict_database_bool(value, field: str) -> bool:
@@ -1096,6 +1097,25 @@ def build_planner(a: PlannerAdapters):
             # locally only when doing so is no worse than selling now and
             # replacing that energy at that BUY.  This pass never changes SOC.
             next_buy_price = next_replenishment_prices(horizon_rows)
+            # Flexible-load PPD is a downstream, read-only consumer of the
+            # completed SOC path. It cannot feed CWU/EV demand back into
+            # soc_target or the core optimization.
+            flexible_ppd = build_flexible_ppd([
+                {
+                    "slot_start": row["slot_start"],
+                    "local_day": row.get("local_day"),
+                    "soc_end_pct": flow["soc_end_pct"],
+                    "soc_target_pct": targets[i],
+                    "pv_flex_kwh": flow["pv_export_kwh"],
+                    "sell_battery": float(flow["battery_sell_kwh"]) > flow_threshold,
+                    "flexible_is_economic": (
+                        next_buy_price[i] is None
+                        or float(row.get("price_sell_pln_kwh") or 0.0)
+                        <= next_buy_price[i] + min_margin
+                    ),
+                }
+                for i, (row, flow) in enumerate(zip(rows, optimization["flows"]))
+            ], cwu_threshold_kwh=cwu_threshold, ev_threshold_kwh=ev_threshold)
             for i,item in enumerate(base):
                 row=item["row"]
                 tou_program=tou_by_index[i]
@@ -1127,14 +1147,16 @@ def build_planner(a: PlannerAdapters):
                 flexible_is_economic = (
                     replacement_value is None
                     or sell_price <= replacement_value + min_margin)
-                pv_cwu=(not sell_bat and flexible_is_economic
-                        and pv_flex>=cwu_threshold and item["end"]+0.01>=target)
-                cwu_kwh=min(pv_flex,0.625) if pv_cwu else 0.0
+                ppd_decision = flexible_ppd[i]
+                # Permission stays continuous through weak-PV gaps. Planned
+                # energy remains zero in such a gap; HA automations decide
+                # actual ON/OFF state from live surplus and appliance guards.
+                pv_cwu = ppd_decision.pv_cwu_allowed
+                cwu_kwh = min(pv_flex, 0.625) if ppd_decision.cwu_anchor else 0.0
                 after_cwu=max(0.0,pv_flex-cwu_kwh)
-                pv_ev=(not sell_bat and flexible_is_economic
-                       and after_cwu>=ev_threshold
-                       and item["end"]+0.01>=min(100,target+20))
-                ev_kwh=after_cwu if pv_ev else 0.0
+                pv_ev = ppd_decision.pv_ev_allowed
+                ev_kwh = (after_cwu if ppd_decision.ev_anchor
+                          and after_cwu >= ev_threshold else 0.0)
                 after_flex=max(0.0,after_cwu-ev_kwh)
                 pv_export_kwh=after_flex if sell_price>0 else 0.0
                 pv_curtail_kwh=after_flex-pv_export_kwh
@@ -1178,9 +1200,9 @@ def build_planner(a: PlannerAdapters):
                     ("BATTERY_IMPORT", grid_policy == "BUY_ALLOWED", grid_policy, f"grid={grid_policy}; soc_target={target:.2f}"),
                     ("BATTERY_EXPORT", export_policy == "SELL_BAT", export_policy, f"optimizer=FULL_HORIZON; sell={sell_price:.3f}"),
                     ("PV_CWU", pv_cwu, "ALLOW" if pv_cwu else "BLOCK",
-                     f"pv_flex={pv_flex:.3f}; sell={sell_price:.3f}; replacement_buy={replacement_value}; economic={flexible_is_economic}"),
+                     f"{ppd_decision.reason}; anchor={ppd_decision.cwu_anchor}"),
                     ("PV_EV", pv_ev, "ALLOW" if pv_ev else "BLOCK",
-                     f"pv_flex={pv_flex:.3f}; cwu={pv_cwu}; sell={sell_price:.3f}; replacement_buy={replacement_value}; economic={flexible_is_economic}"),
+                     f"{ppd_decision.reason}; anchor={ppd_decision.ev_anchor}; cwu_allowed={pv_cwu}"),
                     ("HP_HEAT_DHW", heat_dhw_allowed,
                      "ON" if heat_dhw_allowed else "OFF",
                      f"window={hp_window}; night_min={night_min}; threshold={night_threshold}; minimum_hours={OPTIONS.get('hp_min_heating_hours',10.0)}; planned_hp_kwh={hp_load:.3f}"),
