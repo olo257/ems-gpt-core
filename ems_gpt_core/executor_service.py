@@ -43,15 +43,6 @@ def battery_import_guard_reason(live_soc, target, planned_buy, flow_threshold: f
     return None
 
 
-def process_automation_enabled(process: str, options: dict) -> bool:
-    """Return the persistent automatic-control permission for flexible PPD."""
-    setting = {
-        "PV_CWU": "pv_cwu_automation_enabled",
-        "PV_EV": "pv_ev_automation_enabled",
-    }.get(str(process).upper())
-    return True if setting is None else bool(options.get(setting, True))
-
-
 @dataclass(frozen=True)
 class ExecutorAdapters:
     options: dict
@@ -238,18 +229,11 @@ def build_executor(a: ExecutorAdapters):
             if candidate.get(prefix + "enabled") and not str(candidate.get(prefix + "energy_entity") or "").strip():
                 raise ValueError(f"{prefix}energy_entity is required when enabled")
         current.update(changed)
-        if {"pv_cwu_automation_enabled", "pv_ev_automation_enabled"} & changed.keys():
-            # Make every operator toggle a distinct command intent.  Without a
-            # revision, ON -> OFF -> ON inside one slot could collide with the
-            # first ON command's uniqueness key and wait for the next slot.
-            current["_process_control_revision"] = uuid.uuid4().hex
         temporary = RUNTIME_SETTINGS_PATH.with_suffix(".tmp")
         temporary.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(temporary, RUNTIME_SETTINGS_PATH)
         with LOCK:
             OPTIONS.update(changed)
-            if "_process_control_revision" in current:
-                OPTIONS["_process_control_revision"] = current["_process_control_revision"]
         record_event("operational_settings_updated", "core", {"changed": changed})
         return {"changed": changed, "settings": settings_payload()}
     
@@ -352,18 +336,9 @@ def build_executor(a: ExecutorAdapters):
         if requested not in OVERRIDE_STATES:
             raise ValueError("state must be AUTO, FORCE_ON or FORCE_OFF")
         reason = str(payload.get("reason") or "operator panel")[:1000]
-        if process == "HP_HEAT_DHW" and requested == "FORCE_ON":
-            # The operator panel deliberately has no independent duration input.
-            # One source of truth prevents a manual value from drifting away from
-            # the planner's configured minimum HP cycle.
-            minutes = max(1, int(float(OPTIONS.get("hp_min_cycle_hours", 2.0)) * 60 + 0.999999))
-        else:
-            minutes = int(payload.get("minutes") or 60)
-            if not 1 <= minutes <= 1440:
-                raise ValueError("minutes must be between 1 and 1440")
         now = local_now().replace(tzinfo=None)
-        indefinite_block = process == "HP_HEAT_DHW" and requested == "FORCE_OFF"
-        override_until = datetime(9999, 12, 31, 23, 59, 59) if indefinite_block else now + timedelta(minutes=minutes)
+        indefinite_override = requested in {"FORCE_ON", "FORCE_OFF"}
+        override_until = datetime(9999, 12, 31, 23, 59, 59)
         with db() as conn, conn.cursor() as cur:
             cur.execute("""UPDATE ems_gpt_core_process_overrides SET status='CANCELLED',cancelled_at=NOW(6)
               WHERE process_name=%s AND status='ACTIVE'""", (process,))
@@ -375,9 +350,20 @@ def build_executor(a: ExecutorAdapters):
                   (override_id,process_name,requested_state,requested_at,valid_from,valid_until,
                    requested_by,reason,status) VALUES(%s,%s,%s,NOW(6),%s,%s,%s,%s,'ACTIVE')""",
                   (override_id, process, requested, now, override_until, requested_by[:100], reason))
+        control_revision = uuid.uuid4().hex
+        try:
+            runtime_settings = json.loads(RUNTIME_SETTINGS_PATH.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            runtime_settings = {}
+        runtime_settings["_process_control_revision"] = control_revision
+        temporary = RUNTIME_SETTINGS_PATH.with_suffix(".tmp")
+        temporary.write_text(json.dumps(runtime_settings, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, RUNTIME_SETTINGS_PATH)
+        with LOCK:
+            OPTIONS["_process_control_revision"] = control_revision
         result = {"process": process, "state": requested, "override_id": override_id,
-                  "valid_until": override_until if override_id and not indefinite_block else None,
-                  "indefinite": bool(override_id and indefinite_block)}
+                  "valid_until": override_until if override_id and not indefinite_override else None,
+                  "indefinite": bool(override_id and indefinite_override)}
         record_event("process_override_updated", "operator", result)
         return result
     
@@ -453,7 +439,6 @@ def build_executor(a: ExecutorAdapters):
             for row in cur.fetchall():
                 planned_on = bool(row["eligible"])
                 requested = row.get("requested_state")
-                automatic_enabled = process_automation_enabled(row["process_name"], OPTIONS)
                 external_hp_on = (row["process_name"] == "HP_HEAT_DHW"
                                   and requested != "FORCE_OFF"
                                   and not planned_on
@@ -461,12 +446,8 @@ def build_executor(a: ExecutorAdapters):
                 effective_on = (True if requested == "FORCE_ON" else
                                 False if requested == "FORCE_OFF" else
                                 True if external_hp_on else planned_on)
-                if requested is None and not automatic_enabled:
-                    effective_on = False
                 decision = "ON" if effective_on else "OFF"
-                source = ("OVERRIDE" if requested else
-                          "AUTO_DISABLED" if not automatic_enabled else
-                          "EXTERNAL_MANUAL" if external_hp_on else "PLAN")
+                source = "OVERRIDE" if requested else "EXTERNAL_MANUAL" if external_hp_on else "PLAN"
                 if external_hp_on:
                     record_event("external_hp_control_preserved", "executor", {
                         "process": "HP_HEAT_DHW", "decision": "HOLD_ON",
@@ -474,15 +455,13 @@ def build_executor(a: ExecutorAdapters):
                     })
                     continue
                 command_id = str(uuid.uuid4())
-                plan_version = str(row["plan_run_id"])
-                if row["process_name"] in {"PV_CWU", "PV_EV"}:
-                    plan_version += ":" + str(OPTIONS.get("_process_control_revision") or "base")
+                plan_version = (str(row["plan_run_id"]) + ":"
+                                + str(OPTIONS.get("_process_control_revision") or "base"))
                 battery_flow = row["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"}
                 safety = {"executor_enabled": True, "dry_run": dry_run, "connector_required": True,
                           "soc_programs_1_6_write_allowed": battery_flow,
                           "soc_restore_required": battery_flow,
-                          "override_id": row.get("override_id"),
-                          "automation_enabled": automatic_enabled}
+                          "override_id": row.get("override_id")}
                 cur.execute("""INSERT IGNORE INTO ems_gpt_core_commands
                   (command_id,slot_start,slot_id,process_name,decision,plan_version,created_at,expires_at,
                    source,status,safety_json) VALUES(%s,%s,%s,%s,%s,%s,NOW(6),%s,%s,%s,%s)""",
@@ -556,8 +535,10 @@ def build_executor(a: ExecutorAdapters):
                     live_soc = number(ha_state("sensor.inverter_battery"))
                     planned_buy = number(plan_target.get("planned_buy_kwh"))
                     flow_threshold = float(OPTIONS.get("planned_flow_threshold_kwh", 0.02))
+                    guard_buy = (max(flow_threshold * 2.0, 0.001)
+                                 if command.get("source") == "OVERRIDE" else planned_buy)
                     guard_reason = battery_import_guard_reason(
-                        live_soc, target, planned_buy, flow_threshold)
+                        live_soc, target, guard_buy, flow_threshold)
                     if guard_reason:
                         off_entity = process_map.get("OFF")
                         safe_response = ha_service_response("script", "turn_on", {"entity_id": off_entity}) \
