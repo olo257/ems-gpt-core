@@ -1,13 +1,10 @@
-# EMS-GPT Core 0.31.3
+# EMS-GPT Core 0.36.0
 
-## Krytyczna korekta semantyki SOC
+## Osobny moduł PPD odbiorników elastycznych
 
-- `soc_floor` chroni energię przed sprzedażą, ale nie blokuje autokonsumpcji.
-- Zużycie domu może rozładowywać baterię do technicznego `battery_min_soc_pct`.
-- `soc_target` wynika z bilansu energii do kolejnego zakupu lub pokrywającej
-  deficyt nadwyżki PV, z uwzględnieniem zaplanowanego HP i sprawności baterii.
-- Moc każdego przyszłego slotu zakupu jest ograniczona rzeczywistym limitem
-  baterii; planer nie zakłada nieograniczonego uzupełnienia w jednym slocie.
-- Usunięto stały cel 60% o 19:45 i historyczny target końca horyzontu.
-- Zachowano techniczny limit SOC, ochronę TOU dla sprzedaży i brak zapisów do
-  programów SOC Deye 1–6.
+- `PV_CWU` i `PV_EV` są wyznaczane w `ppd_service.py` po zakończeniu obliczeń SOC.
+- Oba PPD są tylko zgodą wykonawczą i nie uczestniczą w obliczaniu `soc_target`.
+- Każde PPD tworzy jedno ciągłe okno dzienne aktualizowane przy każdym replanie.
+- Automatyzacje Home Assistant nadal odpowiadają za rzeczywiste włączenie,
+  wyłączenie, histerezę, temperaturę CWU, dostępność EV i kontrolę mocy.
+- Chroniona wersja `production-0.35.8` pozostaje punktem powrotu.
