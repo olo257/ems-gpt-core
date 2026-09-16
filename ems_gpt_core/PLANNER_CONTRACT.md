@@ -61,8 +61,10 @@ Każdy pakiet wykonuje etapy w tej kolejności:
 8. `SOC` — wynikowe `soc_target`, `soc_floor`, SOC przed i po slocie.
 9. `SURPLUS` — nadwyżka PV w kolejności: autokonsumpcja, ładowanie baterii do
    targetu, CWU, EV, sprzedaż PV, a ograniczenie produkcji na końcu.
-10. `PPD` — decyzje wykonawcze tworzone wyłącznie z gotowych przepływów i SOC.
-11. `VALIDATE` — kontrola całego horyzontu; dopiero potem atomowa publikacja.
+10. `PPD SIECIOWE` — decyzje zakupu i eksportu z gotowych przepływów i SOC.
+11. `PPD ODBIORNIKÓW` — osobny `ppd_service.py` odczytuje zamrożony target
+    i tworzy ciągłe okna `PV_CWU` oraz `PV_EV`; nie zwraca żadnego wejścia do targetu.
+12. `VALIDATE` — kontrola całego horyzontu; dopiero potem atomowa publikacja.
 
 Planer może wykonywać wiele przebiegów po tej samej tabeli roboczej, ale każdy
 etap modyfikuje wyłącznie pola należące do niego. Jeżeli walidacja jednego slotu
