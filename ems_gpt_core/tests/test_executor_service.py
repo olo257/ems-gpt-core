@@ -15,18 +15,11 @@ from executor_service import (
     battery_import_guard_reason,
     battery_soc_guard_actions,
     build_executor,
-    process_automation_enabled,
     scalar_number,
 )
 
 
 class ExecutorServiceTests(unittest.TestCase):
-    def test_flexible_ppd_automation_has_independent_persistent_switch(self):
-        self.assertTrue(process_automation_enabled("PV_CWU", {}))
-        self.assertFalse(process_automation_enabled("PV_CWU", {"pv_cwu_automation_enabled": False}))
-        self.assertFalse(process_automation_enabled("PV_EV", {"pv_ev_automation_enabled": False}))
-        self.assertTrue(process_automation_enabled("BATTERY_IMPORT", {}))
-
     def test_sql_floor_scalar_does_not_use_ha_state_parser(self):
         self.assertEqual(scalar_number(55.65), 55.65)
         self.assertEqual(scalar_number("40.00"), 40.0)
@@ -92,7 +85,7 @@ class ExecutorServiceTests(unittest.TestCase):
             self.assertTrue(self.options["executor_dry_run"])
             self.assertEqual(self.state["executor"], "OFF")
 
-    def test_hp_manual_duration_comes_only_from_configuration(self):
+    def test_manual_override_is_indefinite_until_mode_changes(self):
         executed = []
 
         class Cursor:
@@ -117,13 +110,11 @@ class ExecutorServiceTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             service = self.build_service(directory, db=Connection)
-            started = datetime.now()
             result = service.update_process_override({
                 "process": "HP_HEAT_DHW", "state": "FORCE_ON", "minutes": 1,
             })
-            duration = (result["valid_until"] - started).total_seconds() / 60
-            self.assertGreaterEqual(duration, 149.9)
-            self.assertLessEqual(duration, 150.1)
+            self.assertIsNone(result["valid_until"])
+            self.assertTrue(result["indefinite"])
             insert_params = executed[1][1]
             self.assertEqual(insert_params[1], "HP_HEAT_DHW")
             self.assertEqual(insert_params[2], "FORCE_ON")
