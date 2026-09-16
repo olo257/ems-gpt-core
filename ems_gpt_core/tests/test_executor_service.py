@@ -15,11 +15,18 @@ from executor_service import (
     battery_import_guard_reason,
     battery_soc_guard_actions,
     build_executor,
+    process_automation_enabled,
     scalar_number,
 )
 
 
 class ExecutorServiceTests(unittest.TestCase):
+    def test_flexible_ppd_automation_has_independent_persistent_switch(self):
+        self.assertTrue(process_automation_enabled("PV_CWU", {}))
+        self.assertFalse(process_automation_enabled("PV_CWU", {"pv_cwu_automation_enabled": False}))
+        self.assertFalse(process_automation_enabled("PV_EV", {"pv_ev_automation_enabled": False}))
+        self.assertTrue(process_automation_enabled("BATTERY_IMPORT", {}))
+
     def test_sql_floor_scalar_does_not_use_ha_state_parser(self):
         self.assertEqual(scalar_number(55.65), 55.65)
         self.assertEqual(scalar_number("40.00"), 40.0)
