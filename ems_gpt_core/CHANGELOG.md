@@ -1,3 +1,20 @@
+## 0.36.0
+
+- Wydzielono `PV_CWU` i `PV_EV` z `planner_service.py` do osobnego
+  `ppd_service.py`, wykonywanego dopiero po zamrożeniu pełnej trajektorii
+  `soc_target`. Odbiorniki elastyczne nie zwiększają i nie zmieniają targetu.
+- Każdy proces otrzymuje jedno ciągłe dzienne okno PPD od pierwszego do
+  ostatniego wykonalnego punktu. Słabszy slot PV wewnątrz okna nie rozcina
+  zgody; rzeczywiste włączanie i wyłączanie pozostaje po stronie automatyzacji.
+- Cykliczny replan używa aktualnego SOC, więc nieplanowany wzrost SOC z PV
+  może przesunąć początek okna wcześniej.
+- Sprzedaż baterii oraz ekonomiczna blokada są twardymi granicami okna.
+- `PV_EV` wymaga osiągnięcia `soc_target`, bez wcześniejszego dodatkowego
+  warunku `soc_target + 20 pp`. CWU zachowuje pierwszeństwo w ilościowym
+  przydziale prognozowanej nadwyżki.
+- Dodano testy ciągłości, izolacji targetu, korekty po zmianie SOC, granicy
+  sprzedaży baterii i rozdzielenia dni.
+
 ## 0.35.8
 
 - `soc_target` ogranicza wyłącznie ładowanie baterii z sieci. Nadwyżka PV może
