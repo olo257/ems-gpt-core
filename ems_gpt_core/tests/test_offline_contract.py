@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.35.7"', APP_SOURCE)
-        self.assertIn('version: "0.35.7"', CONFIG)
+        self.assertIn('APP_VERSION = "0.35.8"', APP_SOURCE)
+        self.assertIn('version: "0.35.8"', CONFIG)
 
     def test_target_history_is_observational_only(self):
         analytics = MODULE_SOURCES["analytics_service.py"]
@@ -170,7 +170,7 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_app_status_card_uses_backend_start_time(self):
         self.assertIn('"started_at": datetime.now(timezone.utc).isoformat()', SOURCE)
-        for label in ("URUCHOMIONO", "URUCHAMIANIE", "TRYB OGRANICZONY", "BŁĄD", "BRAK POŁĄCZENIA"):
+        for label in ("URUCHOMIONY", "STARTUJE", "TRYB OGRANICZONY", "BŁĄD", "BRAK POŁĄCZENIA"):
             self.assertIn(label, SOURCE)
         self.assertIn("s.started_at", SOURCE)
         self.assertIn("id='appStatus'", SOURCE)
@@ -181,9 +181,10 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_panel_translates_technical_connection_and_executor_states(self):
         self.assertIn("CONNECTED:'POŁĄCZONY'", WEBUI)
-        self.assertIn("LIVE:'PRODUKCJA'", WEBUI)
+        self.assertIn("LIVE:'URUCHOMIONE'", WEBUI)
         self.assertIn("db.textContent=displayStatus(s.database)", WEBUI)
         self.assertIn("executor.textContent=displayStatus(s.executor)", WEBUI)
+        self.assertIn("executor.className='value '+statusTone(s.executor)", WEBUI)
 
     def test_hourly_source_version_tracks_runtime(self):
         self.assertNotIn("'CORE_0_22_1',%s,%s,%s) ON DUPLICATE KEY UPDATE", SOURCE)

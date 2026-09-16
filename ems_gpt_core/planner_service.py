@@ -281,10 +281,11 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     grid_charge = max(0.0, charge_input-pv_to_bat)
                     if grid_charge > 1e-9 and not grid_charge_allowed:
                         continue
-                    # Target is the ceiling of replenishment, never a minimum
-                    # SOC imposed on ordinary consumption slots.
+                    # SOC target is the ceiling of deliberate GRID
+                    # replenishment only. Free PV remains allowed to fill
+                    # the battery up to the physical max SOC.
                     if (minimum_soc_targets is not None
-                            and (grid_charge > 1e-9 or pv_to_bat > 1e-9)
+                            and grid_charge > 1e-9
                             and next_unit > max(current_unit, requested_target_unit)):
                         continue
                     grid_load = deficit
@@ -298,7 +299,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     # reclassified as export merely because it cannot advance
                     # the displayed SOC state by a complete step.
                     if (minimum_soc_targets is not None
-                            and next_unit < requested_target_unit
+                            and next_unit < last_unit
                             and pv_export > 1e-9):
                         fractional_pv = pv_export
                         pv_to_bat += fractional_pv
@@ -360,11 +361,12 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 if (minimum_soc_targets is not None and hard_target_indices is not None
                         and index in hard_target_indices and next_unit < requested_target_unit):
                     continue
-                # Usable PV fills the target before any PV surplus is exported.
-                pv_reachable_target = min(
-                    requested_target_unit,
-                    current_unit + reachable_up,
-                )
+                # Usable PV fills all physically reachable battery capacity
+                # before any remaining PV surplus is exported. Grid power is
+                # deliberately excluded from this reachability calculation.
+                pv_only_up = int(math.floor(
+                    min(max_internal_charge, surplus * eta_c) / unit_kwh + 1e-9))
+                pv_reachable_target = min(last_unit, current_unit + pv_only_up)
                 if (minimum_soc_targets is not None and pv_export > 1e-9
                         and next_unit < pv_reachable_target):
                     continue

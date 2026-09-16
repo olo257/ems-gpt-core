@@ -671,6 +671,21 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertEqual(result["flows"][0]["soc_end_pct"], 25.0)
 
+    def test_grid_target_does_not_cap_pv_charging(self):
+        rows = [{"price_buy_pln_kwh": 5.0, "price_sell_pln_kwh": 10.0,
+                 "sale_window": False, "buy_window": False,
+                 "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 2.0}]
+
+        result = optimize_energy_horizon(
+            rows, 50.0, 10.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [100.0], 15.0, 0.25, 100.0, [55.0], set(),
+            False, set())
+        flow = result["flows"][0]
+
+        self.assertGreater(flow["soc_end_pct"], 55.0)
+        self.assertGreater(flow["pv_to_bat_kwh"], 0.0)
+        self.assertEqual(flow["grid_charge_kwh"], 0.0)
+
     def test_partial_pv_window_does_not_require_unreachable_full_target(self):
         rows = [{"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.5,
                  "sale_window": False, "buy_window": False,
