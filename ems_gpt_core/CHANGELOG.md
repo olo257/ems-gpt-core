@@ -1,3 +1,14 @@
+## 0.35.8
+
+- `soc_target` ogranicza wyłącznie ładowanie baterii z sieci. Nadwyżka PV może
+  ładować baterię dalej, aż do fizycznego maksimum SOC, zanim zostanie
+  przeznaczona do odbiorników elastycznych albo eksportu.
+- Panel tłumaczy stany techniczne: `RUNNING` jako `URUCHOMIONY`, `STARTING`
+  jako `STARTUJE`, `LIVE`/produkcję jako `URUCHOMIONE`, a `OFF` i `DISABLED`
+  jako `WYŁĄCZONY`.
+- Kolory stanów: start — żółty, uruchomienie/produkcja — zielony, `OFF` —
+  czerwony, `DISABLED` — niebieski.
+
 ## 0.35.7
 
 - Dodano obserwacyjny moduł historycznej oceny `soc_target`. Moduł rekonstruuje
