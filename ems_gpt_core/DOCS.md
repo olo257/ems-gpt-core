@@ -37,7 +37,8 @@ obserwacji zgodności przed osobną migracją usuwającą kolumny.
 
 - `app.py` — wyłącznie kompozycja usług i cykl życia procesu;
 - `schema_service.py` — idempotentna inicjalizacja i migracje schematu MariaDB;
-- `planner_service.py` — transakcyjny planer, PPD i optymalizator cykli HP;
+- `planner_service.py` — transakcyjny planer energii i optymalizator cykli HP;
+- `ppd_service.py` — PPD odbiorników elastycznych, liczone po zamrożeniu `soc_target`;
 - `observer_service.py` — analiza Observera w trybie `SHADOW_READ_ONLY`;
 - `diagnostics_service.py` — kontrole diagnostyczne bez zapisu do urządzeń;
 - `todo_service.py` — trwały cykl życia sugestii i decyzji operatora;
@@ -65,7 +66,9 @@ repozytorium, ponieważ zawiera szczegóły lokalnej infrastruktury HA i OMV.
   `RCE → WINDOWS → LOAD → PV → SLOT_BALANCE → TARGET_COMMITMENT → DISPATCH →
   FLEX_SURPLUS → VALIDATE → PPD`. Każdy przebieg zmienia wyłącznie pola swojej
   odpowiedzialności.
-- PPD: polityki sieci, eksportu oraz dostępność PV→CWU i PV→EV.
+- PPD sieciowe: polityki zakupu i eksportu pozostające częścią planera.
+- PPD odbiorników: `PV_CWU` i `PV_EV` wyznaczane przez osobny moduł po
+  zamrożeniu targetu; nie uczestniczą w jego obliczaniu.
 - ANALYTICS: agregaty godzinowe i dobowe oraz profil zużycia.
 - AI OBSERVER: analiza progowa w trybie `SHADOW_READ_ONLY`, potwierdzanie sugestii po 3 kolejnych dniach i audyt decyzji operatora.
 - DIAGNOSTICS: cykliczne kontrole danych, planera, wykonania i komend.
