@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.0"', APP_SOURCE)
-        self.assertIn('version: "0.36.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.1"', APP_SOURCE)
+        self.assertIn('version: "0.36.1"', CONFIG)
 
     def test_target_history_is_observational_only(self):
         analytics = MODULE_SOURCES["analytics_service.py"]
@@ -139,7 +139,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("hpManualHours", SOURCE)
         self.assertIn("if(process!=='HP_HEAT_DHW')body.minutes=60", SOURCE)
         self.assertIn("externally_started_hp_is_running", SOURCE)
-        self.assertIn('source = "OVERRIDE" if requested else "EXTERNAL_MANUAL"', SOURCE)
+        self.assertIn('"OVERRIDE" if requested else', SOURCE)
+        self.assertIn('"EXTERNAL_MANUAL" if external_hp_on else "PLAN"', SOURCE)
         self.assertIn('requested != "FORCE_OFF"', SOURCE)
         self.assertIn('True if value.get("external_manual_on")', SOURCE)
         self.assertIn('datetime(9999, 12, 31, 23, 59, 59)', SOURCE)
