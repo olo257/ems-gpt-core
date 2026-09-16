@@ -43,6 +43,15 @@ def battery_import_guard_reason(live_soc, target, planned_buy, flow_threshold: f
     return None
 
 
+def process_automation_enabled(process: str, options: dict) -> bool:
+    """Return the persistent automatic-control permission for flexible PPD."""
+    setting = {
+        "PV_CWU": "pv_cwu_automation_enabled",
+        "PV_EV": "pv_ev_automation_enabled",
+    }.get(str(process).upper())
+    return True if setting is None else bool(options.get(setting, True))
+
+
 @dataclass(frozen=True)
 class ExecutorAdapters:
     options: dict
@@ -229,11 +238,18 @@ def build_executor(a: ExecutorAdapters):
             if candidate.get(prefix + "enabled") and not str(candidate.get(prefix + "energy_entity") or "").strip():
                 raise ValueError(f"{prefix}energy_entity is required when enabled")
         current.update(changed)
+        if {"pv_cwu_automation_enabled", "pv_ev_automation_enabled"} & changed.keys():
+            # Make every operator toggle a distinct command intent.  Without a
+            # revision, ON -> OFF -> ON inside one slot could collide with the
+            # first ON command's uniqueness key and wait for the next slot.
+            current["_process_control_revision"] = uuid.uuid4().hex
         temporary = RUNTIME_SETTINGS_PATH.with_suffix(".tmp")
         temporary.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(temporary, RUNTIME_SETTINGS_PATH)
         with LOCK:
             OPTIONS.update(changed)
+            if "_process_control_revision" in current:
+                OPTIONS["_process_control_revision"] = current["_process_control_revision"]
         record_event("operational_settings_updated", "core", {"changed": changed})
         return {"changed": changed, "settings": settings_payload()}
     
@@ -437,6 +453,7 @@ def build_executor(a: ExecutorAdapters):
             for row in cur.fetchall():
                 planned_on = bool(row["eligible"])
                 requested = row.get("requested_state")
+                automatic_enabled = process_automation_enabled(row["process_name"], OPTIONS)
                 external_hp_on = (row["process_name"] == "HP_HEAT_DHW"
                                   and requested != "FORCE_OFF"
                                   and not planned_on
@@ -444,8 +461,12 @@ def build_executor(a: ExecutorAdapters):
                 effective_on = (True if requested == "FORCE_ON" else
                                 False if requested == "FORCE_OFF" else
                                 True if external_hp_on else planned_on)
+                if requested is None and not automatic_enabled:
+                    effective_on = False
                 decision = "ON" if effective_on else "OFF"
-                source = "OVERRIDE" if requested else "EXTERNAL_MANUAL" if external_hp_on else "PLAN"
+                source = ("OVERRIDE" if requested else
+                          "AUTO_DISABLED" if not automatic_enabled else
+                          "EXTERNAL_MANUAL" if external_hp_on else "PLAN")
                 if external_hp_on:
                     record_event("external_hp_control_preserved", "executor", {
                         "process": "HP_HEAT_DHW", "decision": "HOLD_ON",
@@ -453,15 +474,19 @@ def build_executor(a: ExecutorAdapters):
                     })
                     continue
                 command_id = str(uuid.uuid4())
+                plan_version = str(row["plan_run_id"])
+                if row["process_name"] in {"PV_CWU", "PV_EV"}:
+                    plan_version += ":" + str(OPTIONS.get("_process_control_revision") or "base")
                 battery_flow = row["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"}
                 safety = {"executor_enabled": True, "dry_run": dry_run, "connector_required": True,
                           "soc_programs_1_6_write_allowed": battery_flow,
                           "soc_restore_required": battery_flow,
-                          "override_id": row.get("override_id")}
+                          "override_id": row.get("override_id"),
+                          "automation_enabled": automatic_enabled}
                 cur.execute("""INSERT IGNORE INTO ems_gpt_core_commands
                   (command_id,slot_start,slot_id,process_name,decision,plan_version,created_at,expires_at,
                    source,status,safety_json) VALUES(%s,%s,%s,%s,%s,%s,NOW(6),%s,%s,%s,%s)""",
-                  (command_id, start, row.get("slot_id"), row["process_name"], decision, row["plan_run_id"], end, source,
+                  (command_id, start, row.get("slot_id"), row["process_name"], decision, plan_version, end, source,
                    "DRY_RUN" if dry_run else "READY_FOR_CONNECTOR", json.dumps(safety)))
                 staged += cur.rowcount
         state = "DRY_RUN" if dry_run else "LIVE"
