@@ -1,3 +1,14 @@
+## 0.37.1
+
+- Naprawiono `No feasible SOC state at horizon slot` po wdrożeniu 0.37.0.
+- Kontrakt `SOC required` korzysta teraz z faktycznych przepływów baterii,
+  więc nie zalicza nieuniknionego poboru sieciowego jako energii, którą
+  bateria musi posiadać przed najbliższym oknem uzupełnienia.
+- Wymagany SOC jest ograniczony do fizycznie osiągalnej trajektorii bez
+  dobrowolnej sprzedaży; przyszłe okno BUY/PV nie tworzy wymagania wcześniej,
+  niż energia może zostać dostarczona.
+- Dodano regresję startu na rezerwie oraz zachowano test 48 h / 192 slotów.
+
 ## 0.37.0
 
 - Przebudowano logikę SOC na cztery niezależne kontrakty: rezerwę fizyczną,

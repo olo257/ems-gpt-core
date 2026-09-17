@@ -837,22 +837,45 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
     next_source = "HORIZON"
     for i in range(len(rows) - 1, -1, -1):
         raw_required_pct = required_after / capacity * 100.0
-        required[i] = min(cap, math.ceil(raw_required_pct / step - 1e-9) * step)
+        flow = economic_flows[i]
+        # The economic trajectory is a proven reachable path.  Add back only
+        # its optional battery sale to obtain the highest no-sale SOC that is
+        # physically reachable at this point.  A backward contract may not
+        # demand more than that state; doing so would fail the constrained
+        # pass before the next BUY/PV opportunity could provide the energy.
+        feasible_no_sale_pct = min(
+            cap,
+            float(flow.get("soc_end_pct") or reserve)
+            + (max(0.0, float(flow.get("battery_sell_kwh") or 0.0))
+               / discharge_efficiency / capacity * 100.0),
+        )
+        rounded_required = math.ceil(raw_required_pct / step - 1e-9) * step
+        reachable_required = math.floor(
+            feasible_no_sale_pct / step + 1e-9) * step
+        required[i] = max(reserve, min(cap, rounded_required,
+                                       reachable_required))
         due[i] = next_due
         source[i] = next_source
         row = rows[i]
-        flow = economic_flows[i]
-        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
-                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
-        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
-        deficit_internal = (max(0.0, load - pv) / discharge_efficiency
-                            * (1.0 + uncertainty))
-        surplus_internal = (max(0.0, pv - load) * charge_efficiency
-                            * max(0.0, 1.0 - uncertainty))
+        # The economic pass has already closed the physical balance.  Build
+        # the mandatory bridge from its exact battery flows, not from the raw
+        # load/PV deficit.  Recounting the complete deficit here also counted
+        # unavoidable grid supply after the battery reached reserve and could
+        # demand an SOC that was impossible to reach in the current slot.
+        # Deliberate battery sale is intentionally excluded: it is optional
+        # energy above the contract, never a reason to raise required SOC.
+        native_discharge_internal = (
+            max(0.0, float(flow.get("battery_to_load_kwh") or 0.0))
+            / discharge_efficiency * (1.0 + uncertainty)
+        )
+        pv_internal = (
+            max(0.0, float(flow.get("pv_to_bat_kwh") or 0.0))
+            * charge_efficiency * max(0.0, 1.0 - uncertainty)
+        )
         grid_internal = (max(0.0, float(flow.get("grid_charge_kwh") or 0.0))
                          * charge_efficiency)
-        before_supply = required_after + deficit_internal
-        used_pv = min(max(0.0, before_supply - reserve_kwh), surplus_internal)
+        before_supply = required_after + native_discharge_internal
+        used_pv = min(max(0.0, before_supply - reserve_kwh), pv_internal)
         reserved_pv[i] = used_pv / charge_efficiency
         required_before = max(
             reserve_kwh, before_supply - used_pv - grid_internal)
