@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.14"', APP_SOURCE)
-        self.assertIn('version: "0.36.14"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.15"', APP_SOURCE)
+        self.assertIn('version: "0.36.15"', CONFIG)
 
     def test_infeasible_pv_first_falls_back_to_standard_plan(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -34,11 +34,13 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('"pv_first_rejected":str(pv_first_exc)',planner)
         self.assertIn("refined=standard_refined",planner)
 
-    def test_target_path_oscillation_uses_feasible_base_plan(self):
+    def test_target_path_oscillation_holds_last_constrained_plan(self):
         planner=MODULE_SOURCES["planner_service.py"]
-        self.assertIn("base_optimization=optimization",planner)
-        self.assertIn('"STANDARD_OSCILLATION_FALLBACK"',planner)
+        self.assertNotIn("base_optimization=optimization",planner)
+        self.assertIn('"CYCLE_HOLD_LAST_FEASIBLE"',planner)
         self.assertIn('"soc_target_oscillation_fallback"',planner)
+        self.assertIn('"contract_due_slots":sorted(target_due_indices)',planner)
+        self.assertNotIn("target_due_indices=set()",planner)
         self.assertNotIn('raise RuntimeError(\n                        f"SOC_TARGET_PATH_OSCILLATION',planner)
 
     def test_daily_exposes_learning_counts_soc_means_and_pv_bounds(self):
@@ -523,7 +525,7 @@ class OfflineContractTests(unittest.TestCase):
         planner = MODULE_SOURCES["planner_service.py"]
         self.assertIn("replenishment_indices = set(new_selected)", planner)
         self.assertNotIn("replenishment_indices.update(new_selected)", planner)
-        self.assertIn("STANDARD_OSCILLATION_FALLBACK", planner)
+        self.assertIn("CYCLE_HOLD_LAST_FEASIBLE", planner)
         self.assertIn("soc_target_oscillation_fallback", planner)
 
     def test_manual_control_origin_is_recorded(self):
