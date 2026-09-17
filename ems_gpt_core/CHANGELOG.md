@@ -1,3 +1,12 @@
+## 0.36.15
+
+- Naprawiono regresję 0.36.14, w której obsługa cyklu ścieżek BUY wracała
+  do planu bez kontraktu targetu i mogła obniżyć SOC przez około 22% do
+  technicznej rezerwy 15%.
+- Przy oscylacji zachowywany jest ostatni wykonalny plan policzony z pełnym
+  mostem energetycznym oraz jego terminami osiągnięcia targetu.
+- Plan bazowy bez targetów nie jest już publikowany jako rozwiązanie awaryjne.
+
 ## 0.36.14
 
 - Naprawiono błąd `SOC_TARGET_PATH_OSCILLATION`, w którym dwa wykonalne
