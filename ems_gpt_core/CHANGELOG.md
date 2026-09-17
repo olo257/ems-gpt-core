@@ -1,3 +1,19 @@
+## 0.37.0
+
+- Przebudowano logikę SOC na cztery niezależne kontrakty: rezerwę fizyczną,
+  ciągły `SOC required`, cel ładowania BUY i floor sprzedaży.
+- `SOC required` jest liczony wstecz z dokładnie przydzielonych kWh PV/BUY;
+  samo okno uzupełnienia nie resetuje już wymagania do 15%.
+- Usunięto oscylacyjną pętlę targetu. Plan powstaje deterministycznie w dwóch
+  przebiegach: ekonomicznym i kontraktowym.
+- Minimalny wymagany SOC jest egzekwowany w każdym slocie, a cel ładowania
+  wyłącznie kończy import do baterii w BUY.
+- PPD pozostaje tylko czytelnikiem planu i odrzuca ukryty import na zużycie,
+  zamiast oznaczać go jako `NEUTRAL`.
+- Dodano kolumny `soc_reserve_pct`, `soc_required_pct`,
+  `soc_charge_target_pct` i `soc_sale_floor_pct`; stare pola pozostają aliasami
+  zgodności podczas migracji.
+
 ## 0.36.15
 
 - Naprawiono regresję 0.36.14, w której obsługa cyklu ścieżek BUY wracała

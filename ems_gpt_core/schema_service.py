@@ -227,6 +227,8 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS market_window VARCHAR(8) NULL")
             for column in (
                 "soc_start_plan_pct DOUBLE NULL", "soc_end_plan_pct DOUBLE NULL",
+                "soc_reserve_pct DOUBLE NULL", "soc_required_pct DOUBLE NULL",
+                "soc_charge_target_pct DOUBLE NULL", "soc_sale_floor_pct DOUBLE NULL",
                 "heat_pump_window TINYINT(1) NOT NULL DEFAULT 0",
                 "forecast_heat_pump_load_kwh DOUBLE NULL",
                 "forecast_heat_pump_dhw_load_kwh DOUBLE NULL",
