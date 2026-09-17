@@ -229,6 +229,37 @@ def build_materializations(a: MaterializationAdapters):
         return restored
     
     
+    def _actual_soc_bounds(cur, period_start: datetime, period_end: datetime) -> tuple[float | None, float | None]:
+        """Return continuous actual SOC boundaries for an hour or day.
+
+        The opening value is the last measured close before the boundary,
+        making close(N) exactly equal to open(N+1).  Only when no earlier
+        closed slot exists do we fall back to the first execution snapshot.
+        """
+        cur.execute("""SELECT
+          (SELECT soc_end_pct FROM ems_gpt_slots
+            WHERE actual_recorded_at IS NOT NULL AND soc_end_pct IS NOT NULL AND slot_start<%s
+            ORDER BY slot_start DESC LIMIT 1) previous_close,
+          (SELECT d.soc_start_pct FROM ems_gpt_core_execution_details d
+            JOIN ems_gpt_slots s ON s.slot_start=d.slot_start
+            WHERE s.actual_recorded_at IS NOT NULL AND d.soc_start_pct IS NOT NULL
+              AND s.slot_start>=%s AND s.slot_start<%s
+            ORDER BY s.slot_start ASC LIMIT 1) first_observed,
+          (SELECT soc_end_pct FROM ems_gpt_slots
+            WHERE actual_recorded_at IS NOT NULL AND soc_end_pct IS NOT NULL
+              AND slot_start>=%s AND slot_start<%s
+            ORDER BY slot_start DESC LIMIT 1) period_close""",
+          (period_start,period_start,period_end,period_start,period_end))
+        row=cur.fetchone() or {}
+        opening=row.get("previous_close")
+        if opening is None:
+            opening=row.get("first_observed")
+        closing=row.get("period_close")
+        return (
+            float(opening) if opening not in (None, "") else None,
+            float(closing) if closing not in (None, "") else None,
+        )
+
     def aggregate_results() -> None:
         """Maintain current hourly and daily plan-vs-actual materializations."""
         now=local_now().replace(tzinfo=None)
@@ -263,6 +294,12 @@ def build_materializations(a: MaterializationAdapters):
                   (r["hour_start"],r["slots"],r["fpv"],r["apv"],r["fload"],r["aload"],r["pbuy"],r["abuy"],
                    r["pexport"],r["aexport"],r["pnet"],r["anet"],float(r["soc"]) if r["soc"] not in (None,"") else None,
                    "COMPLETE" if int(r["actual_n"] or 0)==4 else "OPEN"))
+                hour_start_value = r["hour_start"]
+                if isinstance(hour_start_value, str):
+                    hour_start_value = datetime.strptime(hour_start_value, "%Y-%m-%d %H:%M:%S")
+                soc_open, soc_close = _actual_soc_bounds(cur, hour_start_value, hour_start_value+timedelta(hours=1))
+                cur.execute("""UPDATE ems_gpt_core_hourly SET soc_start_pct=%s,soc_end_pct=%s
+                  WHERE hour_start=%s""", (soc_open,soc_close,hour_start_value))
             cur.execute("""SELECT COUNT(*) slots,SUM(actual_recorded_at IS NOT NULL) actual_n,
               SUM(forecast_pv_total_kwh) fpv,SUM(actual_pv_total_kwh) apv,
               SUM(planned_battery_discharge_kwh) pdis,SUM(actual_battery_discharge_kwh) adis,
@@ -296,6 +333,9 @@ def build_materializations(a: MaterializationAdapters):
               (day_start.date(),d["slots"],d["fpv"],d["apv"],d["pdis"],d["adis"],d["pbuy"],d["abuy"],
                d["fload"],d["aload"],d["pcharge"],d["acharge"],d["pexport"],d["aexport"],
                d["pexport"],d["aexport"],d["pnet"],d["anet"]))
+            soc_open, soc_close = _actual_soc_bounds(cur, day_start, day_start+timedelta(days=1))
+            cur.execute("""UPDATE ems_gpt_daily SET soc_start_pct=%s,soc_end_pct=%s
+              WHERE day_date=%s""", (soc_open,soc_close,day_start.date()))
     
     
     def rebuild_recovery_materializations(days: int = 7) -> dict:
@@ -387,6 +427,9 @@ def build_materializations(a: MaterializationAdapters):
                    sum(float(r[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in"))
                    if sum(float(r[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in"))>.001 else None,
                    int(r["hp_running_slots"] or 0),hour_start_value))
+                soc_open, soc_close = _actual_soc_bounds(cur, hour_start_value, hour_start_value+timedelta(hours=1))
+                cur.execute("""UPDATE ems_gpt_core_hourly SET soc_start_pct=%s,soc_end_pct=%s
+                  WHERE hour_start=%s""", (soc_open,soc_close,hour_start_value))
             for offset in range(max(1, days)):
                 day_start=first_day+timedelta(days=offset); day_end=day_start+timedelta(days=1)
                 cur.execute("""SELECT COUNT(*) slots,SUM(actual_recorded_at IS NOT NULL) terminal_n,
@@ -469,6 +512,9 @@ def build_materializations(a: MaterializationAdapters):
                   if sum(float(d[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in"))>.001 else None,
                   int(d["hp_running_slots"] or 0),d["hp_heat_start"],d["hp_heat_end"],
                   d["hp_dhw_start"],d["hp_dhw_end"],d["hp_cool_start"],d["hp_cool_end"],day_start.date()))
+                soc_open, soc_close = _actual_soc_bounds(cur, day_start, day_end)
+                cur.execute("""UPDATE ems_gpt_daily SET soc_start_pct=%s,soc_end_pct=%s
+                  WHERE day_date=%s""", (soc_open,soc_close,day_start.date()))
         return {"hours":len(hour_rows),"days":max(1,days)}
     
     

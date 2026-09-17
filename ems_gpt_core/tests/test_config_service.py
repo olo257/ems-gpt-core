@@ -19,6 +19,9 @@ class ConfigServiceTests(unittest.TestCase):
         self.assertEqual(result["timezone"], "Europe/Warsaw")
         self.assertEqual(result["slot_minutes"], 15)
         self.assertFalse(result["executor_enabled"])
+        self.assertEqual(result["soc_target_history_weight_7d_pct"], 50.0)
+        self.assertEqual(result["soc_target_history_weight_14d_pct"], 25.0)
+        self.assertEqual(result["soc_target_history_weight_28d_pct"], 25.0)
 
     def test_runtime_settings_override_addon_options(self):
         with tempfile.TemporaryDirectory() as directory:

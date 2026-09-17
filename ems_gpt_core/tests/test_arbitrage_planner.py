@@ -2,6 +2,7 @@ import pathlib
 import sys
 import unittest
 from decimal import Decimal
+from datetime import date, timedelta
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ from planner_service import (
     next_replenishment_prices,
     planning_tou_programs,
     strict_database_bool,
+    historical_terminal_soc,
     bridge_soc_commitments,
     derive_soc_commitments,
     soc_bridge_envelopes,
@@ -26,6 +28,26 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_historical_terminal_soc_uses_overlapping_weighted_windows(self):
+        terminal_day = date(2026, 9, 18)
+        rows = []
+        for age in range(1, 29):
+            value = 70.0 if age <= 7 else 40.0 if age <= 14 else 20.0
+            rows.append({"local_day": terminal_day-timedelta(days=age), "soc_end_pct": value})
+        result = historical_terminal_soc(
+            rows, terminal_day, {7: 50.0, 14: 25.0, 28: 25.0}, 15.0)
+        self.assertAlmostEqual(result["means"][7], 70.0)
+        self.assertAlmostEqual(result["means"][14], 55.0)
+        self.assertAlmostEqual(result["means"][28], 37.5)
+        self.assertAlmostEqual(result["soc_pct"], 58.125)
+        self.assertEqual(result["source"], "WEIGHTED_ACTUAL_CLOSE_7_14_28D")
+
+    def test_historical_terminal_soc_falls_back_without_complete_days(self):
+        result = historical_terminal_soc([], date(2026, 9, 18),
+                                         {7: 50.0, 14: 25.0, 28: 25.0}, 15.0)
+        self.assertEqual(result["soc_pct"], 15.0)
+        self.assertEqual(result["source"], "FALLBACK_RESERVE")
+
     def test_flexible_surplus_uses_nearest_buy_window_opportunity_cost(self):
         rows = [
             {"buy_window": False, "price_buy_pln_kwh": 9.0},

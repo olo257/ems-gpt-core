@@ -1,3 +1,21 @@
+## 0.36.8
+
+- Agregacje godzinowe i dzienne zapisują rzeczywisty `SOC początek` oraz
+  `SOC koniec` wyłącznie z zamkniętych slotów wykonania.
+- `SOC początek` okresu jest równy ostatniemu rzeczywistemu `SOC koniec`
+  poprzedniego okresu, dzięki czemu zmiana stanu baterii jest ciągła między
+  kolejnymi godzinami i dobami.
+- Odbudowa agregacji po restarcie stosuje tę samą zasadę; wartości planowane
+  ani przyszłe sloty nie są używane do domykania rzeczywistego bilansu.
+- Panel godzinowy i dzienny pokazuje obie granice SOC.
+- Rzeczywisty SOC zamknięcia kompletnych dób wyznacza ważoną prognozę SOC
+  na koniec horyzontu: domyślnie 50% dla średniej 7-dniowej oraz po 25% dla
+  średnich 14- i 28-dniowej. Wagi są konfigurowalne i muszą sumować się do
+  100%.
+- Historyczna prognoza jest wyłącznie terminalnym warunkiem końca doby.
+  Target każdego slotu 15-minutowego nadal powstaje wstecz z jego bilansu
+  energii, prognozowanego zużycia, PV, HP/CWU, sprawności i okien zakupu.
+
 ## 0.36.7
 
 - Panel Planera pokazuje prognozę całego poboru HP oraz osobno historyczny
