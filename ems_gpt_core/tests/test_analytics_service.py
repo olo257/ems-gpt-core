@@ -112,7 +112,7 @@ class AnalyticsQualityWindowTests(unittest.TestCase):
                 "slot_start": start + timedelta(minutes=15 * index),
                 "soc_target_pct": 20.0,
                 "actual_load_kwh": 0.5,
-                "actual_pv_total_kwh": 0.2 if index >= 4 else 0.0,
+                "actual_pv_total_kwh": 0.8 if index >= 4 else 0.0,
                 "sample_count": 15,
                 "plan_published": 1,
                 "execution_reason": "CORE_TELEMETRY_15_SAMPLES",
@@ -129,6 +129,23 @@ class AnalyticsQualityWindowTests(unittest.TestCase):
         self.assertEqual(first["required_energy_kwh"], 2.0)
         self.assertEqual(first["required_target_pct"], 35.0)
         self.assertEqual(first["target_shortfall_pct"], 15.0)
+
+    def test_target_history_does_not_treat_gross_pv_below_load_as_relief(self):
+        start = datetime(2026, 9, 17, 6, 0)
+        rows = [{
+            "slot_start": start + timedelta(minutes=15 * index),
+            "soc_target_pct": 30.0, "actual_load_kwh": 0.5,
+            "actual_pv_total_kwh": 0.2 if index >= 2 else 0.0,
+            "sample_count": 15, "plan_published": 1,
+            "execution_reason": "CORE_TELEMETRY_15_SAMPLES",
+            "market_window": "NEUTRAL",
+        } for index in range(5)]
+        samples = _target_history(
+            rows, reserve_pct=15.0, capacity_kwh=10.0,
+            discharge_efficiency=1.0, pv_threshold_kwh=0.1,
+            slot_minutes=15, minimum_samples=10)
+        self.assertEqual(samples[0]["status"], "INVALID")
+        self.assertEqual(samples[0]["reason"], "NO_COMPLETE_RELIEF_HORIZON")
 
     def test_target_history_rejects_incomplete_tail(self):
         start = datetime(2026, 9, 14, 23, 45)

@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 from planner_service import (
     allocate_slot_discharge,
     backward_target_commitments,
+    battery_sale_economics,
     cheapest_recovery_indices,
     economic_sell_indices,
     paired_arbitrage_buy_indices,
@@ -744,6 +745,31 @@ class PairedArbitrageTests(unittest.TestCase):
         ]
 
         self.assertEqual(economic_sell_indices(rows, 0.90, 0.95, 0.08, 0.05), {1, 2})
+
+    def test_battery_sale_requires_profitable_future_energy_replacement(self):
+        rows = [
+            {"price_sell_pln_kwh": 1.90, "price_buy_pln_kwh": 2.49},
+            {"price_sell_pln_kwh": 0.80, "price_buy_pln_kwh": 1.60},
+        ]
+
+        economics = battery_sale_economics(rows, 0, 0.90, 0.95, 0.08, 0.05)
+
+        self.assertEqual(economics["replacement_buy_price"], 1.60)
+        self.assertAlmostEqual(economics["required_sell_price"], 2.001345, places=6)
+        self.assertAlmostEqual(economics["expected_margin"], 1.90 - 1.60 / 0.855 - 0.08)
+        self.assertFalse(economics["eligible"])
+
+        rows[0]["price_sell_pln_kwh"] = 2.10
+        self.assertTrue(
+            battery_sale_economics(rows, 0, 0.90, 0.95, 0.08, 0.05)["eligible"])
+
+    def test_battery_sale_is_blocked_without_future_replacement_price(self):
+        rows = [{"price_sell_pln_kwh": 4.00, "price_buy_pln_kwh": 4.50}]
+
+        economics = battery_sale_economics(rows, 0, 0.90, 0.95, 0.08, 0.05)
+
+        self.assertIsNone(economics["replacement_buy_price"])
+        self.assertFalse(economics["eligible"])
 
     def test_post_sale_recovery_can_span_multiple_profitable_slots(self):
         rows = [
