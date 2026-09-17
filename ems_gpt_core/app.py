@@ -24,6 +24,7 @@ from ha_gateway_service import HomeAssistantAdapters, build_home_assistant_gatew
 from ingestion_service import IngestionAdapters, build_ingestion
 from materialization_service import MaterializationAdapters, build_materializations
 from planner_service import PlannerAdapters, build_planner
+from ppd_service import PpdAdapters, build_ppd_runner
 from scheduler_service import SchedulerAdapters, publish_current_slot_prices, run_scheduler
 from schema_service import ensure_runtime_schema as ensure_runtime_schema_service
 from slot_calendar_service import SlotCalendarAdapters, build_slot_calendar
@@ -35,7 +36,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.36.10"
+APP_VERSION = "0.36.11"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -244,6 +245,11 @@ _PLANNER = build_planner(PlannerAdapters(
 optimize_hp_heating_slots = _PLANNER.optimize_hp_heating_slots
 run_planner = _PLANNER.run_planner
 
+_PPD = build_ppd_runner(PpdAdapters(
+    options=OPTIONS, db=db, slot_start=slot_start, record_event=record_event,
+))
+run_ppd = _PPD.run_ppd
+
 
 _RECOVERY = build_recovery(RecoveryAdapters(
     options=OPTIONS, db=db, qname=qname, record_event=record_event,
@@ -338,8 +344,16 @@ def complete_rce_cycle(result: dict, run_type: str) -> dict:
         record_event("rce_dependent_cycle_failed", "core", failed, "ERROR")
         LOG.exception("RCE dependent cycle failed after complete import")
         return failed
+    try:
+        ppd = (run_serialized("ppd", run_ppd, plan.get("run_id"), run_type)
+               if plan.get("status") != "WAITING" else {"status": "WAITING_FOR_PLAN"})
+    except Exception as exc:
+        ppd = {"status": "ERROR", "error": str(exc), "plan_run_id": plan.get("run_id")}
+        record_event("ppd_run_failed", "ppd", ppd, "ERROR")
+        LOG.exception("PPD failed after successful RCE planner run")
     completed = {**result, "pv": pv, "weather": weather,
-                 "load_slots_filled": learned, "planner": {"status": "ACCEPTED", **plan}}
+                 "load_slots_filled": learned, "planner": {"status": "ACCEPTED", **plan},
+                 "ppd": ppd}
     record_event("rce_dependent_cycle_completed", "core", completed)
     return completed
 
@@ -354,7 +368,8 @@ def engine_loop() -> None:
         expire_stale_commands=expire_stale_commands, maintain_todo_archive=maintain_todo_archive,
         ensure_slot_calendar=ensure_slot_calendar, refresh_pv_forecast=refresh_pv_forecast,
         refresh_weather_forecast=refresh_weather_forecast, record_event=record_event,
-        refresh_rce=refresh_rce, complete_rce_cycle=complete_rce_cycle, run_planner=run_planner,
+        refresh_rce=refresh_rce, complete_rce_cycle=complete_rce_cycle,
+        run_planner=run_planner, run_ppd=run_ppd,
         stage_executor_commands=stage_executor_commands, dispatch_ready_commands=dispatch_ready_commands,
         run_analytics=run_analytics, run_ai_observer=run_ai_observer,
         generate_diagnostic_report=generate_diagnostic_report,
@@ -370,7 +385,8 @@ Handler = build_handler(ApiAdapters(
     db=db, local_now=local_now, slot_start=slot_start, settings_payload=settings_payload,
     update_operational_settings=update_operational_settings, update_executor_mode=update_executor_mode,
     update_process_override=update_process_override, stage_executor_commands=stage_executor_commands,
-    acknowledge_command=acknowledge_command, run_serialized=run_serialized, run_planner=run_planner,
+    acknowledge_command=acknowledge_command, run_serialized=run_serialized,
+    run_planner=run_planner, run_ppd=run_ppd,
     refresh_rce=refresh_rce, complete_rce_cycle=complete_rce_cycle,
     refresh_pv_forecast=refresh_pv_forecast, refresh_weather_forecast=refresh_weather_forecast,
     run_analytics=run_analytics, run_ai_observer=run_ai_observer,

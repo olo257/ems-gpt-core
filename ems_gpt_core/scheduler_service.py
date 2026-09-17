@@ -116,6 +116,7 @@ class SchedulerAdapters:
     refresh_rce: Callable
     complete_rce_cycle: Callable
     run_planner: Callable
+    run_ppd: Callable
     stage_executor_commands: Callable
     dispatch_ready_commands: Callable
     run_analytics: Callable
@@ -145,6 +146,7 @@ def run_scheduler(a: SchedulerAdapters) -> None:
         key = start.isoformat()
         error = None
         planner_health = a.state.get("modules", {}).get("planner", "STARTING")
+        ppd_health = a.state.get("modules", {}).get("ppd", "STARTING")
         try:
             telemetry_ok = a.capture_telemetry()
             health = update_telemetry_health(
@@ -251,14 +253,34 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                     replan = a.run_serialized("planner", a.run_planner, "slot_replan")
                     planner_health = "RUNNING" if replan.get("status") != "WAITING" else "WAITING"
                     module_activity("planner", "Plan opublikowany", planner_health)
-                    module_activity("ppd", "Decyzje PPD odświeżone", planner_health)
+                    if planner_health == "RUNNING":
+                        module_activity("ppd", "Wyliczanie decyzji z opublikowanego planu", "RUNNING")
+                        try:
+                            ppd = a.run_serialized(
+                                "ppd", a.run_ppd, replan.get("run_id"), "slot_replan")
+                            ppd_health = "RUNNING"
+                            module_activity("ppd", "Decyzje PPD opublikowane", "RUNNING")
+                        except Exception as ppd_exc:
+                            ppd = {"status": "ERROR", "error": str(ppd_exc)}
+                            ppd_health = "DEGRADED"
+                            module_activity("ppd", f"Błąd PPD: {ppd_exc}", "DEGRADED")
+                            a.record_event("ppd_run_failed", "ppd", {
+                                "slot_start": key, "plan_run_id": replan.get("run_id"),
+                                "error": str(ppd_exc),
+                            }, "ERROR")
+                            a.log.exception("PPD run failed after published plan: slot=%s", key)
+                    else:
+                        ppd = {"status": "WAITING_FOR_PLAN"}
+                        ppd_health = "WAITING"
+                        module_activity("ppd", "Oczekiwanie na plan", "WAITING")
                     with a.lock:
                         a.state["planner_failure_latched"] = None
                     a.record_event("slot_replan_completed", "planner", {
-                        "slot_start": key, **replan,
+                        "slot_start": key, **replan, "ppd": ppd,
                     })
                 except Exception as exc:
                     planner_health = "DEGRADED"
+                    ppd_health = "WAITING"
                     module_activity("planner", f"Błąd przeliczenia: {exc}", "DEGRADED")
                     module_activity("ppd", "Zachowano ostatnie poprawne decyzje", "DEGRADED")
                     with a.lock:
@@ -298,7 +320,7 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 a.state["backup"] = backup_result
                 a.state["modules"].update(
                     core="RUNNING", planner=planner_health,
-                    ppd="RUNNING" if planner_health == "RUNNING" else planner_health,
+                    ppd=ppd_health,
                     analytics="RUNNING",
                     diagnostics="RUNNING",
                     appliances="RUNNING" if appliance_result.get("status") == "OK" else appliance_result.get("status"),

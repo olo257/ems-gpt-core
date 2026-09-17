@@ -1,3 +1,17 @@
+## 0.36.11
+
+- Wydzielono PPD jako osobny przebieg uruchamiany dopiero po atomowej
+  publikacji planu. PPD otrzymuje własny `ppd_run_id` i jawny status w tabeli
+  przebiegów modułów.
+- Planer nie zapisuje już decyzji wykonawczych. PPD czyta wskazany
+  `plan_run_id`, nie może zmieniać SOC ani targetu i zapisuje wyłącznie
+  polityki, rekomendacje, elastyczny podział nadwyżki PV oraz decyzje procesów.
+- Executor wersjonuje polecenia parą `plan_run_id` + `ppd_run_id`, dlatego nie
+  wykona decyzji pochodzącej z innego przebiegu PPD.
+- Bliskie okno PV może teraz usunąć wcześniej wybrany poranny BUY. Iteracje
+  targetu zastępują zbiór zakupów aktualnym wynikiem zamiast kumulować go;
+  oscylacja BUY–PV kończy przebieg bez publikacji.
+
 ## 0.36.10
 
 - Zamknięto lukę, w której minimalny krok ładowania `+0,25% SOC` pozwalał

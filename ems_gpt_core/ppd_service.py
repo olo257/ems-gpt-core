@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from types import SimpleNamespace
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -131,3 +135,159 @@ def build_flexible_ppd(
             ),
         ))
     return decisions
+
+
+@dataclass(frozen=True)
+class PpdAdapters:
+    options: dict
+    db: Callable
+    slot_start: Callable
+    record_event: Callable
+
+
+def _next_buy_prices(rows: list[dict]) -> list[float | None]:
+    result: list[float | None] = [None] * len(rows)
+    best = None
+    for index in range(len(rows) - 1, -1, -1):
+        result[index] = best
+        price = rows[index].get("price_buy_pln_kwh")
+        if price is not None:
+            best = float(price) if best is None else min(best, float(price))
+    return result
+
+
+def _sale_economics(rows: list[dict], index: int, eta_c: float, eta_d: float,
+                    degradation: float, margin: float) -> dict:
+    replacement = _next_buy_prices(rows)[index]
+    sell = float(rows[index].get("price_sell_pln_kwh") or 0.0)
+    required = (replacement / (eta_c * eta_d) + degradation + margin
+                if replacement is not None else None)
+    return {"replacement": replacement, "required": required,
+            "eligible": required is not None and sell >= required}
+
+
+def build_ppd_runner(a: PpdAdapters):
+    """Create a read-plan/write-decisions PPD service.
+
+    The service never updates SOC, target, price windows or core battery flows.
+    Its only slot writes are presentation/policy fields and allocation of the
+    already-published flexible PV remainder.
+    """
+    options, db = a.options, a.db
+
+    def run_ppd(plan_run_id: str | None = None, run_type: str = "scheduled") -> dict:
+        ppd_run_id = str(uuid.uuid4())
+        cutoff = a.slot_start().replace(tzinfo=None)
+        eta_c = max(0.01, min(1.0, float(options.get("battery_charge_efficiency", 0.90))))
+        eta_d = max(0.01, min(1.0, float(options.get("battery_discharge_efficiency", 0.95))))
+        degradation = max(0.0, float(options.get("battery_degradation_cost_pln_kwh", 0.08)))
+        margin = max(0.0, float(options.get("minimum_arbitrage_margin_pln_kwh", 0.05)))
+        threshold = max(0.0, float(options.get("planned_flow_threshold_kwh", 0.02)))
+        cwu_threshold = max(0.0, float(options.get("pv_cwu_min_surplus_kw", 2.0))) * .25
+        ev_threshold = max(0.0, float(options.get("pv_ev_min_surplus_kw", 1.5))) * .25
+        with db() as conn, conn.cursor() as cur:
+            if plan_run_id is None:
+                cur.execute("""SELECT run_id FROM ems_gpt_plan_runs
+                  WHERE status='PUBLISHED' ORDER BY published_at DESC LIMIT 1""")
+                latest = cur.fetchone()
+                if not latest:
+                    raise RuntimeError("PPD_NO_PUBLISHED_PLAN")
+                plan_run_id = str(latest["run_id"])
+            cur.execute("""INSERT INTO ems_gpt_core_module_runs
+              (run_id,module_name,run_type,status,started_at,slot_start,input_watermark)
+              VALUES(%s,'ppd',%s,'RUNNING',NOW(6),%s,%s)""",
+              (ppd_run_id, run_type, cutoff, plan_run_id))
+            cur.execute("""SELECT * FROM ems_gpt_slots
+              WHERE actual_recorded_at IS NULL AND slot_start>=%s
+                AND plan_run_id=%s AND plan_stage='PUBLISHED'
+              ORDER BY slot_start""", (cutoff, plan_run_id))
+            rows = list(cur.fetchall())
+            if not rows:
+                raise RuntimeError(f"PPD_PLAN_ROWS_MISSING:{plan_run_id}")
+            next_buy = _next_buy_prices(rows)
+            flexible_rows = []
+            for index, row in enumerate(rows):
+                raw_flexible = sum(max(0.0, float(row.get(field) or 0.0)) for field in (
+                    "planned_pv_export_kwh", "planned_pv_to_cwu_kwh",
+                    "planned_pv_to_ev_kwh", "planned_pv_curtail_kwh"))
+                sell_battery = float(row.get("planned_sell_kwh") or 0.0) > threshold
+                replacement = next_buy[index]
+                flexible_rows.append({
+                    "slot_start": row["slot_start"], "local_day": row.get("local_day"),
+                    "soc_end_pct": row.get("soc_end_plan_pct"),
+                    "soc_target_pct": row.get("soc_target_pct"),
+                    "pv_flex_kwh": raw_flexible, "sell_battery": sell_battery,
+                    "flexible_is_economic": (replacement is None or
+                        float(row.get("price_sell_pln_kwh") or 0.0) <= replacement + margin),
+                })
+            flexible = build_flexible_ppd(
+                flexible_rows, cwu_threshold_kwh=cwu_threshold,
+                ev_threshold_kwh=ev_threshold)
+            decision_count = 0
+            for index, (row, flex) in enumerate(zip(rows, flexible)):
+                buy = float(row.get("planned_buy_kwh") or 0.0)
+                sell = float(row.get("planned_sell_kwh") or 0.0)
+                pv_flex = float(flexible_rows[index]["pv_flex_kwh"])
+                cwu = min(pv_flex, 0.625) if flex.cwu_anchor else 0.0
+                after_cwu = max(0.0, pv_flex - cwu)
+                ev = after_cwu if flex.ev_anchor and after_cwu >= ev_threshold else 0.0
+                after_flex = max(0.0, after_cwu - ev)
+                sell_price = float(row.get("price_sell_pln_kwh") or 0.0)
+                pv_export = after_flex if sell_price > 0.0 else 0.0
+                curtail = after_flex - pv_export
+                economics = _sale_economics(rows, index, eta_c, eta_d, degradation, margin)
+                sell_allowed = sell > threshold and economics["eligible"]
+                grid_policy = "BUY_ALLOWED" if buy > threshold else "NO_BUY" if sell_allowed else "NEUTRAL"
+                export_policy = ("SELL_BAT" if sell_allowed else "NO_SELL_PV" if sell_price <= 0.0
+                                 else "SELL_PV" if pv_export > threshold else "NEUTRAL")
+                recommendation = ("Zakup ładowanie" if buy > threshold else
+                    "Sprzedaż z baterii" if sell_allowed else "Sprzedaż PV" if pv_export > threshold else
+                    "Ładowanie PV" if float(row.get("planned_battery_charge_kwh") or 0.0) > threshold else
+                    "Autokonsumpcja PV" if float(row.get("forecast_pv_total_kwh") or 0.0) > threshold else
+                    "Autokonsumpcja z baterii" if float(row.get("planned_battery_discharge_kwh") or 0.0) > threshold else
+                    "Neutralny")
+                reason = (f"ppd_run={ppd_run_id}; plan_run={plan_run_id}; target_read_only; "
+                          f"grid={grid_policy}; export={export_policy}; {flex.reason}")[:255]
+                cur.execute("""UPDATE ems_gpt_slots SET planned_pv_to_cwu_kwh=%s,
+                  planned_pv_to_ev_kwh=%s,planned_pv_export_kwh=%s,
+                  planned_pv_curtail_kwh=%s,recommendation=%s,
+                  grid_policy_planned=%s,export_policy_planned=%s,ppd_reason=%s,
+                  ppd_run_type=%s,ppd_version='CORE_0_36_11',ppd_locked_at=NOW(6)
+                  WHERE slot_start=%s AND plan_run_id=%s""",
+                  (round(cwu, 6), round(ev, 6), round(pv_export, 6), round(curtail, 6),
+                   recommendation, grid_policy, export_policy, reason, run_type,
+                   row["slot_start"], plan_run_id))
+                decisions = (
+                    ("BATTERY_IMPORT", buy > threshold, grid_policy,
+                     f"planned_buy={buy:.3f}; target_read_only"),
+                    ("BATTERY_EXPORT", sell_allowed, export_policy,
+                     f"sell={sell_price:.3f}; replacement={economics['replacement']}; required={economics['required']}"),
+                    ("PV_CWU", flex.pv_cwu_allowed, "ALLOW" if flex.pv_cwu_allowed else "BLOCK", flex.reason),
+                    ("PV_EV", flex.pv_ev_allowed, "ALLOW" if flex.pv_ev_allowed else "BLOCK", flex.reason),
+                    ("HP_HEAT_DHW", bool(row.get("heat_pump_window")),
+                     "ON" if row.get("heat_pump_window") else "OFF", "published_heat_pump_window"),
+                )
+                for process, eligible, decision, process_reason in decisions:
+                    cur.execute("""INSERT INTO ems_gpt_core_process_decisions
+                      (slot_start,slot_id,process_name,decision,eligible,reason,plan_run_id,
+                       ppd_run_id,valid_until,connector_required,published_at)
+                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,1,NOW(6))
+                      ON DUPLICATE KEY UPDATE decision=VALUES(decision),eligible=VALUES(eligible),
+                       reason=VALUES(reason),slot_id=COALESCE(slot_id,VALUES(slot_id)),
+                       plan_run_id=VALUES(plan_run_id),ppd_run_id=VALUES(ppd_run_id),
+                       valid_until=VALUES(valid_until),published_at=NOW(6)""",
+                      (row["slot_start"], row.get("slot_id"), process, decision, eligible,
+                       process_reason[:1000], plan_run_id, ppd_run_id,
+                       row["slot_start"] + timedelta(minutes=16)))
+                    decision_count += 1
+            cur.execute("""UPDATE ems_gpt_core_module_runs SET status='COMPLETED',
+              completed_at=NOW(6),output_version=%s,reason=%s WHERE run_id=%s""",
+              (f"PPD:{ppd_run_id}", json.dumps({"plan_run_id": plan_run_id,
+               "rows": len(rows), "decisions": decision_count}), ppd_run_id))
+        result = {"status": "COMPLETED", "run_id": ppd_run_id,
+                  "plan_run_id": plan_run_id, "rows": len(rows),
+                  "decisions": decision_count}
+        a.record_event("ppd_completed", "ppd", result)
+        return result
+
+    return SimpleNamespace(run_ppd=run_ppd)
