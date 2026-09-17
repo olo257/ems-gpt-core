@@ -790,6 +790,8 @@ def build_planner(a: PlannerAdapters):
         degradation = max(0.0, float(OPTIONS.get("battery_degradation_cost_pln_kwh", 0.08)))
         min_margin = max(0.0, float(OPTIONS.get("minimum_arbitrage_margin_pln_kwh", 0.05)))
         uncertainty_weight = max(0.0, min(2.0, float(OPTIONS.get("forecast_uncertainty_weight", 1.0))))
+        fixed_forecast_correction = uncertainty_weight if bool(
+            OPTIONS.get("forecast_fixed_corrections_enabled", False)) else 0.0
         floor_cap = max(reserve, min(100.0, float(OPTIONS.get("soc_floor_max_pct", 90.0))))
         target_cap = max(floor_cap, min(100.0, float(OPTIONS.get("soc_target_max_pct", 100.0))))
         flow_threshold = max(0.0, float(OPTIONS.get("planned_flow_threshold_kwh", 0.02)))
@@ -886,6 +888,23 @@ def build_planner(a: PlannerAdapters):
             ensure_deadline("WINDOWS")
             cur.execute("SELECT * FROM ems_gpt_plan_stage_rows WHERE run_id=%s ORDER BY slot_start", (run_id,))
             rows = list(cur.fetchall())
+            # Learn recurring DHW demand independently from native household
+            # load. Weekdays and weekends have different schedules, while the
+            # exact quarter-hour profile lets the 06:00 cycle raise the bridge
+            # target before it starts instead of reacting after SOC falls.
+            history_cutoff = now - timedelta(days=30)
+            cur.execute("""SELECT CASE WHEN WEEKDAY(slot_start)<5 THEN 0 ELSE 1 END day_type,
+              HOUR(slot_start) hour_no,MINUTE(slot_start) minute_no,
+              AVG(COALESCE(actual_dhw_consumed_kwh,0)) mean_dhw_kwh,COUNT(*) sample_count
+              FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s
+                AND actual_recorded_at IS NOT NULL AND plan_published=1
+                AND execution_reason LIKE 'CORE_TELEMETRY_%%'
+              GROUP BY day_type,hour_no,minute_no""", (history_cutoff, now))
+            dhw_profile = {
+                (int(value["day_type"]), int(value["hour_no"]), int(value["minute_no"])):
+                    float(value["mean_dhw_kwh"] or 0.0)
+                for value in cur.fetchall() if int(value["sample_count"] or 0) >= 2
+            }
             # Keep the daily heating trigger stable across hourly replans by reading
             # the complete 00:00-06:00 forecast, including already closed slots.
             night_threshold = float(OPTIONS.get("night_heating_threshold_c", 10.0))
@@ -947,9 +966,14 @@ def build_planner(a: PlannerAdapters):
                 # BOOLEAN/TINYINT values.
                 work["buy_window"] = strict_database_bool(row.get("buy_window"), "buy_window")
                 work["sale_window"] = strict_database_bool(row.get("sale_window"), "sale_window")
-                work["forecast_load_kwh"] = max(0.0, float(row.get("forecast_load_kwh") or 0.0)*(1+0.10*uncertainty_weight))
-                work["forecast_pv_total_kwh"] = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0)*(1-0.10*uncertainty_weight))
-                work["forecast_heat_pump_load_kwh"] = planned_hp_kw*0.25 if index in hp_selected_indices else 0.0
+                work["forecast_load_kwh"] = max(0.0, float(row.get("forecast_load_kwh") or 0.0)*(1+0.10*fixed_forecast_correction))
+                work["forecast_pv_total_kwh"] = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0)*(1-0.10*fixed_forecast_correction))
+                slot_time = row.get("slot_start_local") or row["slot_start"]
+                key = (0 if slot_time.weekday() < 5 else 1, slot_time.hour, slot_time.minute)
+                historical_dhw_kwh = max(0.0, dhw_profile.get(key, 0.0))
+                planned_heating_kwh = planned_hp_kw*0.25 if index in hp_selected_indices else 0.0
+                work["forecast_heat_pump_load_kwh"] = max(
+                    planned_heating_kwh, historical_dhw_kwh)
                 horizon_rows.append(work)
                 program = active_tou_program(row["slot_start"], tou_programs)
                 tou_by_index.append(program)

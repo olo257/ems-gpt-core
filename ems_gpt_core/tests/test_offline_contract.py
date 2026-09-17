@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.3"', APP_SOURCE)
-        self.assertIn('version: "0.36.3"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.4"', APP_SOURCE)
+        self.assertIn('version: "0.36.4"', CONFIG)
 
     def test_target_history_is_observational_only(self):
         analytics = MODULE_SOURCES["analytics_service.py"]
@@ -167,6 +167,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("TIME(slot_start)", materializations)
         self.assertIn("MODIFY COLUMN {column} TIME NULL", schema)
         self.assertIn("sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_chlodzenie_pobrana", APP_SOURCE)
+        self.assertIn("AVG(COALESCE(actual_dhw_consumed_kwh,0)) mean_dhw_kwh", MODULE_SOURCES["planner_service.py"])
+        self.assertIn("historical_dhw_kwh", MODULE_SOURCES["planner_service.py"])
 
     def test_app_status_card_uses_backend_start_time(self):
         self.assertIn('"started_at": datetime.now(timezone.utc).isoformat()', SOURCE)
@@ -389,7 +391,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('"hp_min_heating_hours": 10.0', SOURCE)
 
     def test_hp_load_is_coupled_into_soc_and_recharge_plan(self):
-        self.assertIn('work["forecast_heat_pump_load_kwh"] = planned_hp_kw*0.25 if index in hp_selected_indices else 0.0', SOURCE)
+        self.assertIn('planned_heating_kwh = planned_hp_kw*0.25 if index in hp_selected_indices else 0.0', SOURCE)
+        self.assertIn('max(\n                    planned_heating_kwh, historical_dhw_kwh)', SOURCE)
         self.assertIn("hp_load=planned_hp_kw * 0.25 if i in hp_selected_indices else 0.0", SOURCE)
         self.assertIn("load = native_load + hp_load", SOURCE)
         self.assertIn("load=native_load+hp_load", SOURCE)

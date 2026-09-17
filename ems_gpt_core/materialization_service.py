@@ -8,6 +8,22 @@ from types import SimpleNamespace
 from typing import Callable
 
 
+def normalize_hp_mode_energy(consumed_kwh: float, generated_kwh: float,
+                             activity_threshold_kwh: float = 0.02) -> tuple[float, float]:
+    """Drop idle-channel noise without mixing energy between HP modes.
+
+    HeishaMon can leave a small non-zero consumption value on an inactive
+    channel (currently about 18 W on heating).  Counting that value in every
+    slot creates fictitious CO energy even when the compressor never ran.
+    Useful production is direct evidence of an active mode; otherwise the
+    electrical energy itself must exceed the per-slot activity threshold.
+    """
+    consumed = max(0.0, float(consumed_kwh or 0.0))
+    generated = max(0.0, float(generated_kwh or 0.0))
+    active = generated > 0.001 or consumed >= activity_threshold_kwh
+    return (consumed, generated) if active else (0.0, 0.0)
+
+
 @dataclass(frozen=True)
 class MaterializationAdapters:
     options: dict
@@ -74,11 +90,18 @@ def build_materializations(a: MaterializationAdapters):
                 battery_discharge=float(m["battery_discharge"] or 0)*.25/1000
                 ev_energy=float(m["ev_power"] or 0)*.25/1000
                 dhw_energy=float(m["dhw_power"] or 0)*.25/1000
-                hp_heat_cons=float(m["hp_heat_cons"] or 0)*.25/1000
-                hp_heat_prod=float(m["hp_heat_prod"] or 0)*.25/1000
-                hp_dhw_prod=float(m["hp_dhw_prod"] or 0)*.25/1000
-                hp_cool_cons=float(m["hp_cool_cons"] or 0)*.25/1000
-                hp_cool_prod=float(m["hp_cool_prod"] or 0)*.25/1000
+                hp_mode_threshold=max(0.001, float(OPTIONS.get("hp_mode_min_energy_kwh", 0.02)))
+                hp_heat_cons,hp_heat_prod=normalize_hp_mode_energy(
+                    float(m["hp_heat_cons"] or 0)*.25/1000,
+                    float(m["hp_heat_prod"] or 0)*.25/1000,
+                    hp_mode_threshold)
+                dhw_energy,hp_dhw_prod=normalize_hp_mode_energy(
+                    dhw_energy,float(m["hp_dhw_prod"] or 0)*.25/1000,
+                    hp_mode_threshold)
+                hp_cool_cons,hp_cool_prod=normalize_hp_mode_energy(
+                    float(m["hp_cool_cons"] or 0)*.25/1000,
+                    float(m["hp_cool_prod"] or 0)*.25/1000,
+                    hp_mode_threshold)
                 hp_total_cons=hp_heat_cons+dhw_energy+hp_cool_cons
                 hp_total_prod=hp_heat_prod+hp_dhw_prod+hp_cool_prod
                 hp_cop=hp_total_prod/hp_total_cons if hp_total_cons>.001 else None
@@ -452,8 +475,8 @@ def build_materializations(a: MaterializationAdapters):
     def learn_missing_load() -> int:
         updated=0; cutoff=slot_start().replace(tzinfo=None)
         with db() as conn,conn.cursor() as cur:
-            cur.execute("""SELECT slot_start FROM ems_gpt_slots WHERE slot_start>=%s
-              AND actual_recorded_at IS NULL AND forecast_load_kwh IS NULL ORDER BY slot_start""",(cutoff,))
+            cur.execute("""SELECT slot_start,forecast_load_kwh FROM ems_gpt_slots WHERE slot_start>=%s
+              AND actual_recorded_at IS NULL ORDER BY slot_start""",(cutoff,))
             for row in cur.fetchall():
                 s=row["slot_start"]
                 cur.execute("""SELECT trimmed_mean_kwh,sample_count FROM ems_gpt_core_load_profiles
@@ -469,6 +492,8 @@ def build_materializations(a: MaterializationAdapters):
                 # has fewer than three samples. Use the recent measured base
                 # load as a conservative temporary forecast until learning
                 # provides the slot-specific profile.
+                if row.get("forecast_load_kwh") is not None:
+                    continue
                 cur.execute("""SELECT AVG(actual_load_kwh) value FROM (
                   SELECT actual_load_kwh FROM ems_gpt_slots
                   WHERE actual_load_kwh IS NOT NULL AND actual_load_kwh>0
