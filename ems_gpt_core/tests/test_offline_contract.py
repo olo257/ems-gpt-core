@@ -24,8 +24,22 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.5"', APP_SOURCE)
-        self.assertIn('version: "0.36.5"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.6"', APP_SOURCE)
+        self.assertIn('version: "0.36.6"', CONFIG)
+
+    def test_planner_publishes_the_hp_load_used_by_soc_optimization(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        schema = MODULE_SOURCES["schema_service.py"]
+        for column in (
+            "forecast_heat_pump_load_kwh",
+            "forecast_heat_pump_dhw_load_kwh",
+        ):
+            self.assertIn(f'"{column} DOUBLE NULL"', schema)
+            self.assertIn(f"p.{column}=s.{column}", planner)
+        self.assertIn(
+            'work["forecast_heat_pump_dhw_load_kwh"] = historical_dhw_kwh',
+            planner,
+        )
 
     def test_target_history_is_observational_only(self):
         analytics = MODULE_SOURCES["analytics_service.py"]

@@ -993,6 +993,12 @@ def build_planner(a: PlannerAdapters):
                 planned_heating_kwh = planned_hp_kw*0.25 if index in hp_selected_indices else 0.0
                 work["forecast_heat_pump_load_kwh"] = max(
                     planned_heating_kwh, historical_dhw_kwh)
+                work["forecast_heat_pump_dhw_load_kwh"] = historical_dhw_kwh
+                cur.execute("""UPDATE ems_gpt_plan_stage_rows SET
+                  forecast_heat_pump_load_kwh=%s,forecast_heat_pump_dhw_load_kwh=%s
+                  WHERE run_id=%s AND slot_start=%s""",
+                  (round(work["forecast_heat_pump_load_kwh"], 6),
+                   round(historical_dhw_kwh, 6), run_id, row["slot_start"]))
                 horizon_rows.append(work)
                 program = active_tou_program(row["slot_start"], tou_programs)
                 tou_by_index.append(program)
@@ -1317,6 +1323,8 @@ def build_planner(a: PlannerAdapters):
               ON s.slot_start=p.slot_start AND s.run_id=%s SET
               p.forecast_pv1_kwh=s.forecast_pv1_kwh,p.forecast_pv2_kwh=s.forecast_pv2_kwh,
               p.forecast_pv_total_kwh=s.forecast_pv_total_kwh,p.forecast_load_kwh=s.forecast_load_kwh,
+              p.forecast_heat_pump_load_kwh=s.forecast_heat_pump_load_kwh,
+              p.forecast_heat_pump_dhw_load_kwh=s.forecast_heat_pump_dhw_load_kwh,
               p.soc_start_plan_pct=s.soc_start_plan_pct,p.soc_end_plan_pct=s.soc_end_plan_pct,
               p.soc_floor_pct=s.soc_floor_pct,p.soc_target_pct=s.soc_target_pct,
               p.soc_target_due=s.soc_target_due,p.soc_target_source=s.soc_target_source,

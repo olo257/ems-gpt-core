@@ -224,6 +224,8 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             for column in (
                 "soc_start_plan_pct DOUBLE NULL", "soc_end_plan_pct DOUBLE NULL",
                 "heat_pump_window TINYINT(1) NOT NULL DEFAULT 0",
+                "forecast_heat_pump_load_kwh DOUBLE NULL",
+                "forecast_heat_pump_dhw_load_kwh DOUBLE NULL",
                 "planned_pv_to_bat_kwh DOUBLE NOT NULL DEFAULT 0",
                 "planned_pv_to_cwu_kwh DOUBLE NOT NULL DEFAULT 0",
                 "planned_pv_to_ev_kwh DOUBLE NOT NULL DEFAULT 0",
