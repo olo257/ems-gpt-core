@@ -275,6 +275,9 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             "closed_at DATETIME(6) NULL", "learning_eligible TINYINT(1) NOT NULL DEFAULT 0",
         ):
             cur.execute(f"ALTER TABLE ems_gpt_core_hourly ADD COLUMN IF NOT EXISTS {column}")
+        for table in ("ems_gpt_core_hourly", "ems_gpt_daily"):
+            for column in ("soc_start_pct DOUBLE NULL", "soc_end_pct DOUBLE NULL"):
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
         for column in (
             "planned_pv_to_bat_kwh DOUBLE NOT NULL DEFAULT 0", "planned_pv_to_cwu_kwh DOUBLE NOT NULL DEFAULT 0",
             "planned_pv_to_ev_kwh DOUBLE NOT NULL DEFAULT 0", "planned_pv_export_kwh DOUBLE NOT NULL DEFAULT 0",

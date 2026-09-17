@@ -215,6 +215,15 @@ def build_executor(a: ExecutorAdapters):
         except FileNotFoundError:
             pass
         candidate = {**OPTIONS, **current, **changed}
+        history_weight_keys = (
+            "soc_target_history_weight_7d_pct",
+            "soc_target_history_weight_14d_pct",
+            "soc_target_history_weight_28d_pct",
+        )
+        history_weight_sum = sum(float(candidate.get(key, 0.0)) for key in history_weight_keys)
+        if (any(key in changed for key in history_weight_keys)
+                and abs(history_weight_sum - 100.0) > 0.001):
+            raise ValueError("Wagi końcowego SOC 7/14/28 dni muszą sumować się do 100%")
         if candidate.get("backup_enabled"):
             local_path = str(candidate.get("backup_local_directory") or "")
             omv_path = str(candidate.get("backup_omv_directory") or "")

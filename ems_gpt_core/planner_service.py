@@ -13,6 +13,45 @@ from ingestion_service import derive_price_windows
 from ppd_service import build_flexible_ppd
 
 
+def historical_terminal_soc(closing_rows: list[dict], terminal_day,
+                            weights_pct: dict[int, float], fallback_pct: float) -> dict:
+    """Forecast only the end-of-day SOC from completed historical closes.
+
+    The 7/14/28-day windows intentionally overlap.  Missing windows are
+    removed and the remaining configured weights are normalized.  This value
+    is a terminal boundary only; slot targets are still derived by the
+    backward energy-balance pass.
+    """
+    means: dict[int, float | None] = {}
+    samples: dict[int, int] = {}
+    for horizon in (7, 14, 28):
+        values = []
+        for row in closing_rows:
+            day = row.get("local_day") or row.get("day_date")
+            if isinstance(day, str):
+                day = datetime.strptime(day[:10], "%Y-%m-%d").date()
+            age = (terminal_day - day).days if day is not None else 0
+            if 1 <= age <= horizon and row.get("soc_end_pct") is not None:
+                values.append(float(row["soc_end_pct"]))
+        samples[horizon] = len(values)
+        means[horizon] = sum(values) / len(values) if values else None
+    available_weight = sum(
+        max(0.0, float(weights_pct.get(horizon, 0.0)))
+        for horizon in (7, 14, 28) if means[horizon] is not None
+    )
+    if available_weight <= 0.0:
+        forecast = float(fallback_pct)
+        source = "FALLBACK_RESERVE"
+    else:
+        forecast = sum(
+            float(means[horizon]) * max(0.0, float(weights_pct.get(horizon, 0.0)))
+            for horizon in (7, 14, 28) if means[horizon] is not None
+        ) / available_weight
+        source = "WEIGHTED_ACTUAL_CLOSE_7_14_28D"
+    return {"soc_pct": forecast, "means": means, "samples": samples,
+            "available_weight_pct": available_weight, "source": source}
+
+
 def strict_database_bool(value, field: str) -> bool:
     """Normalize MariaDB BOOLEAN/TINYINT once and reject ambiguous values."""
     if isinstance(value, bool):
@@ -1006,7 +1045,33 @@ def build_planner(a: PlannerAdapters):
                 # floor.  Deliberate export is allowed only in SELL windows;
                 # its exact stop SOC is derived from the accepted flow below.
                 sale_constraints.append(reserve if work["sale_window"] else 100.0)
-            terminal_soc = reserve
+            terminal_day = (horizon_rows[-1].get("local_day")
+                            or horizon_rows[-1]["slot_start"].date())
+            history_start = terminal_day - timedelta(days=28)
+            cur.execute("""SELECT local_day,
+              SUBSTRING_INDEX(GROUP_CONCAT(soc_end_pct ORDER BY slot_start DESC),',',1) soc_end_pct,
+              COUNT(*) slot_count,SUM(actual_recorded_at IS NOT NULL) terminal_count,
+              SUM(actual_mode='MISSING_OUTAGE') missing_count
+              FROM ems_gpt_slots
+              WHERE local_day>=%s AND local_day<%s
+              GROUP BY local_day
+              HAVING slot_count IN (92,96,100) AND terminal_count=slot_count
+                AND missing_count=0 AND soc_end_pct IS NOT NULL
+              ORDER BY local_day""", (history_start, terminal_day))
+            terminal_history = historical_terminal_soc(
+                list(cur.fetchall()), terminal_day,
+                {
+                    7: float(OPTIONS.get("soc_target_history_weight_7d_pct", 50.0)),
+                    14: float(OPTIONS.get("soc_target_history_weight_14d_pct", 25.0)),
+                    28: float(OPTIONS.get("soc_target_history_weight_28d_pct", 25.0)),
+                }, reserve)
+            terminal_soc = max(
+                reserve, min(target_cap, float(terminal_history["soc_pct"])))
+            record_event("historical_terminal_soc_forecast", "planner", {
+                "terminal_day": str(terminal_day),
+                "terminal_soc_pct": round(terminal_soc, 3),
+                **terminal_history,
+            })
             audit_stage(cur,run_id,"WINDOW_CANDIDATES","OK",len(rows),"pass 1: full horizon")
             audit_stage(cur,run_id,"LOAD","OK",len(rows),"pass 2: native and controllable load")
             audit_stage(cur,run_id,"PV","OK",len(rows),"pass 3: corrected PV balance")

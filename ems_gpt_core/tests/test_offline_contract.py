@@ -24,8 +24,32 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.7"', APP_SOURCE)
-        self.assertIn('version: "0.36.7"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.8"', APP_SOURCE)
+        self.assertIn('version: "0.36.8"', CONFIG)
+
+    def test_hourly_and_daily_soc_boundaries_are_continuous_actuals(self):
+        materialization = MODULE_SOURCES["materialization_service.py"]
+        schema = MODULE_SOURCES["schema_service.py"]
+        self.assertIn("def _actual_soc_bounds", materialization)
+        self.assertIn("actual_recorded_at IS NOT NULL AND soc_end_pct IS NOT NULL", materialization)
+        self.assertIn("slot_start<%s", materialization)
+        self.assertGreaterEqual(materialization.count("soc_start_pct=%s,soc_end_pct=%s"), 4)
+        self.assertIn('(\"ems_gpt_core_hourly\", \"ems_gpt_daily\")', schema)
+        self.assertIn("['soc_start_pct','SOC początek']", WEBUI)
+
+    def test_historical_soc_only_sets_the_terminal_boundary(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        executor = MODULE_SOURCES["executor_service.py"]
+        for key in (
+            "soc_target_history_weight_7d_pct",
+            "soc_target_history_weight_14d_pct",
+            "soc_target_history_weight_28d_pct",
+        ):
+            self.assertIn(key, planner)
+            self.assertIn(key, executor)
+        self.assertIn("terminal_soc = max(", planner)
+        self.assertIn("backward_target_commitments(", planner)
+        self.assertIn("Wagi końcowego SOC 7/14/28 dni muszą sumować się do 100%", executor)
 
     def test_battery_flow_accuracy_is_diagnostic_only(self):
         analytics = MODULE_SOURCES["analytics_service.py"]
