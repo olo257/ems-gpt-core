@@ -1193,22 +1193,44 @@ def build_planner(a: PlannerAdapters):
                         max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
                         terminal_soc,0.25,target_cap,uncapped_targets,target_due_indices,
                         target_due_indices)
-                refined = optimize_energy_horizon(
-                    horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
-                    max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
-                    terminal_soc,0.25,target_cap,targets,target_due_indices,
-                    target_due_indices)
-                if standard_refined is not None:
+                pv_first_failed=False
+                try:
+                    refined = optimize_energy_horizon(
+                        horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
+                        max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
+                        terminal_soc,0.25,target_cap,targets,target_due_indices,
+                        target_due_indices)
+                except RuntimeError as pv_first_exc:
+                    # PV-first is a competing economic variant, never a
+                    # reason to lose an otherwise feasible production plan.
+                    # A rolling replan can have less live SOC than the
+                    # forecast assumed; reject only the alternative and keep
+                    # the already validated standard target path.
+                    if (standard_refined is None
+                            or not str(pv_first_exc).startswith("No feasible SOC state")):
+                        raise
+                    refined=standard_refined
+                    targets=uncapped_targets
+                    pv_first_caps.clear()
+                    pv_first_failed=True
                     daily_variant_result={
                         "standard_net_pln":-float(standard_refined["objective_pln"]),
-                        "pv_first_net_pln":-float(refined["objective_pln"]),
-                        "selected":"PV_FIRST" if float(refined["objective_pln"])
-                                   < float(standard_refined["objective_pln"])-1e-6 else "STANDARD",
+                        "pv_first_net_pln":None,
+                        "selected":"STANDARD",
+                        "pv_first_rejected":str(pv_first_exc),
                     }
-                    if daily_variant_result["selected"]=="STANDARD":
-                        refined=standard_refined
-                        targets=uncapped_targets
-                        pv_first_caps.clear()
+                if standard_refined is not None:
+                    if not pv_first_failed:
+                        daily_variant_result={
+                            "standard_net_pln":-float(standard_refined["objective_pln"]),
+                            "pv_first_net_pln":-float(refined["objective_pln"]),
+                            "selected":"PV_FIRST" if float(refined["objective_pln"])
+                                       < float(standard_refined["objective_pln"])-1e-6 else "STANDARD",
+                        }
+                        if daily_variant_result["selected"]=="STANDARD":
+                            refined=standard_refined
+                            targets=uncapped_targets
+                            pv_first_caps.clear()
                 ensure_deadline(f"TARGET_PASS_{planning_pass}")
                 refined_selected = {
                     i for i, flow in enumerate(refined["flows"])

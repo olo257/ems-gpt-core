@@ -1,3 +1,12 @@
+## 0.36.13
+
+- Naprawiono krytyczny błąd, w którym niewykonalny wariant `PV_FIRST`
+  przerywał cały replan komunikatem `No feasible SOC state`.
+- `PV_FIRST` jest wariantem alternatywnym: gdy nie da się go wykonać przy
+  aktualnym SOC i ograniczeniach mocy, planer odrzuca wyłącznie ten wariant,
+  publikuje wcześniej zweryfikowany plan `STANDARD` i zapisuje powód
+  odrzucenia w diagnostyce.
+
 ## 0.36.12
 
 - Dodano wariant planu `PV_FIRST`. Jeżeli drogi wcześniejszy zakup zajmuje
