@@ -1,3 +1,14 @@
+## 0.36.3
+
+- Naprawiono regresję kroczącego replanu, w której nieosiągalny w ostatnim
+  slocie termin `soc_target` usuwał wszystkie stany DP i przełączał planer
+  oraz PPD w tryb ograniczony.
+- Termin targetu jest teraz ograniczany do najwyższego SOC fizycznie
+  osiągalnego z aktualnego zbioru stanów, dostępnej mocy, PV i uprawnienia
+  BUY. Oryginalny target nadal pozostaje sufitem ładowania z sieci.
+- Publikowany `soc_target` odzwierciedla wartość rzeczywiście wykonalną;
+  niezasilony hard target poza terminem nadal kończy się błędem zamkniętym.
+
 ## 0.36.0
 
 - Wydzielono `PV_CWU` i `PV_EV` z `planner_service.py` do osobnego

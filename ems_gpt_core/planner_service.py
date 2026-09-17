@@ -248,6 +248,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     }
     target_due_indices = buy_window_ends if target_due_indices is None else set(target_due_indices)
     predecessors: list[dict[int, tuple[int, dict]]] = []
+    effective_target_pcts: list[float] = []
     for index, row in enumerate(rows):
         buy_price = float(row.get("price_buy_pln_kwh") or 0.0)
         sell_price = float(row.get("price_sell_pln_kwh") or 0.0)
@@ -264,14 +265,27 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         # so identity checks against False would incorrectly allow 0.
         grid_charge_allowed = strict_database_bool(row.get("buy_window", True), "buy_window")
         battery_sale_allowed = strict_database_bool(row.get("sale_window", False), "sale_window")
+        available_charge_internal = min(
+            max_internal_charge,
+            surplus * eta_c + (max_internal_charge if grid_charge_allowed else 0.0),
+        )
+        reachable_up = int(math.floor(available_charge_internal / unit_kwh + 1e-9))
+        # A due target is an execution deadline, not permission to invent
+        # charging power.  A rolling replan can enter the final slot of a BUY
+        # or PV replenishment window with less SOC than the backward contract
+        # assumed.  Preserve the requested target as the grid-charge ceiling,
+        # but enforce and publish no more than the highest state reachable from
+        # the currently feasible frontier in this slot.
+        enforced_target_unit = requested_target_unit
+        if index in target_due_indices:
+            enforced_target_unit = min(
+                requested_target_unit,
+                min(last_unit, max(costs) + reachable_up),
+            )
+        effective_target_pcts.append(enforced_target_unit * step)
         next_costs, next_predecessors = {}, {}
         for current_unit, accumulated in costs.items():
             current_energy = current_unit * unit_kwh
-            available_charge_internal = min(
-                max_internal_charge,
-                surplus * eta_c + (max_internal_charge if grid_charge_allowed else 0.0),
-            )
-            reachable_up = int(math.floor(available_charge_internal / unit_kwh + 1e-9))
             for next_unit in range(max(first_unit, current_unit-max_down),
                                    min(last_unit, current_unit+max_up)+1):
                 delta = (next_unit-current_unit) * unit_kwh
@@ -360,7 +374,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # still allowing ordinary consumption below the unrelated
                 # sale floor. Inside BUY it becomes due at the window end.
                 if (minimum_soc_targets is not None and hard_target_indices is not None
-                        and index in hard_target_indices and next_unit < requested_target_unit):
+                        and index in hard_target_indices and next_unit < enforced_target_unit):
                     continue
                 # Usable PV fills all physically reachable battery capacity
                 # before any remaining PV surplus is exported. Grid power is
@@ -375,7 +389,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # requirement must be present. Earlier slots in the same window
                 # may share the charge according to price and power limits.
                 if (minimum_soc_targets is not None and index in target_due_indices
-                        and next_unit < requested_target_unit):
+                        and next_unit < enforced_target_unit):
                     continue
                 slot_cost = ((grid_load+grid_charge)*buy_price
                              -(pv_export+battery_sell)*sell_price
@@ -404,7 +418,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     for index in range(len(rows)-1, -1, -1):
         unit, flows[index] = predecessors[index][unit]
     return {"flows": flows, "objective_pln": round(objective, 6),
-            "soc_step_pct": step, "terminal_soc_pct": terminal_unit*step}
+            "soc_step_pct": step, "terminal_soc_pct": terminal_unit*step,
+            "effective_target_pcts": effective_target_pcts}
 
 
 def derive_soc_commitments(flows: list[dict], capacity_kwh: float,
@@ -1006,6 +1021,7 @@ def build_planner(a: PlannerAdapters):
                 selected_buy_indices = refined_selected
             if not target_converged:
                 raise RuntimeError("SOC_TARGET_PATH_NOT_CONVERGED:8")
+            targets = list(optimization.get("effective_target_pcts", targets))
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"economic multi-pass target; selected_buy_slots={len(selected_buy_indices)}")
             ensure_deadline("TARGET_COMMITMENT")
@@ -1031,6 +1047,7 @@ def build_planner(a: PlannerAdapters):
                 }
                 if final_selected != selected_buy_indices:
                     raise RuntimeError("SOC_TARGET_PATH_CHANGED_AFTER_GRID_HOLD")
+                targets = list(optimization.get("effective_target_pcts", targets))
             ensure_deadline("DISPATCH")
             bridge_floors = [reserve] * len(horizon_rows)
             for index, flow in enumerate(optimization["flows"]):
