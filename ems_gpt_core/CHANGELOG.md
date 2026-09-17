@@ -1,3 +1,12 @@
+## 0.36.6
+
+- Prognoza obciążenia pompy ciepła używana przez optymalizator SOC jest teraz
+  zapisywana również w planie slotowym. Osobna kolumna CWU pokazuje historyczny
+  pobór przypisany do cyklu, w tym powtarzalne grzanie około 06:00.
+- Plan, diagnostyka i wyliczenie targetu korzystają z tego samego obrazu
+  przyszłego obciążenia HP; wartości nie pozostają już wyłącznie wewnątrz
+  przebiegu optymalizatora.
+
 ## 0.36.5
 
 - Decyzja sprzedaży baterii ma końcową kontrolę ekonomiczną typu fail-closed:
