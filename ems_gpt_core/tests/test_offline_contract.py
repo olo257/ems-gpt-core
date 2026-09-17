@@ -24,8 +24,15 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.12"', APP_SOURCE)
-        self.assertIn('version: "0.36.12"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.13"', APP_SOURCE)
+        self.assertIn('version: "0.36.13"', CONFIG)
+
+    def test_infeasible_pv_first_falls_back_to_standard_plan(self):
+        planner=MODULE_SOURCES["planner_service.py"]
+        self.assertIn("except RuntimeError as pv_first_exc",planner)
+        self.assertIn('startswith("No feasible SOC state")',planner)
+        self.assertIn('"pv_first_rejected":str(pv_first_exc)',planner)
+        self.assertIn("refined=standard_refined",planner)
 
     def test_daily_exposes_learning_counts_soc_means_and_pv_bounds(self):
         schema=MODULE_SOURCES["schema_service.py"]
