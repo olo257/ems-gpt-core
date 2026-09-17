@@ -16,6 +16,7 @@ from planner_service import (
     economic_sell_indices,
     paired_arbitrage_buy_indices,
     optimize_energy_horizon,
+    pv_first_target_caps,
     next_replenishment_prices,
     planning_tou_programs,
     strict_database_bool,
@@ -28,6 +29,38 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_pv_first_caps_expensive_buy_displacing_cheap_pv_export(self):
+        rows=[]; flows=[]
+        for index in range(8):
+            rows.append({
+                "buy_window": index < 2,
+                "forecast_load_kwh": 0.10,
+                "forecast_heat_pump_load_kwh": 0.0,
+                "forecast_pv_total_kwh": 1.0 if index >= 5 else 0.0,
+                "price_buy_pln_kwh": 1.10,
+                "price_sell_pln_kwh": 0.12,
+            })
+            flows.append({
+                "soc_end_pct": [35,45,43,41,39,45,50,55][index],
+                "grid_charge_kwh": 1.0 if index < 2 else 0.0,
+                "pv_export_kwh": 0.8 if index >= 5 else 0.0,
+            })
+        caps=pv_first_target_caps(rows,flows,{0,1},15.0,15.0,0.90,0.05)
+        self.assertIn(1,caps)
+        self.assertLess(caps[1],flows[1]["soc_end_pct"])
+
+    def test_pv_first_does_not_cap_energy_needed_to_reach_pv(self):
+        rows=[{"buy_window":i==0,"forecast_load_kwh":0.2,
+               "forecast_heat_pump_load_kwh":0.0,
+               "forecast_pv_total_kwh":1.0 if i==3 else 0.0,
+               "price_buy_pln_kwh":1.1,"price_sell_pln_kwh":0.1}
+              for i in range(4)]
+        flows=[{"soc_end_pct":15.0,"grid_charge_kwh":1.0,"pv_export_kwh":0.0},
+               {"soc_end_pct":15.0,"grid_charge_kwh":0.0,"pv_export_kwh":0.0},
+               {"soc_end_pct":15.0,"grid_charge_kwh":0.0,"pv_export_kwh":0.0},
+               {"soc_end_pct":20.0,"grid_charge_kwh":0.0,"pv_export_kwh":0.5}]
+        self.assertEqual(pv_first_target_caps(rows,flows,{0},15,15,.9,.05),{})
+
     def test_historical_terminal_soc_uses_overlapping_weighted_windows(self):
         terminal_day = date(2026, 9, 18)
         rows = []

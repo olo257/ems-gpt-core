@@ -24,8 +24,23 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.11"', APP_SOURCE)
-        self.assertIn('version: "0.36.11"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.12"', APP_SOURCE)
+        self.assertIn('version: "0.36.12"', CONFIG)
+
+    def test_daily_exposes_learning_counts_soc_means_and_pv_bounds(self):
+        schema=MODULE_SOURCES["schema_service.py"]
+        api=MODULE_SOURCES["api_service.py"]
+        materializations=MODULE_SOURCES["materialization_service.py"]
+        for field in ("soc_mean_7d_pct","soc_mean_14d_pct","soc_mean_28d_pct",
+                      "soc_terminal_forecast_pct","pv_production_start_time",
+                      "pv_production_end_time"):
+            self.assertIn(field,schema)
+            self.assertIn(field,WEBUI)
+        for field in ("daily_record_count","learning_record_count",
+                      "non_learning_record_count"):
+            self.assertIn(field,api)
+            self.assertIn(field,WEBUI)
+        self.assertIn("actual_pv_total_kwh>0.001",materializations)
 
     def test_soc_hold_for_future_sale_is_completely_removed(self):
         planner = MODULE_SOURCES["planner_service.py"]

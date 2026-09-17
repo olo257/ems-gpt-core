@@ -193,6 +193,11 @@ ich własnych progów i ekonomiki.
   zobowiązania i tylko gdy pełny cykl ma dodatni wynik netto.
 - Nie wolno doprowadzić sprzedażą do zakupu w droższym oknie, jeśli tańszy,
   wcześniejszy zakup lub rezygnacja z części sprzedaży daje lepszy wynik.
+- Jeżeli wcześniejszy BUY zajmuje pojemność, a najbliższa nadwyżka PV byłaby
+  eksportowana po cenie niższej od kosztu zakupu, planer musi porównać pełny
+  wariant standardowy z wariantem PV-first. Przesunąć wolno wyłącznie energię
+  ponad minimum potrzebne do bezpiecznego dotarcia do PV; publikowany jest
+  wariant z lepszym wynikiem netto przy tym samym terminalnym SOC.
 
 ## 9. Replan
 
