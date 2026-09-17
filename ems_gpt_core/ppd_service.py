@@ -183,6 +183,8 @@ def build_ppd_runner(a: PpdAdapters):
         degradation = max(0.0, float(options.get("battery_degradation_cost_pln_kwh", 0.08)))
         margin = max(0.0, float(options.get("minimum_arbitrage_margin_pln_kwh", 0.05)))
         threshold = max(0.0, float(options.get("planned_flow_threshold_kwh", 0.02)))
+        technical_threshold = max(
+            threshold, float(options.get("technical_flow_threshold_kwh", 0.05)))
         cwu_threshold = max(0.0, float(options.get("pv_cwu_min_surplus_kw", 2.0))) * .25
         ev_threshold = max(0.0, float(options.get("pv_ev_min_surplus_kw", 1.5))) * .25
         with db() as conn, conn.cursor() as cur:
@@ -215,7 +217,9 @@ def build_ppd_runner(a: PpdAdapters):
                 flexible_rows.append({
                     "slot_start": row["slot_start"], "local_day": row.get("local_day"),
                     "soc_end_pct": row.get("soc_end_plan_pct"),
-                    "soc_target_pct": row.get("soc_target_pct"),
+                    "soc_target_pct": (row.get("soc_charge_target_pct")
+                                       if row.get("soc_charge_target_pct") is not None
+                                       else row.get("soc_target_pct")),
                     "pv_flex_kwh": raw_flexible, "sell_battery": sell_battery,
                     "flexible_is_economic": (replacement is None or
                         float(row.get("price_sell_pln_kwh") or 0.0) <= replacement + margin),
@@ -227,6 +231,20 @@ def build_ppd_runner(a: PpdAdapters):
             for index, (row, flex) in enumerate(zip(rows, flexible)):
                 buy = float(row.get("planned_buy_kwh") or 0.0)
                 sell = float(row.get("planned_sell_kwh") or 0.0)
+                load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
+                        + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+                pv_to_load = min(
+                    load, max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0)))
+                battery_to_load = max(
+                    0.0, float(row.get("planned_battery_discharge_kwh") or 0.0) * eta_d
+                    - sell)
+                grid_load = max(0.0, load - pv_to_load - battery_to_load)
+                reserve = float(row.get("soc_reserve_pct") or 15.0)
+                soc_start = float(row.get("soc_start_plan_pct") or reserve)
+                if (grid_load > technical_threshold and buy <= threshold
+                        and soc_start > reserve + 0.01):
+                    raise RuntimeError(
+                        f"PPD_VOLUNTARY_GRID_LOAD_NOT_NEUTRAL:{row['slot_start']}:{grid_load}")
                 pv_flex = float(flexible_rows[index]["pv_flex_kwh"])
                 cwu = min(pv_flex, 0.625) if flex.cwu_anchor else 0.0
                 after_cwu = max(0.0, pv_flex - cwu)
@@ -237,14 +255,17 @@ def build_ppd_runner(a: PpdAdapters):
                 curtail = after_flex - pv_export
                 economics = _sale_economics(rows, index, eta_c, eta_d, degradation, margin)
                 sell_allowed = sell > threshold and economics["eligible"]
-                grid_policy = "BUY_ALLOWED" if buy > threshold else "NO_BUY" if sell_allowed else "NEUTRAL"
+                grid_policy = ("BUY_ALLOWED" if buy > threshold else
+                               "GRID_TECHNICAL" if grid_load > technical_threshold else
+                               "NO_BUY" if sell_allowed else "NEUTRAL")
                 export_policy = ("SELL_BAT" if sell_allowed else "NO_SELL_PV" if sell_price <= 0.0
                                  else "SELL_PV" if pv_export > threshold else "NEUTRAL")
                 recommendation = ("Zakup ładowanie" if buy > threshold else
                     "Sprzedaż z baterii" if sell_allowed else "Sprzedaż PV" if pv_export > threshold else
                     "Ładowanie PV" if float(row.get("planned_battery_charge_kwh") or 0.0) > threshold else
                     "Autokonsumpcja PV" if float(row.get("forecast_pv_total_kwh") or 0.0) > threshold else
-                    "Autokonsumpcja z baterii" if float(row.get("planned_battery_discharge_kwh") or 0.0) > threshold else
+                    "Autokonsumpcja z baterii" if battery_to_load > threshold else
+                    "Zasilanie z sieci" if grid_load > technical_threshold else
                     "Neutralny")
                 reason = (f"ppd_run={ppd_run_id}; plan_run={plan_run_id}; target_read_only; "
                           f"grid={grid_policy}; export={export_policy}; {flex.reason}")[:255]

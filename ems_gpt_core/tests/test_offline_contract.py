@@ -24,22 +24,21 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.15"', APP_SOURCE)
-        self.assertIn('version: "0.36.15"', CONFIG)
+        self.assertIn('APP_VERSION = "0.37.0"', APP_SOURCE)
+        self.assertIn('version: "0.37.0"', CONFIG)
 
-    def test_infeasible_pv_first_falls_back_to_standard_plan(self):
+    def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
-        self.assertIn("except RuntimeError as pv_first_exc",planner)
-        self.assertIn('startswith("No feasible SOC state")',planner)
-        self.assertIn('"pv_first_rejected":str(pv_first_exc)',planner)
-        self.assertIn("refined=standard_refined",planner)
+        self.assertIn("economic_optimization = optimize_energy_horizon",planner)
+        self.assertIn("required_soc_pcts",planner)
+        self.assertNotIn("pv_first_exc",planner)
 
-    def test_target_path_oscillation_holds_last_constrained_plan(self):
+    def test_target_path_is_deterministic_without_feedback_loop(self):
         planner=MODULE_SOURCES["planner_service.py"]
         self.assertNotIn("base_optimization=optimization",planner)
-        self.assertIn('"CYCLE_HOLD_LAST_FEASIBLE"',planner)
-        self.assertIn('"soc_target_oscillation_fallback"',planner)
-        self.assertIn('"contract_due_slots":sorted(target_due_indices)',planner)
+        self.assertIn('"DETERMINISTIC_SOC_CONTRACT_V4"',planner)
+        self.assertIn("build_soc_contracts(",planner)
+        self.assertNotIn("seen_target_paths",planner)
         self.assertNotIn("target_due_indices=set()",planner)
         self.assertNotIn('raise RuntimeError(\n                        f"SOC_TARGET_PATH_OSCILLATION',planner)
 
@@ -57,6 +56,17 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(field,api)
             self.assertIn(field,WEBUI)
         self.assertIn("actual_pv_total_kwh>0.001",materializations)
+
+    def test_four_soc_contracts_are_persisted_and_visible(self):
+        schema=MODULE_SOURCES["schema_service.py"]
+        planner=MODULE_SOURCES["planner_service.py"]
+        for field in ("soc_reserve_pct","soc_required_pct",
+                      "soc_charge_target_pct","soc_sale_floor_pct"):
+            self.assertIn(field,schema)
+            self.assertIn(field,planner)
+            self.assertIn(field,WEBUI)
+        self.assertIn("PPD_VOLUNTARY_GRID_LOAD_NOT_NEUTRAL",
+                      MODULE_SOURCES["ppd_service.py"])
 
     def test_soc_hold_for_future_sale_is_completely_removed(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -378,7 +388,8 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_rce_and_battery_import_regressions(self):
         self.assertIn('{"sell":raw,"buy":raw+margin', SOURCE)
-        self.assertIn('grid_policy = "BUY_ALLOWED" if buy > threshold', SOURCE)
+        self.assertIn('"BUY_ALLOWED" if buy > threshold', SOURCE)
+        self.assertIn("PPD_VOLUNTARY_GRID_LOAD_NOT_NEUTRAL", SOURCE)
         ingestion = MODULE_SOURCES["ingestion_service.py"]
         config = MODULE_SOURCES["config_service.py"]
         self.assertNotIn("sale_session", ingestion)
@@ -521,12 +532,11 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("soc_start_plan_pct=%s", ppd)
         self.assertNotIn("soc_end_plan_pct=%s", ppd)
 
-    def test_nearby_pv_can_remove_an_initial_buy_boundary(self):
+    def test_nearby_pv_is_accounted_without_buy_path_feedback(self):
         planner = MODULE_SOURCES["planner_service.py"]
-        self.assertIn("replenishment_indices = set(new_selected)", planner)
-        self.assertNotIn("replenishment_indices.update(new_selected)", planner)
-        self.assertIn("CYCLE_HOLD_LAST_FEASIBLE", planner)
-        self.assertIn("soc_target_oscillation_fallback", planner)
+        self.assertIn("build_soc_contracts", planner)
+        self.assertIn("used_pv", planner)
+        self.assertNotIn("SOC_TARGET_PATH_OSCILLATION", planner)
 
     def test_manual_control_origin_is_recorded(self):
         for marker in ("MANUAL_FORCE_ON", "MANUAL_BLOCK", "EXTERNAL_MANUAL",

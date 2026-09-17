@@ -538,10 +538,12 @@ def build_executor(a: ExecutorAdapters):
                 target_update = None
                 restored_targets = []
                 if command["process_name"] == "BATTERY_IMPORT" and command["decision"] == "ON":
-                    cur.execute("""SELECT soc_target_pct,soc_end_plan_pct,planned_buy_kwh FROM ems_gpt_slots
+                    cur.execute("""SELECT soc_charge_target_pct,soc_target_pct,soc_end_plan_pct,planned_buy_kwh FROM ems_gpt_slots
                       WHERE slot_start=%s LIMIT 1""", (current_slot,))
                     plan_target = cur.fetchone() or {}
-                    target = plan_target.get("soc_target_pct")
+                    target = (plan_target.get("soc_charge_target_pct")
+                              if plan_target.get("soc_charge_target_pct") is not None
+                              else plan_target.get("soc_target_pct"))
                     if target is None:
                         target = plan_target.get("soc_end_plan_pct")
                     live_soc = number(ha_state("sensor.inverter_battery"))
