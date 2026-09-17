@@ -80,8 +80,10 @@ class PairedArbitrageTests(unittest.TestCase):
             for i in range(4)
         ]
         rows[1]["buy_window"] = True
-        flows = [{"grid_charge_kwh": 0.0, "soc_end_pct": 20.0} for _ in rows]
-        flows[1] = {"grid_charge_kwh": 0.10, "soc_end_pct": 21.0}
+        flows = [{"grid_charge_kwh": 0.0, "battery_to_load_kwh": 0.20,
+                  "pv_to_bat_kwh": 0.0, "soc_end_pct": 20.0} for _ in rows]
+        flows[1] = {"grid_charge_kwh": 0.10, "battery_to_load_kwh": 0.20,
+                    "pv_to_bat_kwh": 0.0, "soc_end_pct": 21.0}
 
         contract = build_soc_contracts(
             rows, flows, 15.0, 15.0, 0.90, 0.95, 0.0, 20.0, 100.0)
@@ -91,6 +93,36 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(contract["buy_due_indices"], {1})
         self.assertGreaterEqual(contract["charge_targets"][1],
                                 contract["required"][1])
+
+    def test_unavoidable_grid_load_at_reserve_does_not_inflate_required_soc(self):
+        rows = [{
+            "buy_window": False,
+            "forecast_load_kwh": 0.30,
+            "forecast_heat_pump_load_kwh": 0.0,
+            "forecast_pv_total_kwh": 0.0,
+            "slot_start": 0,
+            "slot_end": 1,
+        }]
+        economic_flows = [{
+            "grid_charge_kwh": 0.0,
+            "grid_load_kwh": 0.30,
+            "battery_to_load_kwh": 0.0,
+            "pv_to_bat_kwh": 0.0,
+            "soc_end_pct": 15.0,
+        }]
+
+        contract = build_soc_contracts(
+            rows, economic_flows, 15.0, 15.0, 0.90, 0.95,
+            0.0, 15.0, 100.0)
+
+        self.assertEqual(contract["required"], [15.0])
+        result = optimize_energy_horizon(
+            rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 15.0, 0.10, 100.0,
+            contract["charge_targets"], set(),
+            contract["buy_due_indices"], contract["required"])
+        self.assertEqual(result["flows"][0]["soc_end_pct"], 15.0)
+        self.assertGreater(result["flows"][0]["grid_load_kwh"], 0.0)
 
     def test_required_soc_is_enforced_in_every_slot(self):
         rows = [
