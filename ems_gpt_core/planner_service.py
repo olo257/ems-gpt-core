@@ -394,9 +394,17 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 voluntary_grid_load = max(0.0, grid_load - unavoidable_grid_load)
                 # A single SOC quantum can leave a few Wh of numerical
                 # residual load: discharging one more step would become an
-                # illegal battery export.  Permit only that quantization
-                # residue; any larger grid supply is a forbidden SOC hold.
-                if voluntary_grid_load > unit_kwh * eta_d + 1e-9 and grid_charge <= 1e-9:
+                # illegal battery export. Permit that residue only when there
+                # is no deliberate grid charge. A token +0.25% SOC step must
+                # never unlock a whole slot of grid-supplied native load: in
+                # every charging state the energy sent to the battery has to
+                # be at least as large as the voluntary grid supply to load.
+                # This keeps BUY a battery-replenishment decision instead of
+                # a disguised purchase-for-consumption decision.
+                if grid_charge > 1e-9:
+                    if voluntary_grid_load > grid_charge + 1e-9:
+                        continue
+                elif voluntary_grid_load > unit_kwh * eta_d + 1e-9:
                     continue
                 # During deliberate export the complete slot, including the
                 # native load, must close at or above both independent

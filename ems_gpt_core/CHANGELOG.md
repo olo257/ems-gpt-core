@@ -1,3 +1,14 @@
+## 0.36.10
+
+- Zamknięto lukę, w której minimalny krok ładowania `+0,25% SOC` pozwalał
+  zasilać znacznie większe bieżące zużycie domu z sieci w oknie BUY.
+- W każdym celowym slocie BUY energia kierowana do baterii musi być co
+  najmniej równa dobrowolnemu importowi na zużycie. Import technicznie
+  nieunikniony po osiągnięciu minimalnego SOC pozostaje dozwolony.
+- Panel automatycznie włącza kolumny `SOC początek` i `SOC koniec` w zapisanych
+  wcześniej konfiguracjach widoków Godzinowe i Dobowe, zachowując pozostałe
+  preferencje kolumn użytkownika.
+
 ## 0.36.9
 
 - Usunięto krytyczny mechanizm `SOC_HOLD_FOR_FUTURE_SALE`, który mógł
