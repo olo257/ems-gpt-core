@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.2"', APP_SOURCE)
-        self.assertIn('version: "0.36.2"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.3"', APP_SOURCE)
+        self.assertIn('version: "0.36.3"', CONFIG)
 
     def test_target_history_is_observational_only(self):
         analytics = MODULE_SOURCES["analytics_service.py"]
