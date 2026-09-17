@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from typing import Callable
 
 from ingestion_service import derive_price_windows
-from ppd_service import build_flexible_ppd
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -847,8 +846,6 @@ def build_planner(a: PlannerAdapters):
         technical_threshold = max(
             flow_threshold, float(OPTIONS.get("technical_flow_threshold_kwh", 0.05)))
         max_kw = max(0.25, float(OPTIONS.get("battery_max_power_kw", 5.0)))
-        cwu_threshold = max(0.0, float(OPTIONS.get("pv_cwu_min_surplus_kw", 2.0))) * .25
-        ev_threshold = max(0.0, float(OPTIONS.get("pv_ev_min_surplus_kw", 1.5))) * .25
         run_id = str(uuid.uuid4())
         hp_shortfalls = []
         tou_programs = planning_tou_programs(
@@ -1086,15 +1083,23 @@ def build_planner(a: PlannerAdapters):
             # A replenishment window and the final imported energy are
             # different facts. Earlier PV may reduce grid charge to zero
             # without invalidating the selected BUY boundary. Keep candidate
-            # boundaries monotonically to avoid BUY/PV oscillation.
+            # A candidate BUY boundary may disappear after the backward pass
+            # accounts for a nearby usable PV window. Replacing the set on
+            # every pass is essential: a monotonic union would permanently
+            # retain the initial morning BUY even when PV funds the bridge.
             replenishment_indices: set[int] = set()
+            seen_target_paths: set[tuple[int, ...]] = set()
             for planning_pass in range(1, 9):
                 new_selected = {
                     i for i, flow in enumerate(optimization["flows"])
                     if float(flow.get("grid_charge_kwh") or 0.0) > flow_threshold
                 }
-                previous_boundaries = set(replenishment_indices)
-                replenishment_indices.update(new_selected)
+                replenishment_indices = set(new_selected)
+                signature = tuple(sorted(replenishment_indices))
+                if signature in seen_target_paths:
+                    raise RuntimeError(
+                        f"SOC_TARGET_PATH_OSCILLATION:{planning_pass}:{signature}")
+                seen_target_paths.add(signature)
                 commitment = backward_target_commitments(
                     horizon_rows, capacity, reserve, eta_c, eta_d,
                     uncertainty_weight, target_cap, terminal_soc, 0.25,
@@ -1118,8 +1123,7 @@ def build_planner(a: PlannerAdapters):
                     if float(flow.get("grid_charge_kwh") or 0.0) > flow_threshold
                 }
                 optimization = refined
-                if (refined_selected.issubset(replenishment_indices)
-                        and previous_boundaries == replenishment_indices):
+                if refined_selected == replenishment_indices:
                     selected_buy_indices = refined_selected
                     target_converged = True
                     break
@@ -1196,30 +1200,9 @@ def build_planner(a: PlannerAdapters):
                     horizon_rows, index, eta_c, eta_d, degradation, min_margin)
                 for index in range(len(horizon_rows))
             ]
-            # Flexible PV is outside the core battery/load balance.  Its
-            # opportunity cost is the next feasible battery BUY: use surplus
-            # locally only when doing so is no worse than selling now and
-            # replacing that energy at that BUY.  This pass never changes SOC.
-            next_buy_price = next_replenishment_prices(horizon_rows)
-            # Flexible-load PPD is a downstream, read-only consumer of the
-            # completed SOC path. It cannot feed CWU/EV demand back into
-            # soc_target or the core optimization.
-            flexible_ppd = build_flexible_ppd([
-                {
-                    "slot_start": row["slot_start"],
-                    "local_day": row.get("local_day"),
-                    "soc_end_pct": flow["soc_end_pct"],
-                    "soc_target_pct": targets[i],
-                    "pv_flex_kwh": flow["pv_export_kwh"],
-                    "sell_battery": float(flow["battery_sell_kwh"]) > flow_threshold,
-                    "flexible_is_economic": (
-                        next_buy_price[i] is None
-                        or float(row.get("price_sell_pln_kwh") or 0.0)
-                        <= next_buy_price[i] + min_margin
-                    ),
-                }
-                for i, (row, flow) in enumerate(zip(rows, optimization["flows"]))
-            ], cwu_threshold_kwh=cwu_threshold, ev_threshold_kwh=ev_threshold)
+            # The planner publishes only the physical flexible-PV remainder.
+            # A separate PPD run reads the frozen plan and allocates that
+            # remainder to CWU, EV, export or curtailment without writing SOC.
             for i,item in enumerate(base):
                 row=item["row"]
                 tou_program=tou_by_index[i]
@@ -1248,23 +1231,10 @@ def build_planner(a: PlannerAdapters):
                 paired_buy=buy>flow_threshold and any(float(previous["battery_sell_kwh"])>flow_threshold for previous in optimization["flows"][:i])
                 buy_purpose="POST_SALE_RECOVERY" if paired_buy else "FUTURE_LOAD_OR_SALE_PREPARATION" if buy>flow_threshold else "NONE"
                 no_sell_pv=sell_price<=0
-                replacement_value = next_buy_price[i]
-                flexible_is_economic = (
-                    replacement_value is None
-                    or sell_price <= replacement_value + min_margin)
-                ppd_decision = flexible_ppd[i]
-                # Permission stays continuous through weak-PV gaps. Planned
-                # energy remains zero in such a gap; HA automations decide
-                # actual ON/OFF state from live surplus and appliance guards.
-                pv_cwu = ppd_decision.pv_cwu_allowed
-                cwu_kwh = min(pv_flex, 0.625) if ppd_decision.cwu_anchor else 0.0
-                after_cwu=max(0.0,pv_flex-cwu_kwh)
-                pv_ev = ppd_decision.pv_ev_allowed
-                ev_kwh = (after_cwu if ppd_decision.ev_anchor
-                          and after_cwu >= ev_threshold else 0.0)
-                after_flex=max(0.0,after_cwu-ev_kwh)
-                pv_export_kwh=after_flex if sell_price>0 else 0.0
-                pv_curtail_kwh=after_flex-pv_export_kwh
+                raw_flexible=max(0.0,pv_flex+float(item.get("pv_curtail_kwh") or 0.0))
+                cwu_kwh=ev_kwh=0.0
+                pv_export_kwh=raw_flexible if sell_price>0 else 0.0
+                pv_curtail_kwh=raw_flexible-pv_export_kwh
                 item["pv_export"]=pv_export_kwh
                 grid_policy="BUY_ALLOWED" if buy>flow_threshold else ("NO_BUY" if sell_bat else "NEUTRAL")
                 export_policy="SELL_BAT" if sell_bat else ("NO_SELL_PV" if no_sell_pv else ("SELL_PV" if item["pv_export"]>flow_threshold else "NEUTRAL"))
@@ -1275,9 +1245,7 @@ def build_planner(a: PlannerAdapters):
                 reason=(f"optimizer=FULL_HORIZON; horizon_slots={len(base)}; objective_pln={optimization['objective_pln']:.3f}; "
                         f"slot_cost_pln={item['slot_cost_pln']:.3f}; grid={grid_policy}; export={export_policy}; "
                         f"soc={item['end']:.2f}; floor={floor:.2f}; target={target:.2f}; hp_load_kwh={hp_load:.3f}; "
-                        f"buy_purpose={buy_purpose}; "
-                        f"pv_flex_economic={flexible_is_economic}; "
-                        f"replacement_buy_price={replacement_value}")
+                        f"buy_purpose={buy_purpose}; ppd=PENDING_SEPARATE_RUN")
                 if tou_block_reason:
                     reason += f"; {tou_block_reason}"
                 cur.execute("""UPDATE ems_gpt_plan_stage_rows SET soc_start_plan_pct=%s,soc_end_plan_pct=%s,
@@ -1295,41 +1263,12 @@ def build_planner(a: PlannerAdapters):
                    round(pv_to_bat,6),round(cwu_kwh,6),round(ev_kwh,6),
                    round(pv_curtail_kwh,6),reason[:255],run_id,row["slot_start"]))
                 hp_window = i in hp_selected_indices
-                night_day = str(row.get("local_day") or row["slot_start"].date())
-                night_min = night_min_by_day.get(night_day)
-                heat_dhw_allowed = hp_window
                 cur.execute("""UPDATE ems_gpt_plan_stage_rows SET heat_pump_window=%s
                   WHERE run_id=%s AND slot_start=%s""", (hp_window,run_id,row["slot_start"]))
-                decisions = (
-                    ("BATTERY_IMPORT", grid_policy == "BUY_ALLOWED", grid_policy, f"grid={grid_policy}; soc_target={target:.2f}"),
-                    ("BATTERY_EXPORT", export_policy == "SELL_BAT", export_policy,
-                     f"optimizer=FULL_HORIZON; sell={sell_price:.3f}; "
-                     f"replacement_buy={economics['replacement_buy_price']}; "
-                     f"required_sell={economics['required_sell_price']}; "
-                     f"margin={economics['expected_margin']}; economic={economics['eligible']}"),
-                    ("PV_CWU", pv_cwu, "ALLOW" if pv_cwu else "BLOCK",
-                     f"{ppd_decision.reason}; anchor={ppd_decision.cwu_anchor}"),
-                    ("PV_EV", pv_ev, "ALLOW" if pv_ev else "BLOCK",
-                     f"{ppd_decision.reason}; anchor={ppd_decision.ev_anchor}; cwu_allowed={pv_cwu}"),
-                    ("HP_HEAT_DHW", heat_dhw_allowed,
-                     "ON" if heat_dhw_allowed else "OFF",
-                     f"window={hp_window}; night_min={night_min}; threshold={night_threshold}; minimum_hours={OPTIONS.get('hp_min_heating_hours',10.0)}; planned_hp_kwh={hp_load:.3f}"),
-                )
-                for process_name, eligible, decision, process_reason in decisions:
-                    cur.execute("""INSERT INTO ems_gpt_core_process_decisions
-                      (slot_start,slot_id,process_name,decision,eligible,reason,plan_run_id,valid_until,connector_required,published_at)
-                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,1,NOW(6)) ON DUPLICATE KEY UPDATE
-                      decision=VALUES(decision),eligible=VALUES(eligible),reason=VALUES(reason),
-                      slot_id=COALESCE(slot_id,VALUES(slot_id)),
-                      plan_run_id=VALUES(plan_run_id),valid_until=VALUES(valid_until),
-                      connector_required=1,published_at=NOW(6)""",
-                      (row["slot_start"], row.get("slot_id"), process_name, decision, eligible, process_reason,
-                       run_id, row["slot_start"]+timedelta(minutes=16)))
                 ensure_deadline("FLEX_SURPLUS")
             audit_stage(cur,run_id,"FLEX_SURPLUS","OK",len(base),
-                        "economic PV export/CWU/EV allocation; curtailment last")
+                        "physical flexible PV remainder published for separate PPD")
             audit_stage(cur,run_id,"SOC","OK",len(base),f"pass 6: result SOC; step={optimization['soc_step_pct']:.2f}")
-            audit_stage(cur,run_id,"PPD","OK",len(base),"pass 7: derived only from completed optimized plan")
             cur.execute("""SELECT COUNT(*) n,
               SUM(price_buy_pln_kwh IS NULL OR price_sell_pln_kwh IS NULL) bad_price,
               SUM(soc_floor_pct IS NULL OR soc_target_pct IS NULL) bad_soc,

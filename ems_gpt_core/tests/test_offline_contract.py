@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.10"', APP_SOURCE)
-        self.assertIn('version: "0.36.10"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.11"', APP_SOURCE)
+        self.assertIn('version: "0.36.11"', CONFIG)
 
     def test_soc_hold_for_future_sale_is_completely_removed(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -347,7 +347,7 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_rce_and_battery_import_regressions(self):
         self.assertIn('{"sell":raw,"buy":raw+margin', SOURCE)
-        self.assertIn('grid_policy == "BUY_ALLOWED"', SOURCE)
+        self.assertIn('grid_policy = "BUY_ALLOWED" if buy > threshold', SOURCE)
         ingestion = MODULE_SOURCES["ingestion_service.py"]
         config = MODULE_SOURCES["config_service.py"]
         self.assertNotIn("sale_session", ingestion)
@@ -442,11 +442,12 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn('"MANUAL_CIRCULATION"', SOURCE)
 
     def test_heat_dhw_uses_night_forecast_and_configured_threshold(self):
-        for marker in ("night_heating_threshold_c", "night_min_by_day", "heat_dhw_allowed"):
+        for marker in ("night_heating_threshold_c", "night_min_by_day"):
             self.assertIn(marker, SOURCE)
         self.assertIn("night_min is None or night_min >= night_threshold", SOURCE)
         self.assertIn("i in hp_selected_indices", SOURCE)
         self.assertIn("heat_pump_window=%s", SOURCE)
+        self.assertIn('("HP_HEAT_DHW", bool(row.get("heat_pump_window"))', SOURCE)
 
     def test_hp_cost_replan_cycle_contract(self):
         for marker in ("hp_min_heating_hours", "hp_min_cycle_hours",
@@ -464,13 +465,36 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("load = native_load + hp_load", SOURCE)
         self.assertIn("load=native_load+hp_load", SOURCE)
         self.assertIn("hp_load_kwh={hp_load:.3f}", SOURCE)
-        self.assertIn("planned_hp_kwh={hp_load:.3f}", SOURCE)
+        self.assertIn('"published_heat_pump_window"', SOURCE)
 
     def test_hp_has_only_binary_window_decision(self):
         planner = MODULE_SOURCES["planner_service.py"]
         for obsolete in ("hp_run_preferred", "hp_run_neutral", "hp_run_avoid", "heat_pump_no_buy"):
             self.assertNotIn(obsolete, planner)
-        self.assertIn('"ON" if heat_dhw_allowed else "OFF"', planner)
+        ppd = MODULE_SOURCES["ppd_service.py"]
+        self.assertIn('"ON" if row.get("heat_pump_window") else "OFF"', ppd)
+
+    def test_ppd_is_a_separate_read_plan_write_decisions_run(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        ppd = MODULE_SOURCES["ppd_service.py"]
+        scheduler = MODULE_SOURCES["scheduler_service.py"]
+        self.assertNotIn("INSERT INTO ems_gpt_core_process_decisions", planner)
+        self.assertIn("INSERT INTO ems_gpt_core_process_decisions", ppd)
+        self.assertIn("input_watermark", ppd)
+        self.assertIn("ppd_run_id", ppd)
+        self.assertIn('ppd = a.run_serialized(\n                                "ppd", a.run_ppd', scheduler)
+        self.assertIn("d.ppd_run_id IS NOT NULL", MODULE_SOURCES["executor_service.py"])
+        self.assertIn("s.plan_run_id=d.plan_run_id", MODULE_SOURCES["executor_service.py"])
+        self.assertIn('"ppd_run_failed", "ppd"', scheduler)
+        self.assertNotIn("soc_target_pct=%s", ppd)
+        self.assertNotIn("soc_start_plan_pct=%s", ppd)
+        self.assertNotIn("soc_end_plan_pct=%s", ppd)
+
+    def test_nearby_pv_can_remove_an_initial_buy_boundary(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        self.assertIn("replenishment_indices = set(new_selected)", planner)
+        self.assertNotIn("replenishment_indices.update(new_selected)", planner)
+        self.assertIn("SOC_TARGET_PATH_OSCILLATION", planner)
 
     def test_manual_control_origin_is_recorded(self):
         for marker in ("MANUAL_FORCE_ON", "MANUAL_BLOCK", "EXTERNAL_MANUAL",

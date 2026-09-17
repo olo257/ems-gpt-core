@@ -442,9 +442,12 @@ def build_executor(a: ExecutorAdapters):
         staged = 0
         with db() as conn, conn.cursor() as cur:
             cur.execute("""SELECT d.*,o.requested_state,o.override_id FROM ems_gpt_core_process_decisions d
+              JOIN ems_gpt_slots s ON s.slot_start=d.slot_start
+               AND s.plan_run_id=d.plan_run_id AND s.plan_stage='PUBLISHED'
               LEFT JOIN ems_gpt_core_process_overrides o ON o.process_name=d.process_name
                AND o.status='ACTIVE' AND o.valid_from<=%s AND o.valid_until>%s
-              WHERE d.slot_start=%s ORDER BY d.process_name""", (now, now, start))
+              WHERE d.slot_start=%s AND d.ppd_run_id IS NOT NULL
+              ORDER BY d.process_name""", (now, now, start))
             for row in cur.fetchall():
                 planned_on = bool(row["eligible"])
                 requested = row.get("requested_state")
@@ -464,7 +467,7 @@ def build_executor(a: ExecutorAdapters):
                     })
                     continue
                 command_id = str(uuid.uuid4())
-                plan_version = (str(row["plan_run_id"]) + ":"
+                plan_version = (str(row["plan_run_id"]) + ":" + str(row.get("ppd_run_id") or "NO_PPD") + ":"
                                 + str(OPTIONS.get("_process_control_revision") or "base"))
                 battery_flow = row["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"}
                 safety = {"executor_enabled": True, "dry_run": dry_run, "connector_required": True,

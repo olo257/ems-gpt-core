@@ -29,6 +29,7 @@ class ApiAdapters:
     acknowledge_command: Callable
     run_serialized: Callable
     run_planner: Callable
+    run_ppd: Callable
     refresh_rce: Callable
     complete_rce_cycle: Callable
     refresh_pv_forecast: Callable
@@ -52,7 +53,7 @@ def build_handler(a: ApiAdapters):
     update_operational_settings = a.update_operational_settings
     update_executor_mode, update_process_override = a.update_executor_mode, a.update_process_override
     stage_executor_commands, acknowledge_command = a.stage_executor_commands, a.acknowledge_command
-    run_serialized, run_planner = a.run_serialized, a.run_planner
+    run_serialized, run_planner, run_ppd = a.run_serialized, a.run_planner, a.run_ppd
     refresh_rce, complete_rce_cycle = a.refresh_rce, a.complete_rce_cycle
     refresh_pv_forecast, refresh_weather_forecast = a.refresh_pv_forecast, a.refresh_weather_forecast
     run_analytics, run_ai_observer = a.run_analytics, a.run_ai_observer
@@ -269,19 +270,28 @@ def build_handler(a: ApiAdapters):
                         "activity": "Oczekiwanie na wynik planera", "updated_at": started_at}
                 try:
                     result = run_serialized("planner", run_planner, "manual_api")
+                    try:
+                        ppd = (run_serialized("ppd", run_ppd, result.get("run_id"), "manual_api")
+                               if result.get("status") != "WAITING" else {"status": "WAITING_FOR_PLAN"})
+                    except Exception as ppd_exc:
+                        ppd = {"status": "ERROR", "error": str(ppd_exc),
+                               "plan_run_id": result.get("run_id")}
+                        LOG.exception("manual PPD failed after successful planner run")
                     completed_at = datetime.now(timezone.utc).isoformat()
                     health = "RUNNING" if result.get("status") != "WAITING" else "WAITING"
                     with LOCK:
                         STATE["modules"]["planner"] = health
-                        STATE["modules"]["ppd"] = health
+                        STATE["modules"]["ppd"] = ("DEGRADED" if ppd.get("status") == "ERROR" else health)
                         STATE["module_details"]["planner"] = {
                             "activity": "Plan opublikowany" if health == "RUNNING" else "Oczekiwanie na komplet danych",
                             "updated_at": completed_at}
                         STATE["module_details"]["ppd"] = {
-                            "activity": "Decyzje PPD odświeżone" if health == "RUNNING" else "Oczekiwanie na plan",
+                            "activity": (f"Błąd PPD: {ppd.get('error')}" if ppd.get("status") == "ERROR"
+                                         else "Decyzje PPD odświeżone" if health == "RUNNING"
+                                         else "Oczekiwanie na plan"),
                             "updated_at": completed_at}
                         STATE["planner_failure_latched"] = None
-                    return self.json({"status":"ACCEPTED",**result})
+                    return self.json({"status":"ACCEPTED",**result,"ppd":ppd})
                 except Exception as exc:
                     failed_at = datetime.now(timezone.utc).isoformat()
                     with LOCK:
