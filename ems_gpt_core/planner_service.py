@@ -57,30 +57,49 @@ def planning_tou_programs(live_programs: list[dict], baseline_json: str) -> list
     return result
 
 
+def battery_sale_economics(rows: list[dict], index: int, eta_c: float, eta_d: float,
+                           degradation: float, min_margin: float) -> dict:
+    """Describe whether a slot pays for restoring the exported battery energy."""
+    future_buys = [
+        float(row["price_buy_pln_kwh"])
+        for row in rows[index + 1:]
+        if row.get("price_buy_pln_kwh") is not None
+    ]
+    replacement = min(future_buys) if future_buys else None
+    sell_now = float(rows[index].get("price_sell_pln_kwh") or 0.0)
+    required_sell = (
+        replacement / (eta_c * eta_d) + degradation + min_margin
+        if replacement is not None else None
+    )
+    return {
+        "replacement_buy_price": replacement,
+        "required_sell_price": required_sell,
+        "expected_margin": (
+            sell_now - replacement / (eta_c * eta_d) - degradation
+            if replacement is not None else None
+        ),
+        "eligible": required_sell is not None and sell_now >= required_sell,
+    }
+
+
 def economic_sell_indices(rows: list[dict], eta_c: float, eta_d: float,
                           degradation: float, min_margin: float) -> set[int]:
     """Select profitable price peaks over the complete available PPD horizon."""
-    suffix_min_buy = [None] * len(rows)
     suffix_max_sell = [None] * len(rows)
-    min_buy = max_sell = None
+    max_sell = None
     for index in range(len(rows) - 1, -1, -1):
-        suffix_min_buy[index], suffix_max_sell[index] = min_buy, max_sell
-        buy_price = rows[index].get("price_buy_pln_kwh")
+        suffix_max_sell[index] = max_sell
         sell_price = rows[index].get("price_sell_pln_kwh")
-        if buy_price is not None:
-            price = float(buy_price)
-            min_buy = price if min_buy is None else min(min_buy, price)
         if sell_price is not None:
             price = float(sell_price)
             max_sell = price if max_sell is None else max(max_sell, price)
     selected = set()
     for index, row in enumerate(rows):
-        replacement = suffix_min_buy[index]
         future_peak = suffix_max_sell[index]
         sell_now = float(row.get("price_sell_pln_kwh") or 0.0)
-        required_sell = (replacement / (eta_c * eta_d) + degradation + min_margin
-                         if replacement is not None else None)
-        economically_ready = required_sell is not None and sell_now >= required_sell
+        economics = battery_sale_economics(
+            rows, index, eta_c, eta_d, degradation, min_margin)
+        economically_ready = economics["eligible"]
         peak_ready = future_peak is None or sell_now >= future_peak - min_margin
         if economically_ready and peak_ready:
             selected.add(index)
@@ -1133,6 +1152,11 @@ def build_planner(a: PlannerAdapters):
                 for flow in optimization["flows"]
             ]
             base=[{"row":row,**flow} for row,flow in zip(rows,optimization["flows"])]
+            sale_economics = [
+                battery_sale_economics(
+                    horizon_rows, index, eta_c, eta_d, degradation, min_margin)
+                for index in range(len(horizon_rows))
+            ]
             # Flexible PV is outside the core battery/load balance.  Its
             # opportunity cost is the next feasible battery BUY: use surplus
             # locally only when doing so is no worse than selling now and
@@ -1176,6 +1200,11 @@ def build_planner(a: PlannerAdapters):
                 item["sell"]=item["battery_sell_kwh"]
                 sell_price=float(row.get("price_sell_pln_kwh") or 0)
                 sell_bat=item["sell"]>flow_threshold
+                economics = sale_economics[i]
+                if sell_bat and not economics["eligible"]:
+                    raise RuntimeError(
+                        f"UNECONOMIC_BATTERY_EXPORT:{row['slot_start']}:"
+                        f"sell={sell_price:.6f}:required={economics['required_sell_price']}")
                 floor=floors[i]
                 paired_buy=buy>flow_threshold and any(float(previous["battery_sell_kwh"])>flow_threshold for previous in optimization["flows"][:i])
                 buy_purpose="POST_SALE_RECOVERY" if paired_buy else "FUTURE_LOAD_OR_SALE_PREPARATION" if buy>flow_threshold else "NONE"
@@ -1239,7 +1268,11 @@ def build_planner(a: PlannerAdapters):
                   WHERE run_id=%s AND slot_start=%s""", (hp_window,run_id,row["slot_start"]))
                 decisions = (
                     ("BATTERY_IMPORT", grid_policy == "BUY_ALLOWED", grid_policy, f"grid={grid_policy}; soc_target={target:.2f}"),
-                    ("BATTERY_EXPORT", export_policy == "SELL_BAT", export_policy, f"optimizer=FULL_HORIZON; sell={sell_price:.3f}"),
+                    ("BATTERY_EXPORT", export_policy == "SELL_BAT", export_policy,
+                     f"optimizer=FULL_HORIZON; sell={sell_price:.3f}; "
+                     f"replacement_buy={economics['replacement_buy_price']}; "
+                     f"required_sell={economics['required_sell_price']}; "
+                     f"margin={economics['expected_margin']}; economic={economics['eligible']}"),
                     ("PV_CWU", pv_cwu, "ALLOW" if pv_cwu else "BLOCK",
                      f"{ppd_decision.reason}; anchor={ppd_decision.cwu_anchor}"),
                     ("PV_EV", pv_ev, "ALLOW" if pv_ev else "BLOCK",

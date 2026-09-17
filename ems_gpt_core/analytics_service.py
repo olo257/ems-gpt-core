@@ -126,19 +126,29 @@ def _is_contiguous(previous: dict, current: dict, slot_minutes: int) -> bool:
 
 def _find_target_relief(rows: list[dict], start_index: int, *, pv_threshold_kwh: float,
                         slot_minutes: int) -> tuple[int, str] | None:
-    """Find the first confirmed future BUY or sustained actual-PV relief."""
+    """Find the first confirmed future BUY or sustained net-PV relief.
+
+    Gross PV production is not relief while the house still has an energy
+    deficit.  Target history must stop only when measured PV exceeds the
+    unavoidable load for two contiguous slots by the configured margin.
+    """
     for index in range(start_index + 1, len(rows)):
         if not _is_contiguous(rows[index - 1], rows[index], slot_minutes):
             return None
         row = rows[index]
         if str(row.get("market_window") or "").upper() == "BUY":
             return index, "BUY"
-        if float(row.get("actual_pv_total_kwh") or 0.0) < pv_threshold_kwh:
+        row_load = _target_load_kwh(row)
+        row_surplus = (float(row.get("actual_pv_total_kwh") or 0.0)
+                       - float(row_load or 0.0)) if row_load is not None else -1.0
+        if row_surplus < pv_threshold_kwh:
             continue
         next_index = index + 1
-        if (next_index < len(rows)
-                and _is_contiguous(row, rows[next_index], slot_minutes)
-                and float(rows[next_index].get("actual_pv_total_kwh") or 0.0) >= pv_threshold_kwh):
+        next_load = _target_load_kwh(rows[next_index]) if next_index < len(rows) else None
+        next_surplus = ((float(rows[next_index].get("actual_pv_total_kwh") or 0.0)
+                         - float(next_load or 0.0)) if next_load is not None else -1.0)
+        if (next_index < len(rows) and _is_contiguous(row, rows[next_index], slot_minutes)
+                and next_surplus >= pv_threshold_kwh):
             return index, "PV"
     return None
 

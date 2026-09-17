@@ -1,3 +1,16 @@
+## 0.36.5
+
+- Decyzja sprzedaży baterii ma końcową kontrolę ekonomiczną typu fail-closed:
+  cena sprzedaży musi pokrywać najtańszy późniejszy odkup z uwzględnieniem
+  sprawności ładowania i rozładowania, degradacji oraz minimalnej marży.
+- Diagnostyka decyzji `BATTERY_EXPORT` zapisuje cenę odkupu, wymagany próg
+  sprzedaży, oczekiwaną marżę i wynik kontroli ekonomicznej.
+- Historia targetu pozostaje wyłącznie diagnostyczna, ale odciążenie PV jest
+  teraz rozpoznawane na podstawie rzeczywistej nadwyżki PV ponad nieuniknione
+  zużycie przez dwa kolejne sloty. Sama produkcja PV mniejsza od obciążenia nie
+  skraca już sztucznie horyzontu i nie zaniża targetu wymaganego z perspektywy
+  wykonania.
+
 ## 0.36.4
 
 - Odfiltrowano pobór jałowy nieaktywnego kanału pompy ciepła, który był
