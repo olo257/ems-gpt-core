@@ -1128,6 +1128,7 @@ def build_planner(a: PlannerAdapters):
                 horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
                 max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
                 terminal_soc,0.25,target_cap)
+            base_optimization=optimization
             commitment = None
             targets = [reserve] * len(horizon_rows)
             selected_buy_indices: set[int] = set()
@@ -1157,8 +1158,42 @@ def build_planner(a: PlannerAdapters):
                 replenishment_indices = set(new_selected)
                 signature = tuple(sorted(replenishment_indices))
                 if signature in seen_target_paths:
-                    raise RuntimeError(
-                        f"SOC_TARGET_PATH_OSCILLATION:{planning_pass}:{signature}")
+                    # The unconstrained full-horizon result is already
+                    # physically feasible and satisfies terminal SOC. If
+                    # adding the backward target contract alternates between
+                    # two BUY paths, publish that stable economic result with
+                    # execution targets aligned to its accepted BUY/SELL
+                    # flows instead of failing every rolling replan.
+                    optimization=base_optimization
+                    selected_buy_indices={
+                        i for i,flow in enumerate(optimization["flows"])
+                        if float(flow.get("grid_charge_kwh") or 0.0)>flow_threshold
+                    }
+                    commitment=backward_target_commitments(
+                        horizon_rows,capacity,reserve,eta_c,eta_d,
+                        uncertainty_weight,target_cap,terminal_soc,0.25,
+                        selected_buy_indices,max_kw,int(OPTIONS["slot_minutes"]))
+                    targets=[min(target_cap,max(reserve,commitment["targets"][i]))
+                             for i in range(len(horizon_rows))]
+                    for i,flow in enumerate(optimization["flows"]):
+                        if (float(flow.get("grid_charge_kwh") or 0.0)>flow_threshold
+                                or float(flow.get("battery_sell_kwh") or 0.0)>flow_threshold):
+                            targets[i]=max(reserve,min(target_cap,
+                                float(flow.get("soc_end_pct") or reserve)))
+                    target_due_indices=set()
+                    optimization={**optimization,"effective_target_pcts":list(targets)}
+                    daily_variant_result={
+                        "selected":"STANDARD_OSCILLATION_FALLBACK",
+                        "standard_net_pln":-float(optimization["objective_pln"]),
+                        "pv_first_net_pln":None,
+                        "oscillation_signature":signature,
+                    }
+                    target_converged=True
+                    record_event("soc_target_oscillation_fallback","planner",{
+                        "run_id":run_id,"planning_pass":planning_pass,
+                        "signature":signature,"selected_buy_slots":len(selected_buy_indices),
+                    },"WARNING")
+                    break
                 seen_target_paths.add(signature)
                 commitment = backward_target_commitments(
                     horizon_rows, capacity, reserve, eta_c, eta_d,
