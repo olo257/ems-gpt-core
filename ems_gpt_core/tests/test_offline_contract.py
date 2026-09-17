@@ -24,8 +24,22 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.8"', APP_SOURCE)
-        self.assertIn('version: "0.36.8"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.9"', APP_SOURCE)
+        self.assertIn('version: "0.36.9"', CONFIG)
+
+    def test_soc_hold_for_future_sale_is_completely_removed(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        for obsolete in (
+            "Ochrona SOC przed sprzedażą",
+            "SOC_HOLD_FOR_FUTURE_SALE",
+            "allow_grid_hold",
+            "orphan_grid_hold",
+        ):
+            self.assertNotIn(obsolete, planner)
+        self.assertIn(
+            "if voluntary_grid_load > unit_kwh * eta_d + 1e-9 and grid_charge <= 1e-9:\n                    continue",
+            planner,
+        )
 
     def test_hourly_and_daily_soc_boundaries_are_continuous_actuals(self):
         materialization = MODULE_SOURCES["materialization_service.py"]
