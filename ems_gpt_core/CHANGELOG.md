@@ -1,3 +1,14 @@
+## 0.36.9
+
+- Usunięto krytyczny mechanizm `SOC_HOLD_FOR_FUTURE_SALE`, który mógł
+  zasilać bieżące odbiorniki z sieci i sztucznie utrzymywać stały SOC baterii
+  w oczekiwaniu na późniejszą sprzedaż.
+- Usunięto rekomendację „Ochrona SOC przed sprzedażą”. Poza celowym
+  ładowaniem w oknie BUY import odbiorników jest dopuszczalny wyłącznie jako
+  fizycznie nieunikniony przepływ po osiągnięciu technicznego minimum SOC.
+- Autokonsumpcja z baterii nie jest blokowana przez przyszłe okno sprzedaży;
+  każdy slot nadal musi spełnić pełny bilans energii.
+
 ## 0.36.8
 
 - Agregacje godzinowe i dzienne zapisują rzeczywisty `SOC początek` oraz

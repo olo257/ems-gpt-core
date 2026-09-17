@@ -198,8 +198,7 @@ class PairedArbitrageTests(unittest.TestCase):
             })
         seed = optimize_energy_horizon(
             rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * len(rows), 15.0, 0.25, 100.0,
-            allow_grid_hold=False)
+            5.0, 15, [15.0] * len(rows), 15.0, 0.25, 100.0)
         selected = {i for i, flow in enumerate(seed["flows"])
                     if flow["grid_charge_kwh"] > 0.02}
         contract = backward_target_commitments(
@@ -209,7 +208,7 @@ class PairedArbitrageTests(unittest.TestCase):
         result = optimize_energy_horizon(
             rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0] * len(rows), 15.0, 0.25, 100.0,
-            contract["targets"], due, False, due)
+            contract["targets"], due, due)
 
         self.assertGreater(sum(result["flows"][i]["grid_charge_kwh"] for i in range(4)), 3.0)
         self.assertEqual(result["flows"][8]["grid_charge_kwh"], 0.0)
@@ -250,7 +249,7 @@ class PairedArbitrageTests(unittest.TestCase):
         result = optimize_energy_horizon(
             rows, 30.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0] * len(rows), 35.0, 0.25, 100.0,
-            contract["targets"], {2}, False, {2})
+            contract["targets"], {2}, {2})
 
         self.assertGreater(result["flows"][0]["pv_to_bat_kwh"], 0.0)
         self.assertGreater(result["flows"][1]["pv_to_bat_kwh"], 0.0)
@@ -280,7 +279,7 @@ class PairedArbitrageTests(unittest.TestCase):
         result = optimize_energy_horizon(
             rows, 20.0, 15.0, 15.0, 0.95, 0.95, 0.08, 0.05,
             5.0, 15, [15.0, 15.0], 15.0, 0.25, 100.0,
-            [20.0, 80.0], {1}, False, {1})
+            [20.0, 80.0], {1}, {1})
 
         self.assertLess(result["effective_target_pcts"][1], 80.0)
         self.assertEqual(
@@ -404,7 +403,7 @@ class PairedArbitrageTests(unittest.TestCase):
         ]
         result=self.optimize(rows,40.0,15.0,[15.0,15.0])
         self.assertGreater(result["flows"][0]["battery_to_load_kwh"],0.0)
-        self.assertLessEqual(result["flows"][0]["grid_load_kwh"],0.04)
+        self.assertLessEqual(result["flows"][0]["grid_load_kwh"],0.06)
 
     def test_minimum_soc_uses_only_unavoidable_grid_load_and_remains_feasible(self):
         rows = [{
@@ -422,19 +421,40 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertAlmostEqual(flow["grid_load_kwh"], 0.30)
         self.assertEqual(flow["grid_charge_kwh"], 0.0)
 
-    def test_grid_load_may_hold_soc_for_materially_better_sale(self):
+    def test_future_sale_never_allows_grid_hold_for_native_load(self):
         rows=[
             {"price_buy_pln_kwh":1.0,"price_sell_pln_kwh":0.0,
+             "buy_window":False,"sale_window":False,
              "forecast_load_kwh":0.30,"forecast_pv_total_kwh":0.0},
             {"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":5.0,
-             "sale_window":True,
+             "buy_window":False,"sale_window":True,
              "forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0},
         ]
         result=self.optimize(rows,17.0,15.0,[15.0,15.0])
-        self.assertGreater(result["flows"][0]["grid_load_kwh"],0.0)
-        self.assertGreater(result["flows"][1]["battery_sell_kwh"],0.0)
+        self.assertGreater(result["flows"][0]["battery_to_load_kwh"],0.0)
+        self.assertLessEqual(result["flows"][0]["grid_load_kwh"],0.06)
 
-    def test_second_pass_can_disable_theoretical_grid_hold(self):
+    def test_cheap_buy_precharges_for_load_before_profitable_sale(self):
+        rows = [
+            {"price_buy_pln_kwh": 0.50, "price_sell_pln_kwh": 0.0,
+             "buy_window": True, "sale_window": False,
+             "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0},
+            {"price_buy_pln_kwh": 2.00, "price_sell_pln_kwh": 0.0,
+             "buy_window": False, "sale_window": False,
+             "forecast_load_kwh": 0.60, "forecast_pv_total_kwh": 0.0},
+            {"price_buy_pln_kwh": 2.00, "price_sell_pln_kwh": 3.00,
+             "buy_window": False, "sale_window": True,
+             "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0},
+        ]
+        result = self.optimize(rows, 20.0, 15.0, [15.0, 15.0, 15.0])
+        buy, load, sale = result["flows"]
+
+        self.assertGreater(buy["grid_charge_kwh"], 0.60)
+        self.assertGreater(load["battery_to_load_kwh"], 0.50)
+        self.assertLessEqual(load["grid_load_kwh"], 0.04)
+        self.assertGreater(sale["battery_sell_kwh"], 0.0)
+
+    def test_voluntary_grid_hold_is_rejected_in_every_pass(self):
         rows=[
             {"price_buy_pln_kwh":1.0,"price_sell_pln_kwh":0.0,
              "forecast_load_kwh":0.30,"forecast_pv_total_kwh":0.0},
@@ -443,8 +463,7 @@ class PairedArbitrageTests(unittest.TestCase):
         ]
         result = optimize_energy_horizon(
             rows, 40.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0, 15.0], 15.0, 0.25, 100.0,
-            allow_grid_hold=False)
+            5.0, 15, [15.0, 15.0], 15.0, 0.25, 100.0)
         self.assertGreater(result["flows"][0]["battery_to_load_kwh"], 0.0)
         self.assertLessEqual(result["flows"][0]["grid_load_kwh"], 0.04)
 
@@ -724,7 +743,7 @@ class PairedArbitrageTests(unittest.TestCase):
         result = optimize_energy_horizon(
             rows, 50.0, 10.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [100.0], 15.0, 0.25, 100.0, [55.0], set(),
-            False, set())
+            set())
         flow = result["flows"][0]
 
         self.assertGreater(flow["soc_end_pct"], 55.0)
