@@ -735,6 +735,28 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertEqual(result["flows"][0]["soc_end_pct"], 25.0)
 
+    def test_token_charge_cannot_unlock_purchase_for_native_load(self):
+        rows = [
+            {"price_buy_pln_kwh": price, "price_sell_pln_kwh": 0.0,
+             "sale_window": False, "buy_window": True,
+             "forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.0}
+            for price in (0.80, 0.70, 0.20, 0.30)
+        ]
+
+        result = optimize_energy_horizon(
+            rows, 20.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * len(rows), 30.0, 0.25, 100.0)
+
+        charging = [flow for flow in result["flows"]
+                    if flow["grid_charge_kwh"] > 1e-9]
+        self.assertTrue(charging)
+        self.assertTrue(all(
+            flow["grid_charge_kwh"] + 1e-9 >= flow["grid_load_kwh"]
+            for flow in charging
+        ))
+        self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
+        self.assertEqual(result["flows"][1]["grid_charge_kwh"], 0.0)
+
     def test_grid_target_does_not_cap_pv_charging(self):
         rows = [{"price_buy_pln_kwh": 5.0, "price_sell_pln_kwh": 10.0,
                  "sale_window": False, "buy_window": False,

@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.9"', APP_SOURCE)
-        self.assertIn('version: "0.36.9"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.10"', APP_SOURCE)
+        self.assertIn('version: "0.36.10"', CONFIG)
 
     def test_soc_hold_for_future_sale_is_completely_removed(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -36,10 +36,8 @@ class OfflineContractTests(unittest.TestCase):
             "orphan_grid_hold",
         ):
             self.assertNotIn(obsolete, planner)
-        self.assertIn(
-            "if voluntary_grid_load > unit_kwh * eta_d + 1e-9 and grid_charge <= 1e-9:\n                    continue",
-            planner,
-        )
+        self.assertIn("if voluntary_grid_load > grid_charge + 1e-9:", planner)
+        self.assertIn("elif voluntary_grid_load > unit_kwh * eta_d + 1e-9:", planner)
 
     def test_hourly_and_daily_soc_boundaries_are_continuous_actuals(self):
         materialization = MODULE_SOURCES["materialization_service.py"]
@@ -50,6 +48,9 @@ class OfflineContractTests(unittest.TestCase):
         self.assertGreaterEqual(materialization.count("soc_start_pct=%s,soc_end_pct=%s"), 4)
         self.assertIn('(\"ems_gpt_core_hourly\", \"ems_gpt_daily\")', schema)
         self.assertIn("['soc_start_pct','SOC początek']", WEBUI)
+        self.assertIn("for(const view of ['hourly','daily'])", WEBUI)
+        self.assertIn("selected.add('soc_start_pct')", WEBUI)
+        self.assertIn("selected.add('soc_end_pct')", WEBUI)
 
     def test_historical_soc_only_sets_the_terminal_boundary(self):
         planner = MODULE_SOURCES["planner_service.py"]
