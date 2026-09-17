@@ -1,3 +1,19 @@
+## 0.36.4
+
+- Odfiltrowano pobór jałowy nieaktywnego kanału pompy ciepła, który był
+  błędnie raportowany jako energia CO mimo zatrzymanego kompresora i zerowej
+  produkcji ciepła.
+- Energia pobrana, wytworzona i COP pozostają liczone niezależnie dla CO, CWU
+  i chłodzenia; żaden wspólny COP nie służy do przypisywania trybu pracy.
+- Dodano niezależne, przełączalne korekty: stała korekta bezpieczeństwa ±10%
+  jest domyślnie wyłączona, a korekta historyczna PV jest stosowana osobno do
+  PV1 i PV2 po osiągnięciu wymaganej jakości danych.
+- Otwarte prognozy zużycia są ponownie wyliczane z aktualnego profilu
+  historycznego zamiast zachowywać zawyżoną wartość zapisaną wcześniej.
+- Planer uczy się osobnego profilu poboru HP w trybie CWU dla dni roboczych
+  i weekendów. Powtarzalny poranny cykl około 06:00 jest uwzględniany w
+  zapotrzebowaniu i `soc_target` jeszcze przed jego uruchomieniem.
+
 ## 0.36.3
 
 - Naprawiono regresję kroczącego replanu, w której nieosiągalny w ostatnim

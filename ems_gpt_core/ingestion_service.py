@@ -104,12 +104,26 @@ def build_ingestion(a: IngestionAdapters):
         today = local_now().date()
         results = {}
         with db() as conn, conn.cursor() as cur:
+            pv1_scale = pv2_scale = 1.0
+            correction_source = "DISABLED"
+            correction_loaded = False
             for label, target in (("today", today), ("tomorrow", today+timedelta(days=1))):
                 pv1 = number(ha_state(PV_FORECAST_ENTITIES[label][0]))
                 pv2 = number(ha_state(PV_FORECAST_ENTITIES[label][1]))
                 if pv1 is None or pv2 is None:
                     results[label] = {"status": "WAITING_SOURCE"}
                     continue
+                if not correction_loaded:
+                    correction_loaded = True
+                    if bool(OPTIONS.get("forecast_history_corrections_enabled", True)):
+                        cur.execute("""SELECT suggested_pv1_scale,suggested_pv2_scale,metric_confidence_pct
+                          FROM ems_gpt_core_analytics_runs WHERE status='COMPLETED'
+                          ORDER BY completed_at DESC LIMIT 1""")
+                        correction = cur.fetchone() or {}
+                        if float(correction.get("metric_confidence_pct") or 0) >= 80.0:
+                            pv1_scale = min(1.5, max(0.5, float(correction.get("suggested_pv1_scale") or 1.0)))
+                            pv2_scale = min(1.5, max(0.5, float(correction.get("suggested_pv2_scale") or 1.0)))
+                            correction_source = "ANALYTICS_LATEST"
                 lower = max(slot_start().replace(tzinfo=None), datetime.combine(target, datetime.min.time())) if label == "today" else datetime.combine(target, datetime.min.time())
                 upper = datetime.combine(target+timedelta(days=1), datetime.min.time())
                 cur.execute("""SELECT s.slot_start,p.mean_share FROM ems_gpt_slots s
@@ -124,12 +138,15 @@ def build_ingestion(a: IngestionAdapters):
                     continue
                 for row in slots:
                     share = float(row.get("mean_share") or 0)/weight_sum
-                    a, b = pv1*share, pv2*share
+                    a, b = pv1*pv1_scale*share, pv2*pv2_scale*share
                     cur.execute("""UPDATE ems_gpt_slots SET forecast_pv1_kwh=%s,forecast_pv2_kwh=%s,
                       forecast_pv_total_kwh=%s,forecast_pv_source='OPEN_METEO_PROFILE_V1',
-                      pv_correction=1 WHERE slot_start=%s AND actual_recorded_at IS NULL""",
-                      (round(a, 6), round(b, 6), round(a+b, 6), row["slot_start"]))
-                results[label] = {"status": "OK", "slots": len(slots), "pv1_kwh": pv1, "pv2_kwh": pv2}
+                      pv_correction=%s WHERE slot_start=%s AND actual_recorded_at IS NULL""",
+                      (round(a, 6), round(b, 6), round(a+b, 6),
+                       round((pv1*pv1_scale+pv2*pv2_scale)/max(0.001,pv1+pv2), 4), row["slot_start"]))
+                results[label] = {"status": "OK", "slots": len(slots), "pv1_kwh": pv1,
+                                  "pv2_kwh": pv2, "pv1_scale": pv1_scale,
+                                  "pv2_scale": pv2_scale, "correction_source": correction_source}
         record_event("pv_forecast_refreshed", "analytics", results)
         return results
     

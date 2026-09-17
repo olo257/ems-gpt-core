@@ -11,10 +11,20 @@ from analytics_service import (
     _native_load_kwh, _suggested_scale, _target_history,
     _target_history_metrics, _target_load_kwh,
 )
+from materialization_service import normalize_hp_mode_energy
 from datetime import datetime, timedelta
 
 
 class AnalyticsQualityWindowTests(unittest.TestCase):
+    def test_idle_hp_channel_noise_is_not_reported_as_heating(self):
+        # 18 W averaged over a 15-minute slot is 0.0045 kWh.  This is the
+        # observed inactive-channel value, not a CO cycle.
+        self.assertEqual(normalize_hp_mode_energy(0.0045, 0.0), (0.0, 0.0))
+
+    def test_each_active_hp_mode_keeps_its_own_energy_for_cop(self):
+        self.assertEqual(normalize_hp_mode_energy(0.25, 0.75), (0.25, 0.75))
+        self.assertEqual(normalize_hp_mode_energy(0.0, 0.10), (0.0, 0.10))
+
     def test_hp_execution_metrics_keep_modes_separate(self):
         result = _hp_execution_metrics([
             {"actual_heating_consumed_kwh": 1.0, "actual_heating_generated_kwh": 4.0,
