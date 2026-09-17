@@ -188,6 +188,7 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
         for column in (
             "pv_bias_kwh DOUBLE NULL", "load_bias_kwh DOUBLE NULL",
             "import_bias_kwh DOUBLE NULL", "export_bias_kwh DOUBLE NULL",
+            "battery_charge_bias_kwh DOUBLE NULL", "battery_discharge_bias_kwh DOUBLE NULL",
             "soc_mae_pct DOUBLE NULL", "net_cost_variance_pln DOUBLE NULL",
         ):
             cur.execute(f"ALTER TABLE ems_gpt_core_analytics_runs ADD COLUMN IF NOT EXISTS {column}")
@@ -195,6 +196,9 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             "pv_daylight_slots INT NOT NULL DEFAULT 0", "metric_confidence_pct DOUBLE NULL",
             "import_active_mae_kwh DOUBLE NULL", "export_active_mae_kwh DOUBLE NULL",
             "import_event_f1_pct DOUBLE NULL", "export_event_f1_pct DOUBLE NULL",
+            "battery_charge_wape_pct DOUBLE NULL", "battery_discharge_wape_pct DOUBLE NULL",
+            "battery_charge_active_mae_kwh DOUBLE NULL", "battery_discharge_active_mae_kwh DOUBLE NULL",
+            "battery_charge_event_f1_pct DOUBLE NULL", "battery_discharge_event_f1_pct DOUBLE NULL",
             "suggested_pv1_scale DOUBLE NULL", "suggested_pv2_scale DOUBLE NULL",
             "suggested_load_scale DOUBLE NULL",
         ):

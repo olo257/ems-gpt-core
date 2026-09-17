@@ -1,3 +1,15 @@
+## 0.36.7
+
+- Panel Planera pokazuje prognozę całego poboru HP oraz osobno historyczny
+  pobór CWU, które od wersji 0.36.6 są używane do wyliczania `soc_target`.
+- Analityka raportuje plan–wykonanie ładowania i rozładowania baterii jako
+  WAPE, błąd aktywnych slotów, F1 zdarzeń oraz bias energii.
+- Metryki baterii pozostają wyłącznie diagnostyczne (`DIAGNOSTIC_READ_ONLY`)
+  i nie wprowadzają automatycznych korekt do planera ani PPD.
+- Agregacja analityczna ponownie filtruje każdy historyczny tryb HP, dzięki
+  czemu stare próbki jałowego kanału CO sprzed 0.36.4 nie są już sumowane w
+  bieżącym 30-dniowym raporcie.
+
 ## 0.36.6
 
 - Prognoza obciążenia pompy ciepła używana przez optymalizator SOC jest teraz

@@ -5,6 +5,8 @@ import json
 import uuid
 from datetime import timedelta
 
+from materialization_service import normalize_hp_mode_energy
+
 
 def _wape(rows: list[dict], forecast_key: str, actual_key: str) -> float | None:
     pairs = [(float(r[forecast_key]), float(r[actual_key])) for r in rows
@@ -75,13 +77,18 @@ def _is_core_quality_slot(row: dict) -> bool:
     return execution_reason.startswith("CORE_TELEMETRY_") or row.get("actual_mode") == "MISSING_OUTAGE"
 
 
-def _hp_execution_metrics(rows: list[dict]) -> dict:
-    """Aggregate the three physical HP modes without mixing their COP values."""
+def _hp_execution_metrics(rows: list[dict], activity_threshold_kwh: float = 0.02) -> dict:
+    """Aggregate HP modes and re-filter historical inactive-channel noise."""
     result = {}
     total_in = total_out = 0.0
     for mode in ("heating", "dhw", "cooling"):
-        consumed = sum(max(0.0, float(row.get(f"actual_{mode}_consumed_kwh") or 0)) for row in rows)
-        generated = sum(max(0.0, float(row.get(f"actual_{mode}_generated_kwh") or 0)) for row in rows)
+        normalized = [normalize_hp_mode_energy(
+            row.get(f"actual_{mode}_consumed_kwh") or 0.0,
+            row.get(f"actual_{mode}_generated_kwh") or 0.0,
+            activity_threshold_kwh,
+        ) for row in rows]
+        consumed = sum(value[0] for value in normalized)
+        generated = sum(value[1] for value in normalized)
         result[f"actual_{mode}_consumed_kwh"] = round(consumed, 6)
         result[f"actual_{mode}_generated_kwh"] = round(generated, 6)
         result[f"actual_{mode}_cop"] = round(generated / consumed, 3) if consumed > .001 else None
@@ -300,6 +307,10 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
                                  float(row.get("actual_pv_total_kwh") or 0)) >= pv_threshold]
         import_flow = _flow_metrics(metric_rows, "planned_buy_kwh", "actual_buy_kwh", flow_threshold)
         export_flow = _flow_metrics(metric_rows, "planned_pv_export_kwh", "actual_pv_export_kwh", flow_threshold)
+        charge_flow = _flow_metrics(
+            metric_rows, "planned_battery_charge_kwh", "actual_battery_charge_kwh", flow_threshold)
+        discharge_flow = _flow_metrics(
+            metric_rows, "planned_battery_discharge_kwh", "actual_battery_discharge_kwh", flow_threshold)
         metrics = {
             "pv1_wape_pct": _wape(pv_metric_rows, "forecast_pv1_kwh", "actual_pv1_kwh"),
             "pv2_wape_pct": _wape(pv_metric_rows, "forecast_pv2_kwh", "actual_pv2_kwh"),
@@ -307,20 +318,35 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
             "load_wape_pct": _wape(metric_rows, "forecast_load_kwh", "actual_native_load_kwh"),
             "import_wape_pct": _wape(metric_rows, "planned_buy_kwh", "actual_buy_kwh"),
             "export_wape_pct": _wape(metric_rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
+            "battery_charge_wape_pct": _wape(
+                metric_rows, "planned_battery_charge_kwh", "actual_battery_charge_kwh"),
+            "battery_discharge_wape_pct": _wape(
+                metric_rows, "planned_battery_discharge_kwh", "actual_battery_discharge_kwh"),
             "pv_bias_kwh": _bias(pv_metric_rows, "forecast_pv_total_kwh", "actual_pv_total_kwh"),
             "load_bias_kwh": _bias(metric_rows, "forecast_load_kwh", "actual_native_load_kwh"),
             "import_bias_kwh": _bias(metric_rows, "planned_buy_kwh", "actual_buy_kwh"),
             "export_bias_kwh": _bias(metric_rows, "planned_pv_export_kwh", "actual_pv_export_kwh"),
+            "battery_charge_bias_kwh": _bias(
+                metric_rows, "planned_battery_charge_kwh", "actual_battery_charge_kwh"),
+            "battery_discharge_bias_kwh": _bias(
+                metric_rows, "planned_battery_discharge_kwh", "actual_battery_discharge_kwh"),
             "soc_mae_pct": _mae(metric_rows, "soc_end_plan_pct", "soc_end_pct"),
             "import_active_mae_kwh": import_flow["mae_kwh"],
             "export_active_mae_kwh": export_flow["mae_kwh"],
             "import_event_f1_pct": import_flow["event_f1_pct"],
             "export_event_f1_pct": export_flow["event_f1_pct"],
+            "battery_charge_active_mae_kwh": charge_flow["mae_kwh"],
+            "battery_discharge_active_mae_kwh": discharge_flow["mae_kwh"],
+            "battery_charge_event_f1_pct": charge_flow["event_f1_pct"],
+            "battery_discharge_event_f1_pct": discharge_flow["event_f1_pct"],
             "suggested_pv1_scale": _suggested_scale(pv_metric_rows, "forecast_pv1_kwh", "actual_pv1_kwh"),
             "suggested_pv2_scale": _suggested_scale(pv_metric_rows, "forecast_pv2_kwh", "actual_pv2_kwh"),
             "suggested_load_scale": _suggested_scale(metric_rows, "forecast_load_kwh", "actual_native_load_kwh"),
         }
-        metrics.update(_hp_execution_metrics(metric_rows))
+        metrics.update(_hp_execution_metrics(
+            metric_rows,
+            max(0.001, float(options.get("hp_mode_min_energy_kwh", 0.02))),
+        ))
         target_samples = _target_history(
             rows,
             reserve_pct=max(0.0, float(options.get("battery_min_soc_pct", 15.0))),
@@ -407,6 +433,10 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
           slots_scanned=%s,complete_slots=%s,pv1_wape_pct=%s,pv2_wape_pct=%s,pv_wape_pct=%s,load_wape_pct=%s,
           import_wape_pct=%s,export_wape_pct=%s,quality_score=%s,pv_bias_kwh=%s,load_bias_kwh=%s,
           import_bias_kwh=%s,export_bias_kwh=%s,soc_mae_pct=%s,net_cost_variance_pln=%s,
+          battery_charge_wape_pct=%s,battery_discharge_wape_pct=%s,
+          battery_charge_bias_kwh=%s,battery_discharge_bias_kwh=%s,
+          battery_charge_active_mae_kwh=%s,battery_discharge_active_mae_kwh=%s,
+          battery_charge_event_f1_pct=%s,battery_discharge_event_f1_pct=%s,
           pv_daylight_slots=%s,metric_confidence_pct=%s,import_active_mae_kwh=%s,
           export_active_mae_kwh=%s,import_event_f1_pct=%s,export_event_f1_pct=%s,
           suggested_pv1_scale=%s,suggested_pv2_scale=%s,suggested_load_scale=%s,
@@ -425,6 +455,10 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
            metrics["import_wape_pct"], metrics["export_wape_pct"], score,
            metrics["pv_bias_kwh"], metrics["load_bias_kwh"], metrics["import_bias_kwh"],
            metrics["export_bias_kwh"], metrics["soc_mae_pct"], metrics["net_cost_variance_pln"],
+           metrics["battery_charge_wape_pct"], metrics["battery_discharge_wape_pct"],
+           metrics["battery_charge_bias_kwh"], metrics["battery_discharge_bias_kwh"],
+           metrics["battery_charge_active_mae_kwh"], metrics["battery_discharge_active_mae_kwh"],
+           metrics["battery_charge_event_f1_pct"], metrics["battery_discharge_event_f1_pct"],
            len(pv_metric_rows), confidence, metrics["import_active_mae_kwh"], metrics["export_active_mae_kwh"],
            metrics["import_event_f1_pct"], metrics["export_event_f1_pct"],
            metrics["suggested_pv1_scale"], metrics["suggested_pv2_scale"], metrics["suggested_load_scale"],
@@ -441,7 +475,11 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
            json.dumps({"cutoff": str(cutoff), "metrics": metrics, "metric_slots": len(metric_rows),
                        "pv_daylight_slots": len(pv_metric_rows), "metric_confidence_pct": confidence,
                        "flow_threshold_kwh": flow_threshold, "import_active_slots": import_flow["active_slots"],
-                       "export_active_slots": export_flow["active_slots"], "quality_slots": quality_slots,
+                       "export_active_slots": export_flow["active_slots"],
+                       "battery_charge_active_slots": charge_flow["active_slots"],
+                       "battery_discharge_active_slots": discharge_flow["active_slots"],
+                       "battery_flow_mode": "DIAGNOSTIC_READ_ONLY",
+                       "quality_slots": quality_slots,
                        "quality_complete": quality_complete, "load_basis": "HOUSEHOLD_EXCLUDING_EV_AND_HEAT_PUMP",
                        "load_profiles": len(profiles),
                        "pv_profiles": len(pv_profiles),

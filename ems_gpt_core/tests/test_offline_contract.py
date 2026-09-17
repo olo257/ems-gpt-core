@@ -24,8 +24,21 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.36.6"', APP_SOURCE)
-        self.assertIn('version: "0.36.6"', CONFIG)
+        self.assertIn('APP_VERSION = "0.36.7"', APP_SOURCE)
+        self.assertIn('version: "0.36.7"', CONFIG)
+
+    def test_battery_flow_accuracy_is_diagnostic_only(self):
+        analytics = MODULE_SOURCES["analytics_service.py"]
+        planner = MODULE_SOURCES["planner_service.py"]
+        for metric in (
+            "battery_charge_wape_pct",
+            "battery_discharge_wape_pct",
+            "battery_charge_active_mae_kwh",
+            "battery_discharge_active_mae_kwh",
+        ):
+            self.assertIn(metric, analytics)
+            self.assertNotIn(metric, planner)
+        self.assertIn('"battery_flow_mode": "DIAGNOSTIC_READ_ONLY"', analytics)
 
     def test_planner_publishes_the_hp_load_used_by_soc_optimization(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -175,7 +188,8 @@ class OfflineContractTests(unittest.TestCase):
                 self.assertIn(column, materializations)
                 self.assertIn(column, analytics)
                 self.assertIn(column, schema)
-        self.assertIn("_hp_execution_metrics(metric_rows)", analytics)
+        self.assertIn("metrics.update(_hp_execution_metrics(", analytics)
+        self.assertIn('options.get("hp_mode_min_energy_kwh", 0.02)', analytics)
         self.assertIn("cooling_production_start_time", materializations)
         self.assertIn("cooling_production_end_time", materializations)
         self.assertIn("TIME(slot_start)", materializations)
