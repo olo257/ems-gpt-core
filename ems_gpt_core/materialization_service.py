@@ -260,6 +260,33 @@ def build_materializations(a: MaterializationAdapters):
             float(closing) if closing not in (None, "") else None,
         )
 
+    def _update_daily_soc_history(cur, day_value) -> None:
+        """Persist the historical 7/14/28-day terminal-SOC forecast."""
+        cur.execute("""SELECT day_date,soc_end_pct FROM ems_gpt_daily
+          WHERE day_date>=%s AND day_date<%s AND learning_eligible=1
+            AND soc_end_pct IS NOT NULL ORDER BY day_date""",
+            (day_value-timedelta(days=28), day_value))
+        history=list(cur.fetchall()); means={}; samples={}
+        for horizon in (7,14,28):
+            values=[float(row["soc_end_pct"]) for row in history
+                    if 1 <= (day_value-row["day_date"]).days <= horizon]
+            samples[horizon]=len(values)
+            means[horizon]=sum(values)/len(values) if values else None
+        weights={
+            7:max(0.0,float(OPTIONS.get("soc_target_history_weight_7d_pct",50.0))),
+            14:max(0.0,float(OPTIONS.get("soc_target_history_weight_14d_pct",25.0))),
+            28:max(0.0,float(OPTIONS.get("soc_target_history_weight_28d_pct",25.0))),
+        }
+        available=sum(weights[h] for h in (7,14,28) if means[h] is not None)
+        reserve=float(OPTIONS.get("battery_min_soc_pct",15.0))
+        forecast=(sum(float(means[h])*weights[h] for h in (7,14,28)
+                      if means[h] is not None)/available if available>0 else reserve)
+        cur.execute("""UPDATE ems_gpt_daily SET
+          soc_mean_7d_pct=%s,soc_mean_14d_pct=%s,soc_mean_28d_pct=%s,
+          soc_samples_7d=%s,soc_samples_14d=%s,soc_samples_28d=%s,
+          soc_terminal_forecast_pct=%s WHERE day_date=%s""",
+          (means[7],means[14],means[28],samples[7],samples[14],samples[28],forecast,day_value))
+
     def aggregate_results() -> None:
         """Maintain current hourly and daily plan-vs-actual materializations."""
         now=local_now().replace(tzinfo=None)
@@ -336,6 +363,16 @@ def build_materializations(a: MaterializationAdapters):
             soc_open, soc_close = _actual_soc_bounds(cur, day_start, day_start+timedelta(days=1))
             cur.execute("""UPDATE ems_gpt_daily SET soc_start_pct=%s,soc_end_pct=%s
               WHERE day_date=%s""", (soc_open,soc_close,day_start.date()))
+            cur.execute("""SELECT
+              MIN(CASE WHEN actual_pv_total_kwh>0.001 THEN TIME(slot_start) END) pv_start,
+              MAX(CASE WHEN actual_pv_total_kwh>0.001 THEN TIME(slot_end) END) pv_end
+              FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s""",
+              (day_start,day_start+timedelta(days=1)))
+            pv_bounds=cur.fetchone()
+            cur.execute("""UPDATE ems_gpt_daily SET pv_production_start_time=%s,
+              pv_production_end_time=%s WHERE day_date=%s""",
+              (pv_bounds["pv_start"],pv_bounds["pv_end"],day_start.date()))
+            _update_daily_soc_history(cur,day_start.date())
     
     
     def rebuild_recovery_materializations(days: int = 7) -> dict:
@@ -448,6 +485,8 @@ def build_materializations(a: MaterializationAdapters):
                   ,SUM(actual_dhw_consumed_kwh) hp_dhw_in,SUM(actual_dhw_generated_kwh) hp_dhw_out
                   ,SUM(actual_cooling_consumed_kwh) hp_cool_in,SUM(actual_cooling_generated_kwh) hp_cool_out
                   ,SUM(COALESCE(actual_heat_pump_is_running,0)) hp_running_slots
+                  ,MIN(CASE WHEN actual_pv_total_kwh>0.001 THEN TIME(slot_start) END) pv_start
+                  ,MAX(CASE WHEN actual_pv_total_kwh>0.001 THEN TIME(slot_end) END) pv_end
                   ,MIN(CASE WHEN actual_heating_generated_kwh>0.001 THEN TIME(slot_start) END) hp_heat_start
                   ,MAX(CASE WHEN actual_heating_generated_kwh>0.001 THEN TIME(slot_end) END) hp_heat_end
                   ,MIN(CASE WHEN actual_dhw_generated_kwh>0.001 THEN TIME(slot_start) END) hp_dhw_start
@@ -495,6 +534,7 @@ def build_materializations(a: MaterializationAdapters):
                   actual_cooling_consumed_kwh=%s,actual_cooling_generated_kwh=%s,actual_cooling_cop=%s,
                   actual_heat_pump_electric_kwh=%s,actual_heat_pump_thermal_kwh=%s,actual_heat_pump_cop=%s,
                   actual_heat_pump_running_slot_count=%s,
+                  pv_production_start_time=%s,pv_production_end_time=%s,
                   heating_production_start_time=%s,heating_production_end_time=%s,
                   dhw_production_start_time=%s,dhw_production_end_time=%s,
                   cooling_production_start_time=%s,cooling_production_end_time=%s
@@ -510,11 +550,12 @@ def build_materializations(a: MaterializationAdapters):
                   sum(float(d[k] or 0) for k in ("hp_heat_out","hp_dhw_out","hp_cool_out"))/
                   sum(float(d[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in"))
                   if sum(float(d[k] or 0) for k in ("hp_heat_in","hp_dhw_in","hp_cool_in"))>.001 else None,
-                  int(d["hp_running_slots"] or 0),d["hp_heat_start"],d["hp_heat_end"],
+                  int(d["hp_running_slots"] or 0),d["pv_start"],d["pv_end"],d["hp_heat_start"],d["hp_heat_end"],
                   d["hp_dhw_start"],d["hp_dhw_end"],d["hp_cool_start"],d["hp_cool_end"],day_start.date()))
                 soc_open, soc_close = _actual_soc_bounds(cur, day_start, day_end)
                 cur.execute("""UPDATE ems_gpt_daily SET soc_start_pct=%s,soc_end_pct=%s
                   WHERE day_date=%s""", (soc_open,soc_close,day_start.date()))
+                _update_daily_soc_history(cur,day_start.date())
         return {"hours":len(hour_rows),"days":max(1,days)}
     
     

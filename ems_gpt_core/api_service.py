@@ -203,7 +203,15 @@ def build_handler(a: ApiAdapters):
                     LEFT JOIN ems_gpt_core_execution_details d ON d.slot_start=s.slot_start
                     WHERE s.actual_recorded_at IS NOT NULL ORDER BY s.slot_start DESC LIMIT %s""",(limit,)),
                   "hourly":("SELECT * FROM ems_gpt_core_hourly WHERE hour_start<=%s ORDER BY hour_start DESC LIMIT %s",(local_now().replace(tzinfo=None),limit)),
-                  "daily":("SELECT * FROM ems_gpt_daily ORDER BY day_date DESC LIMIT %s",(limit,)),
+                  "daily":("""SELECT d.*,
+                    totals.daily_record_count,totals.learning_record_count,
+                    totals.non_learning_record_count
+                    FROM ems_gpt_daily d CROSS JOIN (
+                      SELECT COUNT(*) daily_record_count,
+                        COALESCE(SUM(learning_eligible=1),0) learning_record_count,
+                        COALESCE(SUM(learning_eligible=0),0) non_learning_record_count
+                      FROM ems_gpt_daily
+                    ) totals ORDER BY d.day_date DESC LIMIT %s""",(limit,)),
                   "runs":("SELECT * FROM ems_gpt_plan_runs ORDER BY created_at DESC LIMIT %s",(limit,)),
                   "analytics":("SELECT * FROM ems_gpt_core_analytics_runs ORDER BY started_at DESC LIMIT %s",(limit,)),
                   "target-history":("SELECT * FROM ems_gpt_core_target_history ORDER BY slot_start DESC LIMIT %s",(limit,)),

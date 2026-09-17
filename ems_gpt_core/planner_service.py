@@ -78,6 +78,63 @@ def next_replenishment_prices(rows: list[dict]) -> list[float | None]:
     return result
 
 
+def pv_first_target_caps(rows: list[dict], flows: list[dict],
+                         selected_buy_indices: set[int], capacity_kwh: float,
+                         reserve_pct: float, eta_c: float,
+                         minimum_margin_pln: float = 0.0) -> dict[int, float]:
+    """Cap a BUY deadline when later cheap-to-use PV is being exported.
+
+    Only energy which can be removed without crossing the reserve before the
+    next PV-surplus slot is shifted.  The future PV export proves that the
+    terminal contract remains funded.  A cap is returned only when buying the
+    shifted kWh costs more than exporting that PV earns, including the
+    configured minimum margin.
+    """
+    if not rows or not selected_buy_indices:
+        return {}
+    capacity=max(0.001,float(capacity_kwh)); reserve=float(reserve_pct)
+    efficiency=max(0.01,float(eta_c)); threshold=1e-6
+    caps: dict[int,float]={}
+    ends=sorted(i for i in selected_buy_indices if i+1 not in selected_buy_indices)
+    for end in ends:
+        start=end
+        while start-1 in selected_buy_indices:
+            start-=1
+        next_buy=min((i for i in selected_buy_indices if i>end),default=len(rows))
+        pv_indices=[]
+        for i in range(end+1,next_buy):
+            row=rows[i]
+            load=(max(0.0,float(row.get("forecast_load_kwh") or 0.0))+
+                  max(0.0,float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+            if (max(0.0,float(row.get("forecast_pv_total_kwh") or 0.0))>load+threshold
+                    and float(flows[i].get("pv_export_kwh") or 0.0)>threshold):
+                pv_indices.append(i)
+        if not pv_indices:
+            continue
+        first_pv=min(pv_indices)
+        minimum_soc=min(float(flows[i].get("soc_end_pct") or reserve)
+                        for i in range(end,first_pv))
+        bridge_margin_internal=max(0.0,(minimum_soc-reserve)*capacity/100.0)
+        grid_input=sum(max(0.0,float(flows[i].get("grid_charge_kwh") or 0.0))
+                       for i in range(start,end+1))
+        pv_export=sum(max(0.0,float(flows[i].get("pv_export_kwh") or 0.0))
+                      for i in pv_indices)
+        shift_internal=min(grid_input*efficiency,pv_export*efficiency,bridge_margin_internal)
+        if shift_internal<=threshold:
+            continue
+        buy_cost=sum(max(0.0,float(flows[i].get("grid_charge_kwh") or 0.0))*
+                     float(rows[i].get("price_buy_pln_kwh") or 0.0)
+                     for i in range(start,end+1))/max(grid_input,threshold)
+        export_value=sum(max(0.0,float(flows[i].get("pv_export_kwh") or 0.0))*
+                         float(rows[i].get("price_sell_pln_kwh") or 0.0)
+                         for i in pv_indices)/max(pv_export,threshold)
+        if buy_cost<=export_value+max(0.0,float(minimum_margin_pln)):
+            continue
+        caps[end]=max(reserve,float(flows[end].get("soc_end_pct") or reserve)-
+                      shift_internal/capacity*100.0)
+    return caps
+
+
 def planning_tou_programs(live_programs: list[dict], baseline_json: str) -> list[dict]:
     """Use live TOU times but immutable configured SOC baselines for planning."""
     try:
@@ -1089,6 +1146,9 @@ def build_planner(a: PlannerAdapters):
             # retain the initial morning BUY even when PV funds the bridge.
             replenishment_indices: set[int] = set()
             seen_target_paths: set[tuple[int, ...]] = set()
+            pv_first_caps: dict[int, float] = {}
+            daily_variant_result = {"selected": "STANDARD", "standard_net_pln": None,
+                                    "pv_first_net_pln": None}
             for planning_pass in range(1, 9):
                 new_selected = {
                     i for i, flow in enumerate(optimization["flows"])
@@ -1112,11 +1172,43 @@ def build_planner(a: PlannerAdapters):
                     i for i in replenishment_indices
                     if i + 1 not in replenishment_indices
                 }
+                uncapped_targets=list(targets)
+                # A previous economic pass may prove that a part of this BUY
+                # merely displaces nearby PV which would otherwise be exported
+                # much more cheaply. Keep that PV-first cap for subsequent
+                # convergence passes so the same obligation is not recreated.
+                new_caps=pv_first_target_caps(
+                    horizon_rows,optimization["flows"],replenishment_indices,
+                    capacity,reserve,eta_c,min_margin)
+                for due_index,cap_value in new_caps.items():
+                    pv_first_caps[due_index]=min(
+                        pv_first_caps.get(due_index,target_cap),cap_value)
+                for due_index,cap_value in pv_first_caps.items():
+                    if due_index in target_due_indices:
+                        targets[due_index]=min(targets[due_index],cap_value)
+                standard_refined=None
+                if targets!=uncapped_targets:
+                    standard_refined=optimize_energy_horizon(
+                        horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
+                        max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
+                        terminal_soc,0.25,target_cap,uncapped_targets,target_due_indices,
+                        target_due_indices)
                 refined = optimize_energy_horizon(
                     horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
                     max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
                     terminal_soc,0.25,target_cap,targets,target_due_indices,
                     target_due_indices)
+                if standard_refined is not None:
+                    daily_variant_result={
+                        "standard_net_pln":-float(standard_refined["objective_pln"]),
+                        "pv_first_net_pln":-float(refined["objective_pln"]),
+                        "selected":"PV_FIRST" if float(refined["objective_pln"])
+                                   < float(standard_refined["objective_pln"])-1e-6 else "STANDARD",
+                    }
+                    if daily_variant_result["selected"]=="STANDARD":
+                        refined=standard_refined
+                        targets=uncapped_targets
+                        pv_first_caps.clear()
                 ensure_deadline(f"TARGET_PASS_{planning_pass}")
                 refined_selected = {
                     i for i, flow in enumerate(refined["flows"])
@@ -1132,7 +1224,12 @@ def build_planner(a: PlannerAdapters):
                 raise RuntimeError("SOC_TARGET_PATH_NOT_CONVERGED:8")
             targets = list(optimization.get("effective_target_pcts", targets))
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
-                        f"economic multi-pass target; selected_buy_slots={len(selected_buy_indices)}")
+                        f"economic multi-pass target; selected_buy_slots={len(selected_buy_indices)}; "
+                        f"pv_first_caps={len(pv_first_caps)}")
+            record_event("daily_plan_variant_selected","planner",{
+                "run_id":run_id,"terminal_soc_pct":round(terminal_soc,3),
+                **daily_variant_result,
+            })
             ensure_deadline("TARGET_COMMITMENT")
             ensure_deadline("DISPATCH")
             bridge_floors = [reserve] * len(horizon_rows)

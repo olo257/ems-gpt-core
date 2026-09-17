@@ -1,3 +1,19 @@
+## 0.36.12
+
+- Dodano wariant planu `PV_FIRST`. Jeżeli drogi wcześniejszy zakup zajmuje
+  pojemność, a pobliska nadwyżka PV byłaby sprzedawana taniej, target końca
+  okna BUY jest obniżany wyłącznie o energię możliwą do bezpiecznego
+  przesunięcia na PV bez zejścia poniżej rezerwy przed jego nadejściem.
+- Planer porównuje pełny wynik PLN wariantu standardowego i `PV_FIRST` przy
+  identycznym SOC początkowym i terminalnym, po czym publikuje wariant
+  ekonomicznie lepszy. Wyniki i wybór zapisuje diagnostyka przebiegu.
+- `Daily` ponownie zapisuje rzeczywiste godziny początku i końca produkcji PV,
+  również podczas odbudowy historycznej.
+- Widok `Daily` pokazuje liczbę wszystkich dób, dób dopuszczonych do uczenia
+  i rekordów otwartych lub odrzuconych.
+- Dla każdej doby zapisano średnie rzeczywistego SOC końcowego z 7, 14 i 28
+  dni, liczebności prób oraz ważoną prognozę terminalnego SOC.
+
 ## 0.36.11
 
 - Wydzielono PPD jako osobny przebieg uruchamiany dopiero po atomowej

@@ -301,12 +301,14 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             for column in hp_energy_columns:
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
         for column in (
+            "pv_production_start_time TIME NULL", "pv_production_end_time TIME NULL",
             "heating_production_start_time TIME NULL", "heating_production_end_time TIME NULL",
             "dhw_production_start_time TIME NULL", "dhw_production_end_time TIME NULL",
             "cooling_production_start_time TIME NULL", "cooling_production_end_time TIME NULL",
         ):
             cur.execute(f"ALTER TABLE ems_gpt_daily ADD COLUMN IF NOT EXISTS {column}")
         for column in (
+            "pv_production_start_time", "pv_production_end_time",
             "heating_production_start_time", "heating_production_end_time",
             "dhw_production_start_time", "dhw_production_end_time",
             "cooling_production_start_time", "cooling_production_end_time",
@@ -325,6 +327,10 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
         for column in (
             "completion_status VARCHAR(24) NOT NULL DEFAULT 'OPEN'",
             "terminal_slot_count INT NOT NULL DEFAULT 0",
+            "soc_mean_7d_pct DOUBLE NULL", "soc_mean_14d_pct DOUBLE NULL",
+            "soc_mean_28d_pct DOUBLE NULL", "soc_samples_7d INT NOT NULL DEFAULT 0",
+            "soc_samples_14d INT NOT NULL DEFAULT 0", "soc_samples_28d INT NOT NULL DEFAULT 0",
+            "soc_terminal_forecast_pct DOUBLE NULL",
         ):
             cur.execute(f"ALTER TABLE ems_gpt_daily ADD COLUMN IF NOT EXISTS {column}")
         for column in (
