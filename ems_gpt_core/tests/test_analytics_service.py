@@ -41,6 +41,21 @@ class AnalyticsQualityWindowTests(unittest.TestCase):
         self.assertEqual(result["actual_heat_pump_thermal_kwh"], 6.25)
         self.assertEqual(result["actual_heat_pump_running_slot_count"], 2)
 
+    def test_hp_analytics_refilters_historical_idle_heating_noise(self):
+        result = _hp_execution_metrics([
+            {"actual_heating_consumed_kwh": 0.0045,
+             "actual_heating_generated_kwh": 0.0,
+             "actual_dhw_consumed_kwh": 0.25,
+             "actual_dhw_generated_kwh": 0.75,
+             "actual_heat_pump_is_running": 1},
+        ])
+
+        self.assertEqual(result["actual_heating_consumed_kwh"], 0.0)
+        self.assertEqual(result["actual_heating_generated_kwh"], 0.0)
+        self.assertIsNone(result["actual_heating_cop"])
+        self.assertEqual(result["actual_dhw_consumed_kwh"], 0.25)
+        self.assertEqual(result["actual_dhw_cop"], 3.0)
+
     def test_intermittent_flow_metrics_ignore_inactive_slots(self):
         rows = [
             {"plan": 0.0, "actual": 0.0},

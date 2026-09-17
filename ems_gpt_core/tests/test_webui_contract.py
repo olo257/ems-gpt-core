@@ -8,6 +8,12 @@ API = (ROOT / "api_service.py").read_text(encoding="utf-8")
 
 
 class WebUiContractTests(unittest.TestCase):
+    def test_plan_and_analytics_expose_hp_and_battery_diagnostics(self):
+        self.assertIn("['forecast_heat_pump_load_kwh','HP plan']", HTML)
+        self.assertIn("['forecast_heat_pump_dhw_load_kwh','CWU HP plan']", HTML)
+        self.assertIn("['battery_charge_wape_pct','Ład. BAT WAPE']", HTML)
+        self.assertIn("['battery_discharge_wape_pct','Rozł. BAT WAPE']", HTML)
+
     def test_rce_chart_is_48_hours_with_current_slot(self):
         self.assertIn("data-view='rce-chart'", HTML)
         self.assertNotIn("data-rce-range='365d'", HTML)
