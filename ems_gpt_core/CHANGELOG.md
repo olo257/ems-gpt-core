@@ -1,3 +1,13 @@
+## 0.36.14
+
+- Naprawiono błąd `SOC_TARGET_PATH_OSCILLATION`, w którym dwa wykonalne
+  zestawy slotów BUY naprzemiennie zmieniały się po przeliczeniu targetu.
+- Przy wykryciu cyklu planer używa stabilnego, pełnohoryzontowego wyniku
+  ekonomicznego, który już spełnia bilans fizyczny i terminalny SOC.
+- Targety wykonawcze dla BUY i SELL są wtedy wiązane z zaakceptowanym SOC
+  końcowym tych przepływów; oscylacja i wybrana ścieżka są zapisywane w
+  diagnostyce zamiast przerywać każdy replan.
+
 ## 0.36.13
 
 - Naprawiono krytyczny błąd, w którym niewykonalny wariant `PV_FIRST`
