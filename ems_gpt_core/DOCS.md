@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja produkcyjna: **0.38.1**.
+Status: obowiązująca. Wersja produkcyjna: **0.38.2**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -117,6 +117,9 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
 Historyczne średnie końcowego SOC 7/14/28 dni są liczone niezależnie z pełnych,
 rzeczywiście zamkniętych dób. Doba z brakiem lub `MISSING_OUTAGE` nie jest
 próbką. Krótszy zakres odbudowy agregatów nie może ograniczać horyzontu 14/28.
+Ważona prognoza jest minimalnym SOC na końcu każdej doby objętej planem, nie
+tylko ostatniego dnia całego horyzontu. Wartość jest zaokrąglana w górę do
+kroku SOC; planer może zakończyć dobę wyżej, jeżeli wymaga tego dalszy bilans.
 
 ## 6. RCE i bieżące ceny
 
