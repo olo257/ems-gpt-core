@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.38.0"', APP_SOURCE)
-        self.assertIn('version: "0.38.0"', CONFIG)
+        self.assertIn('APP_VERSION = "0.38.1"', APP_SOURCE)
+        self.assertIn('version: "0.38.1"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -65,8 +65,8 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(field,schema)
             self.assertIn(field,planner)
             self.assertIn(field,WEBUI)
-        self.assertIn("PPD_VOLUNTARY_GRID_LOAD_NOT_NEUTRAL",
-                      MODULE_SOURCES["ppd_service.py"])
+        self.assertNotIn("PPD_VOLUNTARY_GRID_LOAD_NOT_NEUTRAL",
+                         MODULE_SOURCES["ppd_service.py"])
 
     def test_soc_hold_for_future_sale_is_completely_removed(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -391,7 +391,9 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('{"sell":raw,"buy":raw+margin', SOURCE)
         self.assertIn('grid_policy="BUY_ALLOWED" if buy>flow_threshold',
                       MODULE_SOURCES["planner_service.py"])
-        self.assertIn("PPD_VOLUNTARY_GRID_LOAD_NOT_NEUTRAL", SOURCE)
+        self.assertNotIn("PPD_VOLUNTARY_GRID_LOAD_NOT_NEUTRAL", SOURCE)
+        self.assertNotIn("VOLUNTARY_GRID_LOAD_WITHOUT_BATTERY_CHARGE", SOURCE)
+        self.assertIn("voluntary_grid_load =", MODULE_SOURCES["planner_service.py"])
         ingestion = MODULE_SOURCES["ingestion_service.py"]
         config = MODULE_SOURCES["config_service.py"]
         self.assertNotIn("sale_session", ingestion)
@@ -492,7 +494,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("MIN(forecast_temperature_c) night_min", SOURCE)
         self.assertIn("i in hp_selected_indices", SOURCE)
         self.assertIn("heat_pump_window=%s", SOURCE)
-        self.assertIn('hp_window = bool(row.get("heat_pump_window"))', SOURCE)
+        self.assertIn('_database_bool(row.get("heat_pump_window")', SOURCE)
+        self.assertNotIn('hp_window = bool(row.get("heat_pump_window"))', SOURCE)
 
     def test_dhw_energy_cannot_mark_space_heating_as_running(self):
         materialization = MODULE_SOURCES["materialization_service.py"]
@@ -507,6 +510,13 @@ class OfflineContractTests(unittest.TestCase):
         hp_history = planner[planner.index("SELECT heat_pump_window FROM ems_gpt_slots"):]
         hp_history = hp_history[:hp_history.index("ORDER BY slot_start")]
         self.assertNotIn("actual_recorded_at", hp_history)
+
+    def test_executor_fails_closed_when_hp_planner_window_is_off(self):
+        executor = MODULE_SOURCES["executor_service.py"]
+        self.assertIn("planner_heat_pump_window", executor)
+        self.assertIn("planned_on = planned_on and planner_window", executor)
+        self.assertIn("HP_PLANNER_WINDOW_OFF", executor)
+        self.assertNotIn('planned_on = bool(row["eligible"])', executor)
 
     def test_ppd_copies_target_affecting_decisions_without_recalculation(self):
         ppd = MODULE_SOURCES["ppd_service.py"]
