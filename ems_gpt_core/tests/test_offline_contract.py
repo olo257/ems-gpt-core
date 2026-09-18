@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.37.4"', APP_SOURCE)
-        self.assertIn('version: "0.37.4"', CONFIG)
+        self.assertIn('APP_VERSION = "0.37.5"', APP_SOURCE)
+        self.assertIn('version: "0.37.5"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -494,6 +494,7 @@ class OfflineContractTests(unittest.TestCase):
     def test_automatic_heat_dhw_is_restricted_to_daytime_window(self):
         planner = MODULE_SOURCES["planner_service.py"]
         self.assertIn("hp_heating_window_indices", planner)
+        self.assertIn('0 if c == "heat_pump_window" else row.get(c)', planner)
         self.assertIn('if window_start <= row["slot_start"] < window_end', planner)
         self.assertIn("allowed_rows", planner)
 

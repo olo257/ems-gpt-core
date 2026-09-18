@@ -239,7 +239,37 @@ Wykonawca pozostaje domyślnie wyłączony. Publikacja planu nie jest zgodą na
 sterowanie. Włączenie wykonawcy wymaga osobnej decyzji operatorskiej oraz świeżej
 telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa.
 
-## 11. Minimalne testy regresyjne
+## 11. Kontrakt pompy ciepła
+
+- Każdy przebieg inicjuje `heat_pump_window=0`; nie wolno kopiować wartości z
+  poprzedniego opublikowanego planu.
+- Próg pochodzi wyłącznie z konfiguracji panelu
+  `night_heating_threshold_c`. Core nie oczekuje helpera HA z progiem.
+- Kwalifikacja wymaga dokładnie 24 kompletnych próbek prognozy 00:00–06:00 i
+  minimum ściśle niższego od progu. Brak danych, niepełność oraz wartość równa
+  progowi lub wyższa blokują ogrzewanie.
+- Okno zaczyna się najwcześniej o 07:00 po porannym `SELL`, a kończy
+  najpóźniej o 19:00 lub przed wieczornym `SELL`. Reguła jest taka sama w dni
+  robocze i weekend.
+- `BUY` nie wyznacza granic okna HP. Żaden slot `SELL` nie może mieć
+  automatycznego `HP_HEAT_DHW=ON`.
+- Energia HP jest dodawana do bilansu i targetu wyłącznie dla zakwalifikowanego
+  profilu. HP może zwiększyć potrzebne ładowanie baterii, ale samo nie tworzy
+  okna BUY.
+
+## 12. Publikacja cen do Home Assistant
+
+Zakup i sprzedaż pochodzą zawsze z tego samego aktywnego slotu i są publikowane
+wyłącznie do istniejących helperów:
+
+- `input_number.ems_gpt_cena_zakupu_biezaca`;
+- `input_number.ems_gpt_cena_sprzedazy_biezaca`.
+
+Core nie tworzy helperów ani sensorów cenowych. Brak jednej ceny blokuje oba
+zapisy. Błąd sekwencyjnego zapisu HA jest jawnie raportowany i ponawiany; nie
+wolno podstawiać zera ani publikować wartości pochodzących z różnych slotów.
+
+## 13. Minimalne testy regresyjne
 
 Każda zmiana planera musi obejmować co najmniej:
 
@@ -254,4 +284,8 @@ Każda zmiana planera musi obejmować co najmniej:
 - fizyczny bilans każdego slotu;
 - odrzucenie całego planu przy pojedynczym niewykonalnym slocie;
 - zachowanie ostatniego poprawnego planu po błędzie replanu;
-- zakończenie obliczeń przed granicą kolejnego slotu.
+- zakończenie obliczeń przed granicą kolejnego slotu;
+- wyzerowanie odziedziczonego `heat_pump_window` na początku przebiegu;
+- HP wyłączone przy niepełnej prognozie i temperaturze równej progowi;
+- brak HP przed 07:00, po 19:00 i w każdym slocie `SELL`;
+- publikację cen jednego slotu wyłącznie do dwóch kanonicznych helperów.
