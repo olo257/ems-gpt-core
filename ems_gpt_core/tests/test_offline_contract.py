@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.37.2"', APP_SOURCE)
-        self.assertIn('version: "0.37.2"', CONFIG)
+        self.assertIn('APP_VERSION = "0.37.3"', APP_SOURCE)
+        self.assertIn('version: "0.37.3"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -241,13 +241,13 @@ class OfflineContractTests(unittest.TestCase):
                         APP_SOURCE.index("initialize()", main_position))
         self.assertIn("database_ok and status_ok", api)
 
-    def test_hp_manual_duration_and_external_priority(self):
+    def test_hp_manual_duration_and_plan_priority(self):
         self.assertNotIn("hpManualHours", SOURCE)
         self.assertNotIn("body.minutes=60", SOURCE)
-        self.assertIn("externally_started_hp_is_running", SOURCE)
         self.assertIn('"OVERRIDE" if requested else', SOURCE)
-        self.assertIn('"EXTERNAL_MANUAL" if external_hp_on else "PLAN"', SOURCE)
-        self.assertIn('requested != "FORCE_OFF"', SOURCE)
+        self.assertNotIn('True if external_hp_on else planned_on', SOURCE)
+        self.assertNotIn('external_hp_control_preserved', SOURCE)
+        self.assertIn('False if requested == "FORCE_OFF" else planned_on', SOURCE)
         self.assertIn('True if value.get("external_manual_on")', SOURCE)
         self.assertIn('indefinite_override = requested in {"FORCE_ON", "FORCE_OFF"}', SOURCE)
         self.assertIn("manualOff?'WYŁĄCZONY':'AUTO'", SOURCE)
