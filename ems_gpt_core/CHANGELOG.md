@@ -1,3 +1,8 @@
+## 0.37.4
+
+- Próg uruchomienia `HP_HEAT_DHW` jest pobierany z helpera `input_number.temperatura_nocna_pompy_ciepla`; brak lub niedostępność helpera blokuje automatyczne ogrzewanie.
+- Bieżące ceny są publikowane bezpośrednio do kanonicznych sensorów `sensor.gpt_ems_cena_zakupu` i `sensor.gpt_ems_cena_sprzedazy`. Zapis do dotychczasowych helperów pozostaje zgodnościowy i jego błąd nie blokuje sensorów.
+
 ## 0.37.3
 
 - Naprawiono wykonawcę `HP_HEAT_DHW`: automatyczny stan `OFF` z opublikowanego planu nie jest już pomijany, gdy sprężarka nadal pracuje. Tylko jawny `FORCE_ON` może utrzymać ogrzewanie poza zaplanowanym oknem.

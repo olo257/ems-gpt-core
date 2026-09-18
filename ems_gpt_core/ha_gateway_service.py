@@ -54,6 +54,26 @@ def build_home_assistant_gateway(a: HomeAssistantAdapters):
             a.log.warning("HA service response failed: %s.%s: %s", domain, service, exc)
             return None
 
+    def ha_state_response(entity_id: str, state, attributes: dict | None = None) -> dict | None:
+        """Publish a Core-owned HA sensor state through the Supervisor proxy."""
+        if not a.supervisor_token:
+            return None
+        req = urllib.request.Request(
+            f"{a.ha_api}/states/{entity_id}",
+            data=json.dumps({"state": state, "attributes": attributes or {}}).encode(),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {a.supervisor_token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                return json.load(response)
+        except Exception as exc:
+            a.log.warning("HA state publication failed: %s: %s", entity_id, exc)
+            return None
+
     def number(state: dict | None, attribute: str | None = None) -> float | None:
         if not isinstance(state, dict):
             return None
@@ -99,6 +119,7 @@ def build_home_assistant_gateway(a: HomeAssistantAdapters):
     return SimpleNamespace(
         ha_state=ha_state,
         ha_service_response=ha_service_response,
+        ha_state_response=ha_state_response,
         number=number,
         tou_program_snapshot=tou_program_snapshot,
         active_tou_program=active_tou_program,

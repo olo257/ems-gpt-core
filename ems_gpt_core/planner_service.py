@@ -1163,7 +1163,10 @@ def build_planner(a: PlannerAdapters):
             }
             # Keep the daily heating trigger stable across hourly replans by reading
             # the complete 00:00-06:00 forecast, including already closed slots.
-            night_threshold = float(OPTIONS.get("night_heating_threshold_c", 10.0))
+            # The HA helper is authoritative. Missing/unavailable input fails closed
+            # instead of silently reverting to the historical 10 C default.
+            night_threshold = setting(
+                "input_number.temperatura_nocna_pompy_ciepla", float("nan"))
             day_values = sorted({row.get("local_day") or row["slot_start"].date() for row in rows})
             night_min_by_day = {}
             if day_values:
