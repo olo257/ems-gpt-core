@@ -9,7 +9,8 @@ from typing import Any, Callable
 
 
 def publish_current_slot_prices(db: Callable, current_slot: datetime,
-                                ha_service_response: Callable) -> dict:
+                                ha_service_response: Callable,
+                                ha_state_response: Callable | None = None) -> dict:
     """Publish both prices from the same active Core slot to HA helpers."""
     start = current_slot.replace(tzinfo=None)
     with db() as conn, conn.cursor() as cur:
@@ -24,15 +25,30 @@ def publish_current_slot_prices(db: Callable, current_slot: datetime,
         "input_number.ems_gpt_cena_sprzedazy_biezaca": round(
             float(row["price_sell_pln_kwh"]), 3),
     }
+    canonical = {
+        "sensor.gpt_ems_cena_zakupu": prices["input_number.optymalizator_deye_cena_zakupu"],
+        "sensor.gpt_ems_cena_sprzedazy": prices["input_number.ems_gpt_cena_sprzedazy_biezaca"],
+    }
+    if ha_state_response is not None:
+        for entity_id, value in canonical.items():
+            result = ha_state_response(entity_id, value, {
+                "unit_of_measurement": "PLN/kWh",
+                "friendly_name": "EMS-GPT cena zakupu" if "zakupu" in entity_id else "EMS-GPT cena sprzedaży",
+                "slot_start": start.isoformat(),
+            })
+            if result is None:
+                return {"status": "HA_WRITE_FAILED", "slot_start": start.isoformat(),
+                        "entity_id": entity_id}
+    legacy_failures = []
     for entity_id, value in prices.items():
         result = ha_service_response(
             "input_number", "set_value",
             {"entity_id": entity_id, "value": value},
         )
         if result is None:
-            return {"status": "HA_WRITE_FAILED", "slot_start": start.isoformat(),
-                    "entity_id": entity_id}
-    return {"status": "OK", "slot_start": start.isoformat(), "prices": prices}
+            legacy_failures.append(entity_id)
+    return {"status": "OK", "slot_start": start.isoformat(), "prices": canonical,
+            "legacy_helper_failures": legacy_failures}
 
 
 def rce_event_keys(clock: datetime) -> tuple[str, ...]:
