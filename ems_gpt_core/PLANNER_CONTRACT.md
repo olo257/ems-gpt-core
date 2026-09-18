@@ -137,6 +137,11 @@ Techniczne minimum SOC jest granicą awaryjną, nie celem operacyjnym. Planowana
 wykonalności od idealnego rozpoczęcia prognozowanego PV. Target zawiera zapas
 wynikający z konserwatywnej korekty zużycia i PV.
 
+Na końcu każdej lokalnej doby obowiązuje dodatkowa minimalna granica: ważona
+prognoza rzeczywistego SOC zamknięcia z niezależnych okien 7/14/28 dni.
+Granica dotyczy każdej doby w horyzoncie, jest zaokrąglana w górę do kroku SOC
+i nie może zostać wyzerowana przez BUY lub PV następnego dnia.
+
 Target obejmuje:
 
 - prognozowane zużycie do granicy uzupełnienia;
