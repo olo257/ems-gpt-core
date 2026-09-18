@@ -38,14 +38,19 @@ class PriceConnection:
 class RceRestoreKeysTests(unittest.TestCase):
     def test_current_prices_come_from_the_same_active_slot(self):
         writes = []
+        states = {}
+        def write(domain, service, payload):
+            writes.append((domain, service, payload))
+            states[payload["entity_id"]] = {"state": str(payload["value"])}
+            return []
         result = publish_current_slot_prices(
             lambda: PriceConnection({
                 "price_buy_pln_kwh": 1.1524,
                 "price_sell_pln_kwh": 0.5624,
             }),
             datetime(2026, 9, 15, 12, 15),
-            lambda domain, service, payload: writes.append(
-                (domain, service, payload)) or [],
+            write,
+            lambda entity_id: states.get(entity_id),
         )
 
         self.assertEqual(result["status"], "OK")
@@ -59,6 +64,30 @@ class RceRestoreKeysTests(unittest.TestCase):
                 "value": 0.562,
             }),
         ])
+
+    def test_unconfirmed_purchase_helper_reports_value_and_range(self):
+        result = publish_current_slot_prices(
+            lambda: PriceConnection({
+                "price_buy_pln_kwh": 1.152,
+                "price_sell_pln_kwh": 0.562,
+            }),
+            datetime(2026, 9, 15, 12, 15),
+            lambda *_args: [],
+            lambda entity_id: {
+                "state": "0.0",
+                "attributes": {"min": 0.0, "max": 1.0},
+            },
+        )
+
+        self.assertEqual(result, {
+            "status": "HA_VERIFY_FAILED",
+            "slot_start": "2026-09-15T12:15:00",
+            "entity_id": "input_number.ems_gpt_cena_zakupu_biezaca",
+            "expected": 1.152,
+            "actual": 0.0,
+            "helper_min": 0.0,
+            "helper_max": 1.0,
+        })
 
     def test_missing_active_slot_price_does_not_publish_partial_pair(self):
         writes = []
