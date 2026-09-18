@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.37.6"', APP_SOURCE)
-        self.assertIn('version: "0.37.6"', CONFIG)
+        self.assertIn('APP_VERSION = "0.37.7"', APP_SOURCE)
+        self.assertIn('version: "0.37.7"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -490,6 +490,11 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("i in hp_selected_indices", SOURCE)
         self.assertIn("heat_pump_window=%s", SOURCE)
         self.assertIn('("HP_HEAT_DHW", bool(row.get("heat_pump_window"))', SOURCE)
+
+    def test_dhw_energy_cannot_mark_space_heating_as_running(self):
+        materialization = MODULE_SOURCES["materialization_service.py"]
+        self.assertIn('"HP_HEAT_DHW": round(hp_heat_cons, 6)', materialization)
+        self.assertNotIn('"HP_HEAT_DHW": round(hp_heat_cons + dhw_energy, 6)', materialization)
 
     def test_automatic_heat_dhw_is_restricted_to_daytime_window(self):
         planner = MODULE_SOURCES["planner_service.py"]
