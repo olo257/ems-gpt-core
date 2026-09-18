@@ -36,7 +36,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.37.4"
+APP_VERSION = "0.37.5"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -106,15 +106,13 @@ _HA_GATEWAY = build_home_assistant_gateway(HomeAssistantAdapters(
 ))
 ha_state = _HA_GATEWAY.ha_state
 ha_service_response = _HA_GATEWAY.ha_service_response
-ha_state_response = _HA_GATEWAY.ha_state_response
 number = _HA_GATEWAY.number
 tou_program_snapshot = _HA_GATEWAY.tou_program_snapshot
 active_tou_program = _HA_GATEWAY.active_tou_program
 
 
 def publish_current_prices(current_slot) -> dict:
-    return publish_current_slot_prices(
-        db, current_slot, ha_service_response, ha_state_response)
+    return publish_current_slot_prices(db, current_slot, ha_service_response)
 
 
 ENTITIES = {

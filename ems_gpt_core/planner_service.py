@@ -1131,7 +1131,9 @@ def build_planner(a: PlannerAdapters):
             insert_cols = ["run_id"] + stage_columns
             placeholders = ",".join(["%s"] * len(insert_cols))
             for row in source:
-                values = [run_id] + [0 if c == "heat_pump_window" and row.get(c) is None else row.get(c) for c in stage_columns]
+                # Every run starts fail-closed. Never inherit an HP window from
+                # the previously published plan before re-evaluating temperature.
+                values = [run_id] + [0 if c == "heat_pump_window" else row.get(c) for c in stage_columns]
                 cur.execute(f"INSERT INTO ems_gpt_plan_stage_rows ({','.join(insert_cols)}) VALUES({placeholders})", values)
             audit_stage(cur, run_id, "RCE_RAW", "OK", len(source), "durable prices copied")
             ensure_deadline("RCE_RAW")
@@ -1163,10 +1165,8 @@ def build_planner(a: PlannerAdapters):
             }
             # Keep the daily heating trigger stable across hourly replans by reading
             # the complete 00:00-06:00 forecast, including already closed slots.
-            # The HA helper is authoritative. Missing/unavailable input fails closed
-            # instead of silently reverting to the historical 10 C default.
-            night_threshold = setting(
-                "input_number.temperatura_nocna_pompy_ciepla", float("nan"))
+            # The operator setting from the EMS panel is authoritative.
+            night_threshold = float(OPTIONS.get("night_heating_threshold_c", 10.0))
             day_values = sorted({row.get("local_day") or row["slot_start"].date() for row in rows})
             night_min_by_day = {}
             if day_values:
