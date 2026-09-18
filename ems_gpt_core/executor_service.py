@@ -451,21 +451,10 @@ def build_executor(a: ExecutorAdapters):
             for row in cur.fetchall():
                 planned_on = bool(row["eligible"])
                 requested = row.get("requested_state")
-                external_hp_on = (row["process_name"] == "HP_HEAT_DHW"
-                                  and requested != "FORCE_OFF"
-                                  and not planned_on
-                                  and externally_started_hp_is_running(cur, now))
                 effective_on = (True if requested == "FORCE_ON" else
-                                False if requested == "FORCE_OFF" else
-                                True if external_hp_on else planned_on)
+                                False if requested == "FORCE_OFF" else planned_on)
                 decision = "ON" if effective_on else "OFF"
-                source = "OVERRIDE" if requested else "EXTERNAL_MANUAL" if external_hp_on else "PLAN"
-                if external_hp_on:
-                    record_event("external_hp_control_preserved", "executor", {
-                        "process": "HP_HEAT_DHW", "decision": "HOLD_ON",
-                        "reason": "fresh compressor run without recent EMS ON command"
-                    })
-                    continue
+                source = "OVERRIDE" if requested else "PLAN"
                 command_id = str(uuid.uuid4())
                 plan_version = (str(row["plan_run_id"]) + ":" + str(row.get("ppd_run_id") or "NO_PPD") + ":"
                                 + str(OPTIONS.get("_process_control_revision") or "base"))
