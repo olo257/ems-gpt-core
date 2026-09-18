@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.38.2"', APP_SOURCE)
-        self.assertIn('version: "0.38.2"', CONFIG)
+        self.assertIn('APP_VERSION = "0.38.3"', APP_SOURCE)
+        self.assertIn('version: "0.38.3"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -106,7 +106,9 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("daily_terminal_soc[planning_day] = max(", planner)
         self.assertIn("backward_target_commitments(", planner)
         self.assertIn("daily_required_soc[index] = daily_terminal_soc[row_day]", planner)
-        self.assertIn("required_soc_pcts=daily_required_soc", planner)
+        self.assertIn("required_soc_pcts=enforced_daily_required", planner)
+        self.assertIn("daily_terminal_soc_unreachable", planner)
+        self.assertIn("waived_daily_closes", planner)
         self.assertIn("Wagi końcowego SOC 7/14/28 dni muszą sumować się do 100%", executor)
 
     def test_battery_flow_accuracy_is_diagnostic_only(self):
@@ -143,6 +145,13 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("ems_gpt_core_target_history", analytics)
         self.assertNotIn("ems_gpt_core_target_history", planner)
         self.assertNotIn("target_suggested_correction_pct", planner)
+
+    def test_daily_soc_recovery_disables_sales_before_waiving_target(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        disable = planner.index("if battery_sales_enabled:")
+        waive = planner.index("enforced_daily_required[failed_index] = reserve")
+        self.assertLess(disable, waive)
+        self.assertIn('"battery_sales_disabled_for_daily_soc"', planner)
 
     def test_planner_contract_is_versioned_and_keeps_core_definitions(self):
         self.assertIn("kanoniczny kontrakt RCE, planera i SOC", PLANNER_CONTRACT)
