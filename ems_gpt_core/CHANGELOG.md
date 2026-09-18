@@ -2,6 +2,12 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.37.6
+
+- Publikacja bieżących cen jest ponawiana co minutę aż do potwierdzenia obu helperów; pojedynczy błąd HA przy otwarciu slotu nie pozostawia już ceny nieaktualnej przez cały slot.
+- Po `input_number.set_value` Core odczytuje helper i sprawdza zapisaną wartość. Diagnostyka pokazuje oczekiwaną i rzeczywistą wartość oraz zakres `min`/`max` helpera.
+- Wynik ostatniej próby publikacji jest dostępny w stanie aplikacji jako `current_prices`.
+
 ## 0.37.5
 
 - Planer nie dziedziczy już `heat_pump_window=1` z poprzedniego planu; każdy przebieg rozpoczyna ocenę HP od `NIE`.

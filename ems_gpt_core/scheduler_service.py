@@ -9,8 +9,9 @@ from typing import Any, Callable
 
 
 def publish_current_slot_prices(db: Callable, current_slot: datetime,
-                                ha_service_response: Callable) -> dict:
-    """Publish both prices from the same active Core slot to HA helpers."""
+                                ha_service_response: Callable,
+                                ha_state: Callable | None = None) -> dict:
+    """Publish and, when possible, verify both active-slot price helpers."""
     start = current_slot.replace(tzinfo=None)
     with db() as conn, conn.cursor() as cur:
         cur.execute("""SELECT price_buy_pln_kwh,price_sell_pln_kwh
@@ -32,6 +33,23 @@ def publish_current_slot_prices(db: Callable, current_slot: datetime,
         if result is None:
             return {"status": "HA_WRITE_FAILED", "slot_start": start.isoformat(),
                     "entity_id": entity_id}
+        if ha_state is not None:
+            state = ha_state(entity_id) or {}
+            try:
+                actual = float(state.get("state"))
+            except (TypeError, ValueError):
+                actual = None
+            if actual is None or abs(actual - value) > 0.0005:
+                attributes = state.get("attributes") or {}
+                return {
+                    "status": "HA_VERIFY_FAILED",
+                    "slot_start": start.isoformat(),
+                    "entity_id": entity_id,
+                    "expected": value,
+                    "actual": actual,
+                    "helper_min": attributes.get("min"),
+                    "helper_max": attributes.get("max"),
+                }
     return {"status": "OK", "slot_start": start.isoformat(), "prices": prices}
 
 
@@ -130,6 +148,7 @@ class SchedulerAdapters:
 def run_scheduler(a: SchedulerAdapters) -> None:
     """Run scheduling only; all domain operations arrive through explicit adapters."""
     previous = None
+    last_price_publish_slot = None
     recovery_rebuild_day = None
     todo_archive_day = None
     def module_activity(module: str, activity: str, status: str | None = None) -> None:
@@ -174,12 +193,21 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 a.run_serialized("slot_materializations", a.rebuild_recovery_materializations, 1)
                 a.refresh_pv_forecast()
                 a.refresh_weather_forecast()
-                price_result = a.publish_current_prices(start)
-                if price_result.get("status") != "OK":
-                    a.log.warning("current slot price publication failed: %s", price_result)
                 a.record_event("slot_opened", "core",
                                {"slot_start": key, "recovered_after_restart": previous is None})
                 previous = key
+            # A transient HA failure at slot opening must not leave a stale price
+            # for the next 15 minutes. Retry every scheduler cycle until both
+            # helpers are written and read-back verification succeeds.
+            if last_price_publish_slot != key:
+                price_result = a.publish_current_prices(start)
+                with a.lock:
+                    a.state["current_prices"] = price_result
+                if price_result.get("status") == "OK":
+                    last_price_publish_slot = key
+                else:
+                    a.log.warning("current slot price publication failed; retry in 60s: %s",
+                                  price_result)
             minute = clock.minute
             hour = clock.hour
             with a.db() as conn, conn.cursor() as cur:
