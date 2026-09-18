@@ -2,6 +2,18 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.3
+
+- Jeżeli sprzedaż z baterii koliduje z historycznym celem SOC końca doby,
+  planer najpierw przelicza cały horyzont bez `SELL_BAT`. Bateria nadal może
+  zasilać odbiory domu; blokowany jest wyłącznie celowy eksport jej energii.
+- Replan po ostatnim wykonalnym oknie uzupełnienia nie odrzuca już całego
+  planu, gdy historyczny cel końca bieżącej doby stał się fizycznie
+  nieosiągalny. Cel pozostaje publikowany, a planer zapisuje jawny shortfall i
+  wybiera najlepszą wykonalną trajektorię.
+- Zwolnienie niewykonalnej granicy dotyczy wyłącznie konkretnej doby; cele
+  kolejnych dób pozostają twardymi ograniczeniami.
+
 ## 0.38.2
 
 - Historyczna prognoza końcowego SOC 7/14/28 jest twardą minimalną granicą
