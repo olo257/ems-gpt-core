@@ -21,6 +21,26 @@ class FlexiblePpdDecision:
     reason: str
 
 
+def _database_bool(value, field: str) -> bool:
+    """Decode database flags without treating textual/binary zero as true."""
+    if isinstance(value, (bytes, bytearray)):
+        if value in (b"\x00", b"0"):
+            return False
+        if value in (b"\x01", b"1"):
+            return True
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("0", "false"):
+            return False
+        if normalized in ("1", "true"):
+            return True
+    if value in (False, 0):
+        return False
+    if value in (True, 1):
+        return True
+    raise RuntimeError(f"PPD_INVALID_DATABASE_BOOL:{field}:{value!r}")
+
+
 def _day_key(row: dict) -> date:
     value = row.get("local_day")
     if isinstance(value, datetime):
@@ -167,7 +187,7 @@ def plan_bound_decisions(row: dict, threshold: float) -> tuple[tuple[str, bool, 
     sell = float(row.get("planned_sell_kwh") or 0.0)
     grid_policy = str(row.get("grid_policy_planned") or "NEUTRAL")
     export_policy = str(row.get("export_policy_planned") or "NEUTRAL")
-    hp_window = bool(row.get("heat_pump_window"))
+    hp_window = _database_bool(row.get("heat_pump_window"), "heat_pump_window")
     if (buy > threshold) != (grid_policy == "BUY_ALLOWED"):
         raise RuntimeError(
             f"PPD_IMPORT_PLAN_MISMATCH:{row.get('slot_start')}:"
@@ -257,12 +277,6 @@ def build_ppd_runner(a: PpdAdapters):
                     0.0, float(row.get("planned_battery_discharge_kwh") or 0.0) * eta_d
                     - sell)
                 grid_load = max(0.0, load - pv_to_load - battery_to_load)
-                reserve = float(row.get("soc_reserve_pct") or 15.0)
-                soc_start = float(row.get("soc_start_plan_pct") or reserve)
-                if (grid_load > technical_threshold and buy <= threshold
-                        and soc_start > reserve + 0.01):
-                    raise RuntimeError(
-                        f"PPD_VOLUNTARY_GRID_LOAD_NOT_NEUTRAL:{row['slot_start']}:{grid_load}")
                 pv_flex = float(flexible_rows[index]["pv_flex_kwh"])
                 cwu = min(pv_flex, 0.625) if flex.cwu_anchor else 0.0
                 after_cwu = max(0.0, pv_flex - cwu)
