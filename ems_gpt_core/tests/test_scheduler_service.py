@@ -60,6 +60,26 @@ class RceRestoreKeysTests(unittest.TestCase):
             }),
         ])
 
+    def test_current_prices_are_published_to_canonical_sensors(self):
+        states = []
+        result = publish_current_slot_prices(
+            lambda: PriceConnection({
+                "price_buy_pln_kwh": 1.1524,
+                "price_sell_pln_kwh": 0.5624,
+            }),
+            datetime(2026, 9, 15, 12, 15),
+            lambda *_args: [],
+            lambda entity_id, state, attributes: states.append(
+                (entity_id, state, attributes)) or {},
+        )
+        self.assertEqual(result["status"], "OK")
+        self.assertEqual([value[:2] for value in states], [
+            ("sensor.gpt_ems_cena_zakupu", 1.152),
+            ("sensor.gpt_ems_cena_sprzedazy", 0.562),
+        ])
+        self.assertTrue(all(value[2]["slot_start"] == "2026-09-15T12:15:00"
+                            for value in states))
+
     def test_missing_active_slot_price_does_not_publish_partial_pair(self):
         writes = []
         result = publish_current_slot_prices(
