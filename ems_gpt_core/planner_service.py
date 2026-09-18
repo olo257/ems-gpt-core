@@ -1191,7 +1191,18 @@ def build_planner(a: PlannerAdapters):
             planned_hp_kw = max(0.0, float(OPTIONS.get("hp_planned_power_kw", 2.5)))
             cycle_penalty = max(0.0, float(OPTIONS.get("hp_cycle_start_penalty_pln", 0.25)))
             hp_selected_indices = set()
+            # Operator FORCE_OFF disables both manual and automatic HP heating.
+            # AUTO cancels the override and is the only state that may restore
+            # temperature-driven planning.
+            cur.execute("""SELECT requested_state FROM ems_gpt_core_process_overrides
+              WHERE process_name='HP_HEAT_DHW' AND status='ACTIVE'
+                AND valid_from<=%s AND valid_until>%s
+              ORDER BY requested_at DESC LIMIT 1""", (now, now))
+            hp_override = cur.fetchone() or {}
+            hp_force_off_active = hp_override.get("requested_state") == "FORCE_OFF"
             for day_value in day_values:
+                if hp_force_off_active:
+                    continue
                 day_key = str(day_value)
                 night_forecast = night_min_by_day.get(day_key) or {}
                 if not hp_temperature_eligible(
