@@ -81,6 +81,19 @@ class FlexiblePpdTests(unittest.TestCase):
         }, 0.02)
         self.assertTrue(all(not decision[1] for decision in decisions))
 
+    def test_database_encoded_zero_never_enables_hp(self):
+        for stored_zero in (0, False, "0", "false", b"0", b"\x00"):
+            decisions = plan_bound_decisions({
+                "planned_buy_kwh": 0.0,
+                "planned_sell_kwh": 0.0,
+                "grid_policy_planned": "NEUTRAL",
+                "export_policy_planned": "NEUTRAL",
+                "heat_pump_window": stored_zero,
+            }, 0.02)
+            hp = next(decision for decision in decisions
+                      if decision[0] == "HP_HEAT_DHW")
+            self.assertEqual(hp[1:3], (False, "OFF"))
+
     def test_ppd_rejects_zero_buy_with_buy_allowed_policy(self):
         with self.assertRaisesRegex(RuntimeError, "PPD_IMPORT_PLAN_MISMATCH"):
             plan_bound_decisions({
