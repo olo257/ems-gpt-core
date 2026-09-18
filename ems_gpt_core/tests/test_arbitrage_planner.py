@@ -2,7 +2,7 @@ import pathlib
 import sys
 import unittest
 from decimal import Decimal
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -22,6 +22,7 @@ from planner_service import (
     planning_tou_programs,
     strict_database_bool,
     historical_terminal_soc,
+    hp_heating_window_indices,
     bridge_soc_commitments,
     derive_soc_commitments,
     soc_bridge_envelopes,
@@ -30,6 +31,77 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_hp_window_starts_after_morning_sell_and_ignores_buy(self):
+        day = date(2026, 9, 18)
+        start = datetime.combine(day, datetime.min.time())
+        rows = []
+        for index in range(96):
+            slot_start = start + timedelta(minutes=15 * index)
+            rows.append({
+                "slot_start": slot_start,
+                "slot_end": slot_start + timedelta(minutes=15),
+                "buy_window": time(4, 0) <= slot_start.time() < time(5, 0),
+                "sale_window": time(7, 0) <= slot_start.time() < time(8, 0),
+            })
+
+        allowed = hp_heating_window_indices(rows, day)
+
+        self.assertNotIn(2, allowed)
+        self.assertNotIn(28, allowed)
+        self.assertIn(32, allowed)
+        self.assertIn(75, allowed)
+        self.assertNotIn(76, allowed)
+
+    def test_hp_window_without_sell_is_7_to_19(self):
+        day = date(2026, 9, 18)
+        start = datetime.combine(day, datetime.min.time())
+        rows = [{
+            "slot_start": start + timedelta(minutes=15 * index),
+            "slot_end": start + timedelta(minutes=15 * (index + 1)),
+            "buy_window": False,
+            "sale_window": False,
+        } for index in range(96)]
+
+        allowed = hp_heating_window_indices(rows, day)
+
+        self.assertNotIn(27, allowed)
+        self.assertIn(28, allowed)
+        self.assertIn(75, allowed)
+        self.assertNotIn(76, allowed)
+
+    def test_weekend_uses_the_same_7_to_19_window(self):
+        day = date(2026, 9, 19)
+        start = datetime.combine(day, datetime.min.time())
+        rows = [{
+            "slot_start": start + timedelta(minutes=15 * index),
+            "slot_end": start + timedelta(minutes=15 * (index + 1)),
+            "buy_window": index < 8,
+            "sale_window": False,
+        } for index in range(96)]
+
+        allowed = hp_heating_window_indices(rows, day)
+
+        self.assertNotIn(27, allowed)
+        self.assertIn(28, allowed)
+
+    def test_hp_window_stops_before_evening_sell(self):
+        day = date(2026, 9, 18)
+        start = datetime.combine(day, datetime.min.time())
+        rows = []
+        for index in range(96):
+            slot_start = start + timedelta(minutes=15 * index)
+            rows.append({
+                "slot_start": slot_start,
+                "slot_end": slot_start + timedelta(minutes=15),
+                "buy_window": False,
+                "sale_window": time(17, 30) <= slot_start.time() < time(19, 0),
+            })
+
+        allowed = hp_heating_window_indices(rows, day)
+
+        self.assertIn(69, allowed)
+        self.assertNotIn(70, allowed)
+
     def test_48h_soc_contract_closes_every_slot_without_hidden_grid_hold(self):
         rows = []
         for index in range(192):

@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.37.1"', APP_SOURCE)
-        self.assertIn('version: "0.37.1"', CONFIG)
+        self.assertIn('APP_VERSION = "0.37.2"', APP_SOURCE)
+        self.assertIn('version: "0.37.2"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -484,12 +484,18 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn('"MANUAL_CIRCULATION"', SOURCE)
 
     def test_heat_dhw_uses_night_forecast_and_configured_threshold(self):
-        for marker in ("night_heating_threshold_c", "night_min_by_day"):
+        for marker in ("night_heating_threshold_c", "night_min_by_day",
+                       "hp_temperature_eligible", "COUNT(forecast_temperature_c)"):
             self.assertIn(marker, SOURCE)
-        self.assertIn("night_min is None or night_min >= night_threshold", SOURCE)
         self.assertIn("i in hp_selected_indices", SOURCE)
         self.assertIn("heat_pump_window=%s", SOURCE)
         self.assertIn('("HP_HEAT_DHW", bool(row.get("heat_pump_window"))', SOURCE)
+
+    def test_automatic_heat_dhw_is_restricted_to_daytime_window(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        self.assertIn("hp_heating_window_indices", planner)
+        self.assertIn('if window_start <= row["slot_start"] < window_end', planner)
+        self.assertIn("allowed_rows", planner)
 
     def test_hp_cost_replan_cycle_contract(self):
         for marker in ("hp_min_heating_hours", "hp_min_cycle_hours",

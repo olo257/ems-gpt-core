@@ -6,7 +6,10 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from planner_service import optimize_hp_heating_slots as OPTIMIZE
+from planner_service import (
+    hp_temperature_eligible,
+    optimize_hp_heating_slots as OPTIMIZE,
+)
 
 
 def rows(prices):
@@ -32,6 +35,12 @@ def runs(selected, length):
 
 
 class HeatPumpOptimizerTests(unittest.TestCase):
+    def test_temperature_condition_requires_complete_night_forecast(self):
+        self.assertTrue(hp_temperature_eligible(4.9, 24, 5.0))
+        self.assertFalse(hp_temperature_eligible(5.0, 24, 5.0))
+        self.assertFalse(hp_temperature_eligible(4.9, 23, 5.0))
+        self.assertFalse(hp_temperature_eligible(None, 24, 5.0))
+
     def test_uniform_cost_prefers_one_ten_hour_cycle(self):
         data = rows([1.0] * 64)
         selected = OPTIMIZE(data, [], 40, 8, 4, 12, 2.5, 0.25)
