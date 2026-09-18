@@ -165,7 +165,10 @@ def build_materializations(a: MaterializationAdapters):
                         "BATTERY_EXPORT": round(battery_discharge, 6) if battery_discharge >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
                         "PV_CWU": round(dhw_energy, 6),
                         "PV_EV": round(ev_energy, 6),
-                        "HP_HEAT_DHW": round(hp_heat_cons + dhw_energy, 6),
+                        # HP_HEAT_DHW represents space heating. DHW energy is
+                        # tracked separately and must not create a false
+                        # external/manual heating state.
+                        "HP_HEAT_DHW": round(hp_heat_cons, 6),
                     }
                     cur.execute("""SELECT d.process_name,d.eligible,d.decision,o.requested_state,
                       o.override_id,o.requested_by,o.reason override_reason,o.valid_until override_valid_until

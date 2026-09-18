@@ -2,6 +2,12 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.37.7
+
+- Naprawiono klasyfikację wykonania `HP_HEAT_DHW`: zwykła energia przygotowania CWU nie jest już doliczana do energii ogrzewania domu.
+- Tryb `DHW only` nie może już zostać zapisany jako zewnętrzne/ręczne `HP_HEAT_DHW=ON` i przeniesiony do kolejnych przebiegów planera.
+- Stan procesu ogrzewania wynika wyłącznie z energii obiegu CO; energia CWU pozostaje raportowana oddzielnie.
+
 ## 0.37.6
 
 - Publikacja bieżących cen jest ponawiana co minutę aż do potwierdzenia obu helperów; pojedynczy błąd HA przy otwarciu slotu nie pozostawia już ceny nieaktualnej przez cały slot.
