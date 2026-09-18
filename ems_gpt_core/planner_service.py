@@ -321,7 +321,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             minimum_soc_targets: list[float] | None = None,
                             hard_target_indices: set[int] | None = None,
                             target_due_indices: set[int] | None = None,
-                            required_soc_pcts: list[float] | None = None) -> dict:
+                            required_soc_pcts: list[float] | None = None,
+                            battery_sales_enabled: bool = True) -> dict:
     """Minimize total energy cost across every available slot and SOC state."""
     if not rows:
         return {"flows": [], "objective_pln": 0.0, "soc_step_pct": soc_step_pct}
@@ -368,7 +369,9 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         # MariaDB returns BOOL/TINYINT as 0/1 (and some drivers as Decimal),
         # so identity checks against False would incorrectly allow 0.
         grid_charge_allowed = strict_database_bool(row.get("buy_window", True), "buy_window")
-        battery_sale_allowed = strict_database_bool(row.get("sale_window", False), "sale_window")
+        battery_sale_allowed = (battery_sales_enabled
+                                and strict_database_bool(
+                                    row.get("sale_window", False), "sale_window"))
         available_charge_internal = min(
             max_internal_charge,
             surplus * eta_c + (max_internal_charge if grid_charge_allowed else 0.0),
@@ -1313,24 +1316,62 @@ def build_planner(a: PlannerAdapters):
             # loop is allowed to redefine or reset the energy bridge.
             optimized_floors = list(sale_constraints)
             internal_soc_step=0.10
-            economic_optimization = optimize_energy_horizon(
-                horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
-                max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
-                terminal_soc,internal_soc_step,target_cap,
-                required_soc_pcts=daily_required_soc)
+            daily_close_indices = {
+                index for index, value in enumerate(daily_required_soc)
+                if value > reserve + 0.01
+            }
+            enforced_daily_required = list(daily_required_soc)
+            waived_daily_closes = set()
+            battery_sales_enabled = True
+            while True:
+                try:
+                    economic_optimization = optimize_energy_horizon(
+                        horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,
+                        degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
+                        optimized_floors,terminal_soc,internal_soc_step,target_cap,
+                        required_soc_pcts=enforced_daily_required,
+                        battery_sales_enabled=battery_sales_enabled)
+                    break
+                except RuntimeError as exc:
+                    prefix = "No feasible SOC state at horizon slot "
+                    if not str(exc).startswith(prefix):
+                        raise
+                    failed_index = int(str(exc)[len(prefix):])
+                    if failed_index not in daily_close_indices:
+                        raise
+                    if battery_sales_enabled:
+                        battery_sales_enabled = False
+                        record_event("battery_sales_disabled_for_daily_soc", "planner", {
+                            "slot_start": str(horizon_rows[failed_index]["slot_start"]),
+                            "requested_soc_pct": daily_required_soc[failed_index],
+                            "reason": str(exc),
+                        }, "WARNING")
+                        continue
+                    enforced_daily_required[failed_index] = reserve
+                    daily_close_indices.remove(failed_index)
+                    waived_daily_closes.add(failed_index)
+                    record_event("daily_terminal_soc_unreachable", "planner", {
+                        "slot_start": str(horizon_rows[failed_index]["slot_start"]),
+                        "requested_soc_pct": daily_required_soc[failed_index],
+                        "reason": str(exc),
+                    }, "WARNING")
             commitment=build_soc_contracts(
                 horizon_rows,economic_optimization["flows"],capacity,reserve,
                 eta_c,eta_d,uncertainty_weight,terminal_soc,target_cap,0.25,
-                daily_required_soc)
+                enforced_daily_required)
             required_soc=list(commitment["required"])
             charge_targets=list(commitment["charge_targets"])
+            for index in waived_daily_closes:
+                charge_targets[index] = max(
+                    charge_targets[index], daily_required_soc[index])
             target_due_indices=set(commitment["buy_due_indices"])
             selected_buy_indices=set(commitment["selected_buy_indices"])
             optimization=optimize_energy_horizon(
                 horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
                 max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
                 terminal_soc,internal_soc_step,target_cap,charge_targets,set(),
-                target_due_indices,required_soc)
+                target_due_indices,required_soc,
+                battery_sales_enabled=battery_sales_enabled)
             targets=list(optimization.get("effective_target_pcts",charge_targets))
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
