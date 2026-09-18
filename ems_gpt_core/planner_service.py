@@ -455,13 +455,10 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 voluntary_grid_load = max(0.0, grid_load - unavoidable_grid_load)
                 # A single SOC quantum can leave a few Wh of numerical
                 # residual load: discharging one more step would become an
-                # illegal battery export. Permit that residue only when there
-                # is no deliberate grid charge. A token +0.25% SOC step must
-                # never unlock a whole slot of grid-supplied native load: in
-                # every charging state the energy sent to the battery has to
-                # be at least as large as the voluntary grid supply to load.
-                # This keeps BUY a battery-replenishment decision instead of
-                # a disguised purchase-for-consumption decision.
+                # illegal battery export. A token SOC step must never unlock
+                # a whole slot of grid-supplied native load. During a real
+                # battery charge the planned battery input must be at least as
+                # large as the voluntary part of grid supply to the house.
                 if grid_charge > 1e-9:
                     if voluntary_grid_load > grid_charge + 1e-9:
                         continue
@@ -796,7 +793,8 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
                         eta_c: float, eta_d: float,
                         uncertainty_weight: float, terminal_soc_pct: float,
                         target_cap_pct: float,
-                        soc_step_pct: float = 0.25) -> dict:
+                        soc_step_pct: float = 0.25,
+                        daily_terminal_soc_pcts: list[float] | None = None) -> dict:
     """Build independent required, charge-target and sale contracts.
 
     The economic pass supplies an exact grid-energy allocation.  The backward
@@ -836,6 +834,12 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
     next_due = rows[-1].get("slot_end") or rows[-1].get("slot_start")
     next_source = "HORIZON"
     for i in range(len(rows) - 1, -1, -1):
+        if daily_terminal_soc_pcts is not None:
+            required_after = max(
+                required_after,
+                capacity * max(reserve, min(
+                    cap, float(daily_terminal_soc_pcts[i]))) / 100.0,
+            )
         raw_required_pct = required_after / capacity * 100.0
         flow = economic_flows[i]
         # The economic trajectory is a proven reachable path.  Add back only
@@ -1259,9 +1263,10 @@ def build_planner(a: PlannerAdapters):
                 # floor.  Deliberate export is allowed only in SELL windows;
                 # its exact stop SOC is derived from the accepted flow below.
                 sale_constraints.append(reserve if work["sale_window"] else 100.0)
-            terminal_day = (horizon_rows[-1].get("local_day")
-                            or horizon_rows[-1]["slot_start"].date())
-            history_start = terminal_day - timedelta(days=28)
+            planning_days = sorted({row.get("local_day") or row["slot_start"].date()
+                                    for row in horizon_rows})
+            terminal_day = planning_days[-1]
+            history_start = planning_days[0] - timedelta(days=28)
             cur.execute("""SELECT local_day,
               SUBSTRING_INDEX(GROUP_CONCAT(soc_end_pct ORDER BY slot_start DESC),',',1) soc_end_pct,
               COUNT(*) slot_count,SUM(actual_recorded_at IS NOT NULL) terminal_count,
@@ -1272,20 +1277,32 @@ def build_planner(a: PlannerAdapters):
               HAVING slot_count IN (92,96,100) AND terminal_count=slot_count
                 AND missing_count=0 AND soc_end_pct IS NOT NULL
               ORDER BY local_day""", (history_start, terminal_day))
-            terminal_history = historical_terminal_soc(
-                list(cur.fetchall()), terminal_day,
-                {
+            closing_history = list(cur.fetchall())
+            history_weights = {
                     7: float(OPTIONS.get("soc_target_history_weight_7d_pct", 50.0)),
                     14: float(OPTIONS.get("soc_target_history_weight_14d_pct", 25.0)),
                     28: float(OPTIONS.get("soc_target_history_weight_28d_pct", 25.0)),
-                }, reserve)
-            terminal_soc = max(
-                reserve, min(target_cap, float(terminal_history["soc_pct"])))
-            record_event("historical_terminal_soc_forecast", "planner", {
-                "terminal_day": str(terminal_day),
-                "terminal_soc_pct": round(terminal_soc, 3),
-                **terminal_history,
-            })
+                }
+            daily_terminal_soc = {}
+            for planning_day in planning_days:
+                terminal_history = historical_terminal_soc(
+                    closing_history, planning_day, history_weights, reserve)
+                daily_terminal_soc[planning_day] = max(
+                    reserve, min(target_cap, float(terminal_history["soc_pct"])))
+                record_event("historical_terminal_soc_forecast", "planner", {
+                    "terminal_day": str(planning_day),
+                    "terminal_soc_pct": round(daily_terminal_soc[planning_day], 3),
+                    **terminal_history,
+                })
+            terminal_soc = daily_terminal_soc[terminal_day]
+            daily_required_soc = [reserve] * len(horizon_rows)
+            for index, row in enumerate(horizon_rows):
+                row_day = row.get("local_day") or row["slot_start"].date()
+                next_day = ((horizon_rows[index + 1].get("local_day")
+                             or horizon_rows[index + 1]["slot_start"].date())
+                            if index + 1 < len(horizon_rows) else None)
+                if next_day != row_day:
+                    daily_required_soc[index] = daily_terminal_soc[row_day]
             audit_stage(cur,run_id,"WINDOW_CANDIDATES","OK",len(rows),"pass 1: full horizon")
             audit_stage(cur,run_id,"LOAD","OK",len(rows),"pass 2: native and controllable load")
             audit_stage(cur,run_id,"PV","OK",len(rows),"pass 3: corrected PV balance")
@@ -1299,10 +1316,12 @@ def build_planner(a: PlannerAdapters):
             economic_optimization = optimize_energy_horizon(
                 horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
                 max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
-                terminal_soc,internal_soc_step,target_cap)
+                terminal_soc,internal_soc_step,target_cap,
+                required_soc_pcts=daily_required_soc)
             commitment=build_soc_contracts(
                 horizon_rows,economic_optimization["flows"],capacity,reserve,
-                eta_c,eta_d,uncertainty_weight,terminal_soc,target_cap,0.25)
+                eta_c,eta_d,uncertainty_weight,terminal_soc,target_cap,0.25,
+                daily_required_soc)
             required_soc=list(commitment["required"])
             charge_targets=list(commitment["charge_targets"])
             target_due_indices=set(commitment["buy_due_indices"])
