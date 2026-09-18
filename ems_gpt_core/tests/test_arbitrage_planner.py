@@ -31,6 +31,25 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_optimizer_can_disable_battery_sales_without_blocking_native_load(self):
+        rows = [{
+            "price_buy_pln_kwh": 1.0,
+            "price_sell_pln_kwh": 2.0,
+            "buy_window": False,
+            "sale_window": True,
+            "forecast_load_kwh": 0.10,
+            "forecast_heat_pump_load_kwh": 0.0,
+            "forecast_pv_total_kwh": 0.0,
+        }]
+
+        result = optimize_energy_horizon(
+            rows, 80.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 15.0, 0.10, 100.0,
+            battery_sales_enabled=False)
+
+        self.assertEqual(result["flows"][0]["battery_sell_kwh"], 0.0)
+        self.assertGreater(result["flows"][0]["battery_to_load_kwh"], 0.0)
+
     def test_hp_window_starts_after_morning_sell_and_ignores_buy(self):
         day = date(2026, 9, 18)
         start = datetime.combine(day, datetime.min.time())
