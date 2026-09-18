@@ -2,6 +2,37 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.0
+
+- Rozdzielono odpowiedzialność planera, PPD i executora. Planer pozostaje
+  jedynym właścicielem ilościowych przebiegów `BATTERY_IMPORT`,
+  `BATTERY_EXPORT` i `HP_HEAT_DHW`, ponieważ procesy te wpływają na bilans,
+  trajektorię SOC i target.
+- PPD nie przelicza już ekonomiki importu ani eksportu baterii i nie nadpisuje
+  polityk sieciowych planera. Publikuje zamrożone rekomendacje do executora.
+- PPD odrzuca publikację, jeżeli `BUY_ALLOWED` nie zgadza się z ilościowym
+  `planned_buy_kwh` albo `SELL_BAT` z `planned_sell_kwh`; zerowy plan zakupu nie
+  może zostać ukryty pod aktywną decyzją automatyczną.
+- Widok Procesy rozdziela rekomendację planera, stan planowany, tryb
+  `AUTO/FORCE_ON/FORCE_OFF`, stan efektywny oraz planowaną energię. Wiersz
+  `BATTERY_IMPORT` z zerową energią jest prezentowany jako plan `OFF`, a ręczna
+  blokada HP nie jest już mylona z rekomendacją planera `ON`.
+- Planer nie odczytuje już `ems_gpt_core_process_decisions` ani override'ów.
+  Minione sloty HP rozlicza według własnego wcześniej opublikowanego planu;
+  również brak telemetrii nie usuwa zaplanowanego slotu z ciągłości cyklu.
+  Różnice ręczne i rzeczywiste pozostają odchyleniem wykonania.
+- `AUTO`, `FORCE_ON` i `FORCE_OFF` pozostają wyłącznie w warstwie wykonawczej.
+  Nie zmieniają wstecz planu ani targetu.
+- `PV_CWU` i `PV_EV` pozostają niezależną alokacją PPD po zamrożeniu targetu.
+- Kwalifikacja temperaturowa `HP_HEAT_DHW` korzysta z rzeczywistych zapisów
+  `sensor.klimat_w_ogrodzie_temperature`, a nie z prognozy `weather.dom`.
+  Wymagane są co najmniej 3 zapisy z okna 00:00–06:00, dzięki czemu częściowa
+  awaria HA nie blokuje planu, ale zbyt mała próbka nadal działa fail-closed.
+- Średnie końcowego SOC 7/14/28 dni są liczone z trzech niezależnych okien
+  kompletnych dób bez awarii, bez zależności od 7-dniowego zakresu odbudowy
+  tabel agregacyjnych.
+- Dodano regresje kontraktu planer→PPD oraz niezależności planera od PPD.
+
 ## 0.37.8
 
 - Aktywne `FORCE_OFF` procesu `HP_HEAT_DHW` blokuje teraz również automatyczne okna planera, a nie tylko wykonanie komendy.

@@ -76,8 +76,9 @@ Encje energii do uzgadniania i odtwarzania danych:
 | `sensor.open_meteo_pv2_w_energy_production_tomorrow` | energia PV2 na jutro |
 | `weather.dom` | godzinowa prognoza temperatury, zachmurzenia i opadów przez `weather.get_forecasts` |
 
-To prognoza z `weather.dom`, a nie rzeczywisty sensor temperatury, kwalifikuje
-noc 00:00–06:00 do automatycznego `HP_HEAT_DHW`.
+Do automatycznego `HP_HEAT_DHW` kwalifikuje rzeczywista temperatura z
+`sensor.klimat_w_ogrodzie_temperature`: wymagane są co najmniej 3 zapisy z
+okna 00:00–06:00. Prognoza z `weather.dom` nie bierze udziału w tej decyzji.
 
 ## 5. Encje falownika Deye
 

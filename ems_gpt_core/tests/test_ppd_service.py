@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 
-from ppd_service import build_flexible_ppd
+from ppd_service import build_flexible_ppd, plan_bound_decisions
 
 
 def rows(soc=(60, 70, 80, 80, 80), pv=(0.1, 0.6, 0.1, 0.7, 0.0), target=70):
@@ -57,6 +57,40 @@ class FlexiblePpdTests(unittest.TestCase):
         source[2]["sell_battery"] = True
         result = build_flexible_ppd(source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
         self.assertEqual([x.pv_cwu_allowed for x in result], [False, False, False, True, False])
+
+    def test_target_affecting_processes_are_copied_from_the_frozen_plan(self):
+        decisions = plan_bound_decisions({
+            "planned_buy_kwh": 0.75,
+            "planned_sell_kwh": 0.50,
+            "grid_policy_planned": "BUY_ALLOWED",
+            "export_policy_planned": "SELL_BAT",
+            "heat_pump_window": 1,
+        }, 0.02)
+        by_name = {decision[0]: decision for decision in decisions}
+        self.assertEqual(by_name["BATTERY_IMPORT"][1:3], (True, "BUY_ALLOWED"))
+        self.assertEqual(by_name["BATTERY_EXPORT"][1:3], (True, "SELL_BAT"))
+        self.assertEqual(by_name["HP_HEAT_DHW"][1:3], (True, "ON"))
+
+    def test_ppd_does_not_recalculate_planner_owned_battery_economics(self):
+        decisions = plan_bound_decisions({
+            "planned_buy_kwh": 0.0,
+            "planned_sell_kwh": 0.0,
+            "grid_policy_planned": "NEUTRAL",
+            "export_policy_planned": "NEUTRAL",
+            "heat_pump_window": 0,
+        }, 0.02)
+        self.assertTrue(all(not decision[1] for decision in decisions))
+
+    def test_ppd_rejects_zero_buy_with_buy_allowed_policy(self):
+        with self.assertRaisesRegex(RuntimeError, "PPD_IMPORT_PLAN_MISMATCH"):
+            plan_bound_decisions({
+                "slot_start": datetime(2026, 9, 18, 10, 0),
+                "planned_buy_kwh": 0.0,
+                "planned_sell_kwh": 0.0,
+                "grid_policy_planned": "BUY_ALLOWED",
+                "export_policy_planned": "NEUTRAL",
+                "heat_pump_window": 0,
+            }, 0.02)
 
 
 if __name__ == "__main__":

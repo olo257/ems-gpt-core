@@ -216,7 +216,28 @@ def build_handler(a: ApiAdapters):
                   "analytics":("SELECT * FROM ems_gpt_core_analytics_runs ORDER BY started_at DESC LIMIT %s",(limit,)),
                   "target-history":("SELECT * FROM ems_gpt_core_target_history ORDER BY slot_start DESC LIMIT %s",(limit,)),
                   "diagnostics":("SELECT * FROM ems_gpt_core_diagnostic_reports ORDER BY created_at DESC LIMIT %s",(limit,)),
-                  "processes":("SELECT * FROM ems_gpt_core_process_decisions WHERE slot_start>=%s ORDER BY slot_start,process_name LIMIT %s",(slot_start().replace(tzinfo=None),limit)),
+                  "processes":("""SELECT d.*,
+                    d.decision planned_decision,
+                    CASE WHEN d.eligible=1 THEN 'ON' ELSE 'OFF' END planned_state,
+                    COALESCE(o.requested_state,'AUTO') control_mode,
+                    CASE WHEN o.requested_state='FORCE_ON' THEN 'ON'
+                         WHEN o.requested_state='FORCE_OFF' THEN 'OFF'
+                         WHEN d.eligible=1 THEN 'ON' ELSE 'OFF' END effective_state,
+                    CASE d.process_name
+                      WHEN 'BATTERY_IMPORT' THEN s.planned_buy_kwh
+                      WHEN 'BATTERY_EXPORT' THEN s.planned_sell_kwh
+                      WHEN 'PV_CWU' THEN s.planned_pv_to_cwu_kwh
+                      WHEN 'PV_EV' THEN s.planned_pv_to_ev_kwh
+                      WHEN 'HP_HEAT_DHW' THEN s.forecast_heat_pump_load_kwh
+                      ELSE NULL END planned_energy_kwh
+                    FROM ems_gpt_core_process_decisions d
+                    JOIN ems_gpt_slots s ON s.slot_start=d.slot_start
+                      AND s.plan_run_id=d.plan_run_id
+                    LEFT JOIN ems_gpt_core_process_overrides o
+                      ON o.process_name=d.process_name AND o.status='ACTIVE'
+                      AND o.valid_from<d.valid_until AND o.valid_until>d.slot_start
+                    WHERE d.slot_start>=%s ORDER BY d.slot_start,d.process_name LIMIT %s""",
+                    (slot_start().replace(tzinfo=None),limit)),
                   "overrides":("SELECT * FROM ems_gpt_core_process_overrides ORDER BY requested_at DESC LIMIT %s",(limit,)),
                   "commands":("SELECT * FROM ems_gpt_core_commands ORDER BY created_at DESC LIMIT %s",(limit,)),
                   "process-execution":("SELECT * FROM ems_gpt_core_process_execution ORDER BY recorded_at DESC LIMIT %s",(limit,)),
