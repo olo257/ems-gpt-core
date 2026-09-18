@@ -968,6 +968,42 @@ def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], require
     return set(fallback)
 
 
+def hp_heating_window_indices(rows: list[dict], day_value) -> set[int]:
+    """Return slots allowed for automatic Heat+DHW on one local day."""
+    day_start = datetime.combine(day_value, datetime.min.time())
+    earliest_start = day_start + timedelta(hours=7)
+    midday = day_start + timedelta(hours=12)
+    latest_end = day_start + timedelta(hours=19)
+    morning_sell_ends = [
+        row.get("slot_end") or (row["slot_start"] + timedelta(minutes=15))
+        for row in rows
+        if row["slot_start"] < midday
+        and strict_database_bool(row.get("sale_window", False), "sale_window")
+    ]
+    evening_sell_starts = [
+        row["slot_start"] for row in rows
+        if midday <= row["slot_start"] < latest_end
+        and strict_database_bool(row.get("sale_window", False), "sale_window")
+    ]
+    window_start = max(earliest_start, max(morning_sell_ends)) \
+        if morning_sell_ends else earliest_start
+    window_end = min(latest_end, min(evening_sell_starts)) \
+        if evening_sell_starts else latest_end
+    return {
+        index for index, row in enumerate(rows)
+        if window_start <= row["slot_start"] < window_end
+        and not strict_database_bool(row.get("sale_window", False), "sale_window")
+    }
+
+
+def hp_temperature_eligible(night_min: float | None, sample_count: int,
+                            threshold: float, expected_slots: int = 24) -> bool:
+    """Qualify HP heating only from a complete 00:00-06:00 forecast."""
+    return (night_min is not None
+            and int(sample_count) >= int(expected_slots)
+            and float(night_min) < float(threshold))
+
+
 @dataclass(frozen=True)
 class PlannerAdapters:
     options: dict
@@ -1132,11 +1168,18 @@ def build_planner(a: PlannerAdapters):
             night_min_by_day = {}
             if day_values:
                 markers = ",".join(["%s"] * len(day_values))
-                cur.execute(f"""SELECT local_day,MIN(forecast_temperature_c) night_min
+                cur.execute(f"""SELECT local_day,MIN(forecast_temperature_c) night_min,
+                  COUNT(forecast_temperature_c) sample_count
                   FROM ems_gpt_slots WHERE local_day IN ({markers})
                     AND TIME(slot_start)>='00:00:00' AND TIME(slot_start)<'06:00:00'
                     AND forecast_temperature_c IS NOT NULL GROUP BY local_day""", tuple(day_values))
-                night_min_by_day = {str(value["local_day"]): float(value["night_min"]) for value in cur.fetchall()}
+                night_min_by_day = {
+                    str(value["local_day"]): {
+                        "night_min": float(value["night_min"]),
+                        "sample_count": int(value["sample_count"] or 0),
+                    }
+                    for value in cur.fetchall()
+                }
 
             required_slots = max(1, int(float(OPTIONS.get("hp_min_heating_hours", 10.0)) * 4 + 0.999999))
             min_cycle_slots = max(1, int(float(OPTIONS.get("hp_min_cycle_hours", 2.0)) * 4 + 0.999999))
@@ -1147,8 +1190,11 @@ def build_planner(a: PlannerAdapters):
             hp_selected_indices = set()
             for day_value in day_values:
                 day_key = str(day_value)
-                night_min = night_min_by_day.get(day_key)
-                if night_min is None or night_min >= night_threshold:
+                night_forecast = night_min_by_day.get(day_key) or {}
+                if not hp_temperature_eligible(
+                        night_forecast.get("night_min"),
+                        int(night_forecast.get("sample_count") or 0),
+                        night_threshold):
                     continue
                 indexed_rows = [(index, row) for index, row in enumerate(rows)
                                 if (row.get("local_day") or row["slot_start"].date()) == day_value]
@@ -1168,9 +1214,15 @@ def build_planner(a: PlannerAdapters):
                                False if value.get("requested_state") == "FORCE_OFF" else
                                True if value.get("external_manual_on") else bool(value["eligible"])
                                for value in cur.fetchall()]
-                selected_local = optimize_hp_heating_slots(
-                    [row for _, row in indexed_rows], past_states, required_slots,
+                day_rows = [row for _, row in indexed_rows]
+                allowed_local = hp_heating_window_indices(day_rows, day_value)
+                allowed_rows = [row for index, row in enumerate(day_rows)
+                                if index in allowed_local]
+                selected_allowed = optimize_hp_heating_slots(
+                    allowed_rows, past_states, required_slots,
                     min_cycle_slots, min_gap_slots, max_gap_slots, planned_hp_kw, cycle_penalty)
+                allowed_positions = sorted(allowed_local)
+                selected_local = {allowed_positions[index] for index in selected_allowed}
                 hp_selected_indices.update(indexed_rows[index][0] for index in selected_local)
                 delivered_slots = sum(past_states) + len(selected_local)
                 if delivered_slots < required_slots:

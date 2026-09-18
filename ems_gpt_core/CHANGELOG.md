@@ -1,3 +1,62 @@
+## 0.37.2
+
+- Przywrócono twarde dzienne okno automatycznego `HP_HEAT_DHW`.
+- W dni robocze i weekend ogrzewanie może rozpocząć się najwcześniej o 07:00,
+  bezpośrednio po zakończeniu porannego okna `SELL`.
+- Okno kończy się najpóźniej o 19:00 albo wcześniej, przed początkiem
+  wieczornego `SELL`; żaden slot `SELL` nie może uruchomić ogrzewania.
+- Okna `BUY` nie wpływają na początek ani koniec okna pompy ciepła.
+- Energia `HP_HEAT` jest dodawana do bilansu i targetu BUY wyłącznie po
+  spełnieniu skonfigurowanego progu nocnej temperatury. Kwalifikacja wymaga
+  kompletnych 24 próbek prognozy 00:00–06:00; brak danych, niepełna prognoza
+  oraz temperatura równa lub wyższa od progu dają `HP_HEAT=0`.
+- Optymalizator otrzymuje wyłącznie sloty należące do okna. Ręczne `Włącz`
+  pozostaje nadrzędnym poleceniem operatora.
+
+## Następna wersja — plan PPD `HP_HEAT_DHW`
+
+- Przenieść wyznaczanie i publikowanie decyzji `HP_HEAT_DHW` z planera do
+  osobnego przebiegu PPD; planer nie może sam tworzyć okien pracy pompy.
+- Zachować `DHW only` jako podstawowy stan pompy. Poranny cykl CWU około
+  06:00 uruchamia sama pompa i EMS nie wysyła dla niego komendy.
+- PPD może włączyć `Heat+DHW` dopiero po 06:00, wyłącznie w wyznaczonym oknie
+  `HP+Heat` i tylko po spełnieniu aktywnych warunków z konfiguracji:
+  progu temperatury, minimalnego czasu grzania, długości cyklu i przerw,
+  planowanej mocy oraz kosztu uruchomienia.
+- Okno `HP+Heat` tworzy PPD z parametrów konfiguracji i klasyfikacji RCE:
+  żaden slot `SELL` nie może do niego należeć, sloty `BUY` mają pierwszeństwo,
+  a brakujący czas pracy jest dobierany kosztowo wyłącznie ze slotów `NEUTRAL`.
+- Historyczna koperta czasowa automatycznego `HP+Heat` wynosi około
+  07:00–18:00. Poranny autonomiczny cykl CWU około 06:00 pozostaje poza nią
+  i nie jest uruchamiany ani zatrzymywany przez EMS.
+- `HP_HEAT_DHW` korzysta najpierw z PV, następnie z baterii, ale nigdy nie
+  tworzy ani nie wymusza importu. `BATTERY_IMPORT` pozostaje osobną decyzją
+  wyłącznie dla ładowania baterii we właściwym oknie `BUY`.
+- Ewentualny fizyczny pobór Grid podczas pracy HP jest jedynie wynikiem bilansu
+  instalacji po wyczerpaniu dostępnego PV i baterii, a nie planowanym zakupem
+  procesu HP; HP nie może zwiększać `planned_buy_kwh`.
+- Ograniczenia długości cyklu i przerw są spełniane w obrębie dozwolonych
+  slotów; brak wykonalnych 10 godzin nie może zostać naprawiony wejściem w
+  `SELL`, lecz ma zostać zapisany jako jawny niedobór planu ogrzewania.
+- PPD publikuje trwałe decyzje ON/OFF, a executor wyłącznie je realizuje;
+  ręczne `Włącz / Wyłącz / Auto` zachowuje nadrzędność operatora.
+- Zatwierdzony przez PPD profil poboru HP musi zostać uwzględniony przez
+  planer w bilansie każdego slotu i w kontraktach SOC przed publikacją planu.
+- Profil `HP_HEAT_DHW` wchodzi do prognozowanego zapotrzebowania przed
+  wyliczeniem `SOC required` i `SOC charge target`. Wcześniejsze okno `BUY`
+  może więc podnieść cel ładowania baterii o energię potrzebną na późniejsze
+  ogrzewanie, mimo że sam proces HP nigdy nie wydaje polecenia importu.
+- Pierwszy poranny replan wykonuje najpierw przebieg PPD `HP_HEAT_DHW`, a
+  następnie pełny przebieg planera z zatwierdzonym profilem HP. Ten przebieg
+  aktualizuje target zakupu i zabezpiecza energię w baterii na ogrzewanie;
+  kolejne replany zachowują tę samą kolejność PPD → bilans → target.
+- PPD kwalifikuje dobę do `HP_HEAT_DHW` według aktywnego parametru
+  `Nocny próg ogrzewania [°C]` z konfiguracji. Przy ustawieniu 5°C automatyczne
+  okno powstaje tylko dla nocnego minimum prognozy 00:00–06:00 poniżej 5°C;
+  wartość równa/wyższa oraz brak kompletnej prognozy działają fail-closed.
+- Dodać testy blokujące automatyczne `HP_HEAT_DHW` w nocy oraz potwierdzające,
+  że autonomiczny cykl CWU nie jest traktowany jako komenda EMS.
+
 ## 0.37.1
 
 - Naprawiono `No feasible SOC state at horizon slot` po wdrożeniu 0.37.0.
