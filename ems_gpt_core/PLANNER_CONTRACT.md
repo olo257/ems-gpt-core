@@ -253,6 +253,8 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
   robocze i weekend.
 - `BUY` nie wyznacza granic okna HP. Żaden slot `SELL` nie może mieć
   automatycznego `HP_HEAT_DHW=ON`.
+- Aktywne polecenie operatorskie `FORCE_OFF` wyłącza ręczne i automatyczne
+  ogrzewanie: planner publikuje `heat_pump_window=0` do chwili wybrania `Auto`.
 - Energia HP jest dodawana do bilansu i targetu wyłącznie dla zakwalifikowanego
   profilu. HP może zwiększyć potrzebne ładowanie baterii, ale samo nie tworzy
   okna BUY.

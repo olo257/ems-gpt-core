@@ -2,6 +2,12 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.37.8
+
+- Aktywne `FORCE_OFF` procesu `HP_HEAT_DHW` blokuje teraz również automatyczne okna planera, a nie tylko wykonanie komendy.
+- Przycisk `Wyłącz` wymusza `heat_pump_window=0` i usuwa obciążenie HP z planu; dopiero `Auto` przywraca kwalifikację temperaturową.
+- Usunięto rozbieżność, w której wykonanie miało `OFF`, lecz tabela Procesy nadal publikowała `HP_HEAT_DHW=ON / TAK`.
+
 ## 0.37.7
 
 - Naprawiono klasyfikację wykonania `HP_HEAT_DHW`: zwykła energia przygotowania CWU nie jest już doliczana do energii ogrzewania domu.
