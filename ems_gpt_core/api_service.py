@@ -228,7 +228,8 @@ def build_handler(a: ApiAdapters):
                       WHEN 'BATTERY_EXPORT' THEN s.planned_sell_kwh
                       WHEN 'PV_CWU' THEN s.planned_pv_to_cwu_kwh
                       WHEN 'PV_EV' THEN s.planned_pv_to_ev_kwh
-                      WHEN 'HP_HEAT_DHW' THEN s.forecast_heat_pump_load_kwh
+                      WHEN 'HP_HEAT_DHW' THEN CASE WHEN s.heat_pump_window=1
+                        THEN s.forecast_heat_pump_load_kwh ELSE 0 END
                       ELSE NULL END planned_energy_kwh
                     FROM ems_gpt_core_process_decisions d
                     JOIN ems_gpt_slots s ON s.slot_start=d.slot_start

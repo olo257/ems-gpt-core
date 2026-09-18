@@ -21,6 +21,26 @@ def scalar_number(value) -> float | None:
         return None
 
 
+def database_bool(value, field: str) -> bool:
+    """Decode a SQL flag and reject ambiguous truthy representations."""
+    if isinstance(value, (bytes, bytearray)):
+        if value in (b"\x00", b"0"):
+            return False
+        if value in (b"\x01", b"1"):
+            return True
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("0", "false"):
+            return False
+        if normalized in ("1", "true"):
+            return True
+    if value in (False, 0):
+        return False
+    if value in (True, 1):
+        return True
+    raise RuntimeError(f"EXECUTOR_INVALID_DATABASE_BOOL:{field}:{value!r}")
+
+
 def battery_soc_guard_actions(live_soc: float | None, planned_end_soc: float | None,
                               import_active: bool, export_active: bool) -> tuple[bool, bool]:
     """Return (stop_import, stop_export) at the quantitative slot SOC boundary."""
@@ -441,7 +461,8 @@ def build_executor(a: ExecutorAdapters):
         end = start + timedelta(minutes=int(OPTIONS.get("slot_minutes", 15)) + 1)
         staged = 0
         with db() as conn, conn.cursor() as cur:
-            cur.execute("""SELECT d.*,o.requested_state,o.override_id FROM ems_gpt_core_process_decisions d
+            cur.execute("""SELECT d.*,s.heat_pump_window planner_heat_pump_window,
+              o.requested_state,o.override_id FROM ems_gpt_core_process_decisions d
               JOIN ems_gpt_slots s ON s.slot_start=d.slot_start
                AND s.plan_run_id=d.plan_run_id AND s.plan_stage='PUBLISHED'
               LEFT JOIN ems_gpt_core_process_overrides o ON o.process_name=d.process_name
@@ -449,7 +470,15 @@ def build_executor(a: ExecutorAdapters):
               WHERE d.slot_start=%s AND d.ppd_run_id IS NOT NULL
               ORDER BY d.process_name""", (now, now, start))
             for row in cur.fetchall():
-                planned_on = bool(row["eligible"])
+                planned_on = database_bool(row["eligible"], "eligible")
+                if row["process_name"] == "HP_HEAT_DHW":
+                    planner_window = database_bool(
+                        row.get("planner_heat_pump_window"), "heat_pump_window")
+                    if planned_on and not planner_window:
+                        record_event("hp_decision_blocked_by_planner_window", "executor", {
+                            "slot_start": str(start), "plan_run_id": str(row["plan_run_id"]),
+                        }, "ERROR")
+                    planned_on = planned_on and planner_window
                 requested = row.get("requested_state")
                 effective_on = (True if requested == "FORCE_ON" else
                                 False if requested == "FORCE_OFF" else planned_on)
@@ -496,6 +525,20 @@ def build_executor(a: ExecutorAdapters):
             cur.execute("""SELECT * FROM ems_gpt_core_commands WHERE status='READY_FOR_CONNECTOR'
               AND slot_start=%s AND expires_at>%s ORDER BY created_at""", (current_slot, now))
             for command in cur.fetchall():
+                if command["process_name"] == "HP_HEAT_DHW" and command["decision"] == "ON":
+                    cur.execute("""SELECT heat_pump_window FROM ems_gpt_slots
+                      WHERE slot_start=%s AND plan_stage='PUBLISHED' LIMIT 1""",
+                      (current_slot,))
+                    hp_plan = cur.fetchone() or {}
+                    if not database_bool(hp_plan.get("heat_pump_window"), "heat_pump_window"):
+                        cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',
+                          acknowledgement_json=%s WHERE command_id=%s""",
+                          (json.dumps({"reason": "HP_PLANNER_WINDOW_OFF"}),
+                           command["command_id"]))
+                        record_event("hp_command_blocked_by_planner_window", "executor", {
+                            "slot_start": str(current_slot), "command_id": command["command_id"],
+                        }, "ERROR")
+                        continue
                 process_map = service_map.get(command["process_name"], {}) if isinstance(service_map, dict) else {}
                 entity_id = process_map.get(command["decision"])
                 if not isinstance(entity_id, str) or not entity_id.startswith("script."):

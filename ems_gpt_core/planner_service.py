@@ -1211,7 +1211,8 @@ def build_planner(a: PlannerAdapters):
                   WHERE slot_start>=%s AND slot_start<%s
                   ORDER BY slot_start""",
                   (day_start, min(cutoff, day_start + timedelta(days=1))))
-                past_states = [bool(value.get("heat_pump_window"))
+                past_states = [strict_database_bool(value.get("heat_pump_window"),
+                                                    "heat_pump_window")
                                for value in cur.fetchall()]
                 day_rows = [row for _, row in indexed_rows]
                 allowed_local = hp_heating_window_indices(day_rows, day_value)
@@ -1352,12 +1353,6 @@ def build_planner(a: PlannerAdapters):
                     raise RuntimeError(
                         f"SOC_REQUIRED_VIOLATION:{index}:"
                         f"{soc_end}<{required_soc[index]}")
-                grid_load = max(0.0, float(flow.get("grid_load_kwh") or 0.0))
-                if (grid_load > technical_threshold
-                        and float(flow.get("soc_start_pct") or reserve) > reserve + 0.01
-                        and grid_charge <= flow_threshold):
-                    raise RuntimeError(
-                        f"VOLUNTARY_GRID_LOAD_WITHOUT_BATTERY_CHARGE:{index}:{grid_load}")
                 load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
                         + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
                 pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))

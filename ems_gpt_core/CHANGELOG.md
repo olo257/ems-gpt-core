@@ -2,6 +2,19 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.1
+
+- Naprawiono interpretację bazodanowego zera dla `heat_pump_window`: PPD nie
+  może już zamienić wartości `0`, `"0"` ani `b'\\x00'` na rekomendację `ON`.
+- Executor niezależnie sprawdza opublikowane okno planera przed utworzeniem i
+  przed wysłaniem komendy `HP_HEAT_DHW=ON`; niespójność działa fail-closed.
+- Energia planowana procesu HP jest prezentowana jako zero, gdy opublikowane
+  okno HP jest wyłączone; historyczna energia CWU nie udaje już ogrzewania.
+- Usunięto uproszczone, zdublowane walidacje importu domu z końca planera i z
+  PPD. O fizycznie nieuniknionym imporcie decyduje wyłącznie optymalizator,
+  który uwzględnia limit 5 kW, dostępną energię, rezerwę i sprawność baterii.
+  Import wynikający z przekroczenia mocy rozładowania nie odrzuca już planu po RCE.
+
 ## 0.38.0
 
 - Rozdzielono odpowiedzialność planera, PPD i executora. Planer pozostaje
