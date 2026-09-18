@@ -1,3 +1,8 @@
+## 0.37.3
+
+- Naprawiono wykonawcę `HP_HEAT_DHW`: automatyczny stan `OFF` z opublikowanego planu nie jest już pomijany, gdy sprężarka nadal pracuje. Tylko jawny `FORCE_ON` może utrzymać ogrzewanie poza zaplanowanym oknem.
+- Usunięto błędne przejmowanie trwającego cyklu EMS jako sterowania zewnętrznego po 30 minutach pracy.
+
 ## 0.37.2
 
 - Przywrócono twarde dzienne okno automatycznego `HP_HEAT_DHW`.
