@@ -264,12 +264,25 @@ def build_materializations(a: MaterializationAdapters):
         )
 
     def _update_daily_soc_history(cur, day_value) -> None:
-        """Persist the historical 7/14/28-day terminal-SOC forecast."""
-        cur.execute("""SELECT day_date,soc_end_pct FROM ems_gpt_daily
-          WHERE day_date>=%s AND day_date<%s AND learning_eligible=1
-            AND soc_end_pct IS NOT NULL ORDER BY day_date""",
-            (day_value-timedelta(days=28), day_value))
-        history=list(cur.fetchall()); means={}; samples={}
+        """Persist independent 7/14/28-day means from complete actual days.
+
+        Reading slots avoids collapsing every horizon to the short recovery
+        lookback when older daily rows have not yet had learning_eligible
+        backfilled after a schema upgrade.
+        """
+        cur.execute("""SELECT DATE(slot_start) day_date,
+          SUBSTRING_INDEX(GROUP_CONCAT(soc_end_pct ORDER BY slot_start DESC),',',1) soc_end_pct,
+          COUNT(*) slot_count,SUM(actual_recorded_at IS NOT NULL) terminal_count,
+          SUM(COALESCE(actual_mode,'')='MISSING_OUTAGE') missing_count
+          FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s
+          GROUP BY DATE(slot_start) ORDER BY day_date""",
+          (day_value-timedelta(days=28), day_value))
+        history=[row for row in cur.fetchall()
+                 if int(row.get("slot_count") or 0) in (92,96,100)
+                 and int(row.get("terminal_count") or 0) == int(row.get("slot_count") or 0)
+                 and int(row.get("missing_count") or 0) == 0
+                 and row.get("soc_end_pct") not in (None, "")]
+        means={}; samples={}
         for horizon in (7,14,28):
             values=[float(row["soc_end_pct"]) for row in history
                     if 1 <= (day_value-row["day_date"]).days <= horizon]

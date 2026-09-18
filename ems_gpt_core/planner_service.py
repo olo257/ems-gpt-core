@@ -997,10 +997,10 @@ def hp_heating_window_indices(rows: list[dict], day_value) -> set[int]:
 
 
 def hp_temperature_eligible(night_min: float | None, sample_count: int,
-                            threshold: float, expected_slots: int = 24) -> bool:
-    """Qualify HP heating only from a complete 00:00-06:00 forecast."""
+                            threshold: float, minimum_samples: int = 3) -> bool:
+    """Qualify HP heating from actual 00:00-06:00 garden readings."""
     return (night_min is not None
-            and int(sample_count) >= int(expected_slots)
+            and int(sample_count) >= int(minimum_samples)
             and float(night_min) < float(threshold))
 
 
@@ -1163,19 +1163,20 @@ def build_planner(a: PlannerAdapters):
                     float(value["mean_dhw_kwh"] or 0.0)
                 for value in cur.fetchall() if int(value["sample_count"] or 0) >= 2
             }
-            # Keep the daily heating trigger stable across hourly replans by reading
-            # the complete 00:00-06:00 forecast, including already closed slots.
+            # Use the actual garden temperature recorded by HA between 00:00 and
+            # 06:00. Three samples tolerate a partial HA outage without allowing
+            # Open-Meteo forecasts to decide whether space heating is required.
             # The operator setting from the EMS panel is authoritative.
             night_threshold = float(OPTIONS.get("night_heating_threshold_c", 10.0))
             day_values = sorted({row.get("local_day") or row["slot_start"].date() for row in rows})
             night_min_by_day = {}
             if day_values:
                 markers = ",".join(["%s"] * len(day_values))
-                cur.execute(f"""SELECT local_day,MIN(forecast_temperature_c) night_min,
-                  COUNT(forecast_temperature_c) sample_count
+                cur.execute(f"""SELECT local_day,MIN(actual_temperature_c) night_min,
+                  COUNT(actual_temperature_c) sample_count
                   FROM ems_gpt_slots WHERE local_day IN ({markers})
                     AND TIME(slot_start)>='00:00:00' AND TIME(slot_start)<'06:00:00'
-                    AND forecast_temperature_c IS NOT NULL GROUP BY local_day""", tuple(day_values))
+                    AND actual_temperature_c IS NOT NULL GROUP BY local_day""", tuple(day_values))
                 night_min_by_day = {
                     str(value["local_day"]): {
                         "night_min": float(value["night_min"]),
@@ -1191,18 +1192,7 @@ def build_planner(a: PlannerAdapters):
             planned_hp_kw = max(0.0, float(OPTIONS.get("hp_planned_power_kw", 2.5)))
             cycle_penalty = max(0.0, float(OPTIONS.get("hp_cycle_start_penalty_pln", 0.25)))
             hp_selected_indices = set()
-            # Operator FORCE_OFF disables both manual and automatic HP heating.
-            # AUTO cancels the override and is the only state that may restore
-            # temperature-driven planning.
-            cur.execute("""SELECT requested_state FROM ems_gpt_core_process_overrides
-              WHERE process_name='HP_HEAT_DHW' AND status='ACTIVE'
-                AND valid_from<=%s AND valid_until>%s
-              ORDER BY requested_at DESC LIMIT 1""", (now, now))
-            hp_override = cur.fetchone() or {}
-            hp_force_off_active = hp_override.get("requested_state") == "FORCE_OFF"
             for day_value in day_values:
-                if hp_force_off_active:
-                    continue
                 day_key = str(day_value)
                 night_forecast = night_min_by_day.get(day_key) or {}
                 if not hp_temperature_eligible(
@@ -1213,20 +1203,15 @@ def build_planner(a: PlannerAdapters):
                 indexed_rows = [(index, row) for index, row in enumerate(rows)
                                 if (row.get("local_day") or row["slot_start"].date()) == day_value]
                 day_start = datetime.combine(day_value, datetime.min.time())
-                cur.execute("""SELECT d.eligible,
-                  (SELECT o.requested_state FROM ems_gpt_core_process_overrides o
-                   WHERE o.process_name=d.process_name AND o.valid_from<d.valid_until
-                     AND o.valid_until>d.slot_start AND o.status IN ('ACTIVE','EXPIRED')
-                   ORDER BY o.requested_at DESC LIMIT 1) requested_state,
-                  (SELECT MAX(e.control_origin='EXTERNAL_MANUAL' AND e.effective_state='ON')
-                   FROM ems_gpt_core_process_execution e
-                   WHERE e.process_name=d.process_name AND e.slot_start=d.slot_start) external_manual_on
-                  FROM ems_gpt_core_process_decisions d
-                  WHERE d.process_name='HP_HEAT_DHW' AND d.slot_start>=%s AND d.slot_start<%s
-                  ORDER BY d.slot_start""", (day_start, min(cutoff, day_start + timedelta(days=1))))
-                past_states = [True if value.get("requested_state") == "FORCE_ON" else
-                               False if value.get("requested_state") == "FORCE_OFF" else
-                               True if value.get("external_manual_on") else bool(value["eligible"])
+                # Planning remains independent from PPD and operator overrides.
+                # For elapsed slots the planner assumes its own published plan
+                # was executed.  Differences belong to execution analytics and
+                # must never feed a PPD decision back into the next plan.
+                cur.execute("""SELECT heat_pump_window FROM ems_gpt_slots
+                  WHERE slot_start>=%s AND slot_start<%s
+                  ORDER BY slot_start""",
+                  (day_start, min(cutoff, day_start + timedelta(days=1))))
+                past_states = [bool(value.get("heat_pump_window"))
                                for value in cur.fetchall()]
                 day_rows = [row for _, row in indexed_rows]
                 allowed_local = hp_heating_window_indices(day_rows, day_value)

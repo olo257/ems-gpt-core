@@ -156,14 +156,34 @@ def _next_buy_prices(rows: list[dict]) -> list[float | None]:
     return result
 
 
-def _sale_economics(rows: list[dict], index: int, eta_c: float, eta_d: float,
-                    degradation: float, margin: float) -> dict:
-    replacement = _next_buy_prices(rows)[index]
-    sell = float(rows[index].get("price_sell_pln_kwh") or 0.0)
-    required = (replacement / (eta_c * eta_d) + degradation + margin
-                if replacement is not None else None)
-    return {"replacement": replacement, "required": required,
-            "eligible": required is not None and sell >= required}
+def plan_bound_decisions(row: dict, threshold: float) -> tuple[tuple[str, bool, str, str], ...]:
+    """Publish planner-owned processes without recalculating their policy.
+
+    Import, battery export and space heating are already part of the frozen
+    energy/SOC trajectory.  PPD exposes that recommendation to the executor;
+    AUTO/FORCE_ON/FORCE_OFF is applied later and remains an execution concern.
+    """
+    buy = float(row.get("planned_buy_kwh") or 0.0)
+    sell = float(row.get("planned_sell_kwh") or 0.0)
+    grid_policy = str(row.get("grid_policy_planned") or "NEUTRAL")
+    export_policy = str(row.get("export_policy_planned") or "NEUTRAL")
+    hp_window = bool(row.get("heat_pump_window"))
+    if (buy > threshold) != (grid_policy == "BUY_ALLOWED"):
+        raise RuntimeError(
+            f"PPD_IMPORT_PLAN_MISMATCH:{row.get('slot_start')}:"
+            f"planned_buy={buy:.6f}:grid_policy={grid_policy}")
+    if (sell > threshold) != (export_policy == "SELL_BAT"):
+        raise RuntimeError(
+            f"PPD_EXPORT_PLAN_MISMATCH:{row.get('slot_start')}:"
+            f"planned_sell={sell:.6f}:export_policy={export_policy}")
+    return (
+        ("BATTERY_IMPORT", buy > threshold, grid_policy,
+         f"planner_bound; planned_buy={buy:.3f}"),
+        ("BATTERY_EXPORT", sell > threshold, export_policy,
+         f"planner_bound; planned_sell={sell:.3f}"),
+        ("HP_HEAT_DHW", hp_window, "ON" if hp_window else "OFF",
+         "planner_bound; published_heat_pump_window"),
+    )
 
 
 def build_ppd_runner(a: PpdAdapters):
@@ -178,9 +198,7 @@ def build_ppd_runner(a: PpdAdapters):
     def run_ppd(plan_run_id: str | None = None, run_type: str = "scheduled") -> dict:
         ppd_run_id = str(uuid.uuid4())
         cutoff = a.slot_start().replace(tzinfo=None)
-        eta_c = max(0.01, min(1.0, float(options.get("battery_charge_efficiency", 0.90))))
         eta_d = max(0.01, min(1.0, float(options.get("battery_discharge_efficiency", 0.95))))
-        degradation = max(0.0, float(options.get("battery_degradation_cost_pln_kwh", 0.08)))
         margin = max(0.0, float(options.get("minimum_arbitrage_margin_pln_kwh", 0.05)))
         threshold = max(0.0, float(options.get("planned_flow_threshold_kwh", 0.02)))
         technical_threshold = max(
@@ -253,15 +271,10 @@ def build_ppd_runner(a: PpdAdapters):
                 sell_price = float(row.get("price_sell_pln_kwh") or 0.0)
                 pv_export = after_flex if sell_price > 0.0 else 0.0
                 curtail = after_flex - pv_export
-                economics = _sale_economics(rows, index, eta_c, eta_d, degradation, margin)
-                sell_allowed = sell > threshold and economics["eligible"]
-                grid_policy = ("BUY_ALLOWED" if buy > threshold else
-                               "GRID_TECHNICAL" if grid_load > technical_threshold else
-                               "NO_BUY" if sell_allowed else "NEUTRAL")
-                export_policy = ("SELL_BAT" if sell_allowed else "NO_SELL_PV" if sell_price <= 0.0
-                                 else "SELL_PV" if pv_export > threshold else "NEUTRAL")
+                grid_policy = str(row.get("grid_policy_planned") or "NEUTRAL")
+                export_policy = str(row.get("export_policy_planned") or "NEUTRAL")
                 recommendation = ("Zakup ładowanie" if buy > threshold else
-                    "Sprzedaż z baterii" if sell_allowed else "Sprzedaż PV" if pv_export > threshold else
+                    "Sprzedaż z baterii" if sell > threshold else "Sprzedaż PV" if pv_export > threshold else
                     "Ładowanie PV" if float(row.get("planned_battery_charge_kwh") or 0.0) > threshold else
                     "Autokonsumpcja PV" if float(row.get("forecast_pv_total_kwh") or 0.0) > threshold else
                     "Autokonsumpcja z baterii" if battery_to_load > threshold else
@@ -271,22 +284,15 @@ def build_ppd_runner(a: PpdAdapters):
                           f"grid={grid_policy}; export={export_policy}; {flex.reason}")[:255]
                 cur.execute("""UPDATE ems_gpt_slots SET planned_pv_to_cwu_kwh=%s,
                   planned_pv_to_ev_kwh=%s,planned_pv_export_kwh=%s,
-                  planned_pv_curtail_kwh=%s,recommendation=%s,
-                  grid_policy_planned=%s,export_policy_planned=%s,ppd_reason=%s,
+                  planned_pv_curtail_kwh=%s,recommendation=%s,ppd_reason=%s,
                   ppd_run_type=%s,ppd_version='CORE_0_36_11',ppd_locked_at=NOW(6)
                   WHERE slot_start=%s AND plan_run_id=%s""",
                   (round(cwu, 6), round(ev, 6), round(pv_export, 6), round(curtail, 6),
-                   recommendation, grid_policy, export_policy, reason, run_type,
+                   recommendation, reason, run_type,
                    row["slot_start"], plan_run_id))
-                decisions = (
-                    ("BATTERY_IMPORT", buy > threshold, grid_policy,
-                     f"planned_buy={buy:.3f}; target_read_only"),
-                    ("BATTERY_EXPORT", sell_allowed, export_policy,
-                     f"sell={sell_price:.3f}; replacement={economics['replacement']}; required={economics['required']}"),
+                decisions = plan_bound_decisions(row, threshold) + (
                     ("PV_CWU", flex.pv_cwu_allowed, "ALLOW" if flex.pv_cwu_allowed else "BLOCK", flex.reason),
                     ("PV_EV", flex.pv_ev_allowed, "ALLOW" if flex.pv_ev_allowed else "BLOCK", flex.reason),
-                    ("HP_HEAT_DHW", bool(row.get("heat_pump_window")),
-                     "ON" if row.get("heat_pump_window") else "OFF", "published_heat_pump_window"),
                 )
                 for process, eligible, decision, process_reason in decisions:
                     cur.execute("""INSERT INTO ems_gpt_core_process_decisions

@@ -60,10 +60,13 @@ Każdy pakiet wykonuje etapy w tej kolejności:
    BUY oraz wybór ekonomicznych slotów zakupu.
 8. `SOC` — wynikowe `soc_target`, `soc_floor`, SOC przed i po slocie.
 9. `SURPLUS` — nadwyżka PV w kolejności: autokonsumpcja, ładowanie baterii do
-   targetu, CWU, EV, sprzedaż PV, a ograniczenie produkcji na końcu.
-10. `PPD SIECIOWE` — decyzje zakupu i eksportu z gotowych przepływów i SOC.
-11. `PPD ODBIORNIKÓW` — osobny `ppd_service.py` odczytuje zamrożony target
-    i tworzy ciągłe okna `PV_CWU` oraz `PV_EV`; nie zwraca żadnego wejścia do targetu.
+   targetu, sprzedaż PV, a ograniczenie produkcji na końcu. Surowa elastyczna
+   nadwyżka pozostaje dostępna dla PPD.
+10. `PLAN DECISIONS` — planer zamraża rekomendowane przebiegi importu baterii,
+    eksportu baterii i HP razem z ilościami użytymi w bilansie oraz target.
+11. `PPD` — osobny `ppd_service.py` publikuje te trzy rekomendacje bez ich
+    ponownego liczenia oraz tworzy ciągłe okna `PV_CWU` i `PV_EV` z zamrożonej
+    nadwyżki; nie zwraca żadnego wejścia do targetu.
 12. `VALIDATE` — kontrola całego horyzontu; dopiero potem atomowa publikacja.
 
 Planer może wykonywać wiele przebiegów po tej samej tabeli roboczej, ale każdy
@@ -245,21 +248,38 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
   poprzedniego opublikowanego planu.
 - Próg pochodzi wyłącznie z konfiguracji panelu
   `night_heating_threshold_c`. Core nie oczekuje helpera HA z progiem.
-- Kwalifikacja wymaga dokładnie 24 kompletnych próbek prognozy 00:00–06:00 i
-  minimum ściśle niższego od progu. Brak danych, niepełność oraz wartość równa
-  progowi lub wyższa blokują ogrzewanie.
+- Kwalifikacja wymaga co najmniej 3 rzeczywistych zapisów temperatury ogrodu
+  z okresu 00:00–06:00 i minimum ściśle niższego od progu. Mniejsza liczba
+  zapisów oraz wartość równa progowi lub wyższa blokują ogrzewanie. Prognoza
+  `weather.dom` nie jest źródłem tej decyzji.
 - Okno zaczyna się najwcześniej o 07:00 po porannym `SELL`, a kończy
   najpóźniej o 19:00 lub przed wieczornym `SELL`. Reguła jest taka sama w dni
   robocze i weekend.
 - `BUY` nie wyznacza granic okna HP. Żaden slot `SELL` nie może mieć
   automatycznego `HP_HEAT_DHW=ON`.
-- Aktywne polecenie operatorskie `FORCE_OFF` wyłącza ręczne i automatyczne
-  ogrzewanie: planner publikuje `heat_pump_window=0` do chwili wybrania `Auto`.
+- Planer nie odczytuje PPD ani override'ów. `heat_pump_window` zawsze opisuje
+  rekomendowany przebieg użyty w bilansie i target.
+- `AUTO`, `FORCE_ON` i `FORCE_OFF` należą do warstwy PPD/executora. Zmieniają
+  decyzję efektywną, ale nie przepisują rekomendacji planera.
+- Dla minionych slotów dnia planer zakłada wykonanie własnego opublikowanego
+  `heat_pump_window`; rzeczywiste odstępstwo pozostaje w analityce wykonania.
 - Energia HP jest dodawana do bilansu i targetu wyłącznie dla zakwalifikowanego
   profilu. HP może zwiększyć potrzebne ładowanie baterii, ale samo nie tworzy
   okna BUY.
 
-## 12. Publikacja cen do Home Assistant
+## 12. Kontrakt granicy PPD
+
+- `BATTERY_IMPORT`, `BATTERY_EXPORT` i `HP_HEAT_DHW` są planowane ilościowo
+  wyłącznie przez planer. PPD nie posiada drugiej implementacji ekonomiki,
+  okien ani targetu dla tych procesów.
+- PPD kopiuje ich zamrożone decyzje do wersjonowanej macierzy procesów.
+- `PV_CWU` i `PV_EV` są jedynymi procesami, których okna PPD może wyliczyć po
+  publikacji planu; nie zmieniają one targetu.
+- Executor nakłada override na decyzję planowaną i zapisuje osobno stan
+  planowany, efektywny oraz obserwowany.
+- Żadna tabela wynikowa PPD ani executora nie może być wejściem planera.
+
+## 13. Publikacja cen do Home Assistant
 
 Zakup i sprzedaż pochodzą zawsze z tego samego aktywnego slotu i są publikowane
 wyłącznie do istniejących helperów:

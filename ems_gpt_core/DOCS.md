@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja produkcyjna: **0.37.8**.
+Status: obowiązująca. Wersja produkcyjna: **0.38.0**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -29,7 +29,7 @@ dokumentu źródłowego.
   cen do Home Assistant;
 - `ingestion_service.py` — import RCE oraz prognoz PV i pogody;
 - `planner_service.py` — transakcyjny planer energii i profil pompy ciepła;
-- `ppd_service.py` — decyzje odbiorników po publikacji planu;
+- `ppd_service.py` — publikacja decyzji planera oraz niezależne okna PV→CWU/EV;
 - `executor_service.py` — realizacja zatwierdzonych decyzji i ręcznych
   override'ów;
 - `ha_gateway_service.py` — dostęp do API Home Assistant;
@@ -69,13 +69,15 @@ Automatyczny profil ogrzewania powstaje wyłącznie po spełnieniu wszystkich
 warunków:
 
 1. próg pochodzi z ustawienia panelu `night_heating_threshold_c`;
-2. istnieją kompletne 24 próbki prognozy dla okresu 00:00–06:00;
-3. minimalna prognozowana temperatura jest **ściśle niższa** od progu;
+2. istnieją co najmniej 3 rzeczywiste zapisy temperatury ogrodu dla okresu
+   00:00–06:00;
+3. minimalna rzeczywista temperatura jest **ściśle niższa** od progu;
 4. slot należy do dziennego okna ogrzewania;
 5. slot nie należy do okna `SELL`.
 
-Brak lub niepełność prognozy, temperatura równa progowi albo wyższa oraz błąd
-odczytu działają fail-closed: `heat_pump_window=0` i energia `HP_HEAT=0`.
+Mniej niż 3 zapisy, temperatura równa progowi albo wyższa oraz błąd odczytu
+działają fail-closed: `heat_pump_window=0` i energia `HP_HEAT=0`. Prognoza z
+`weather.dom` nie zastępuje rzeczywistego sensora w tej kwalifikacji.
 
 Każdy nowy przebieg planera inicjuje `heat_pump_window=0`. Nie wolno dziedziczyć
 wartości `1` z poprzednio opublikowanego planu.
@@ -89,9 +91,34 @@ Okno jest takie samo w dni robocze i weekend:
 
 Jeżeli warunek temperatury jest spełniony, energia HP wchodzi do bilansu i może
 zwiększyć energię ładowania baterii w wybranym oknie `BUY`. Sam proces HP nie
-tworzy okna BUY. Ręczne polecenie operatora zachowuje nadrzędność.
+tworzy okna BUY. Planer publikuje rekomendowany przebieg niezależnie od trybu
+wykonawczego. `AUTO` wykonuje rekomendację, `FORCE_ON` ją zastępuje włączeniem,
+a `FORCE_OFF` blokuje wykonanie. Override nie przelicza historycznego planu ani
+targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
 
-## 5. RCE i bieżące ceny
+## 5. Granica odpowiedzialności planer–PPD–executor
+
+- Planer jest jedynym właścicielem rekomendacji `BATTERY_IMPORT`,
+  `BATTERY_EXPORT` i `HP_HEAT_DHW`, ponieważ ich energia wpływa na bilans, SOC
+  oraz target. PPD nie przelicza ich ekonomiki ani kwalifikacji.
+- PPD publikuje zamrożoną rekomendację planera jako decyzję `AUTO`, a executor
+  nakłada aktywny `FORCE_ON` albo `FORCE_OFF` i tworzy decyzję efektywną.
+- Widok Procesy prezentuje osobno rekomendację, stan planowany, tryb sterowania,
+  stan efektywny i ilościową energię planu; nie wolno nazywać rekomendacji
+  planera stanem rzeczywiście przekazanym do urządzenia.
+- Planer nigdy nie odczytuje tabeli decyzji PPD ani override'ów. Dla minionych
+  slotów dnia zakłada wykonanie własnego wcześniej opublikowanego planu.
+- Rzeczywiste wykonanie i ręczne odstępstwa są domeną tabel wykonania i
+  analityki; nie wracają jako ukryte wejście kolejnego planu.
+- `PV_CWU` oraz `PV_EV` są wyznaczane przez PPD po zamrożeniu targetu. Planer
+  może otworzyć ich kandydackie okno od następnego slotu po osiągnięciu targetu,
+  ale ich rzeczywista praca zależy od nadwyżki PV i automatyki wykonawczej.
+
+Historyczne średnie końcowego SOC 7/14/28 dni są liczone niezależnie z pełnych,
+rzeczywiście zamkniętych dób. Doba z brakiem lub `MISSING_OUTAGE` nie jest
+próbką. Krótszy zakres odbudowy agregatów nie może ograniczać horyzontu 14/28.
+
+## 6. RCE i bieżące ceny
 
 Import RCE zatwierdza dopiero kompletny zestaw ciągłych slotów. Brak ceny nie
 jest zastępowany zerem. Po zatwierdzeniu ceny planowanie może zakończyć się
@@ -101,7 +128,7 @@ Scheduler odczytuje zakup i sprzedaż z jednego aktywnego rekordu
 `ems_gpt_slots`, zaokrągla wartości do trzech miejsc i zapisuje je do dwóch
 helperów wymienionych w sekcji 3.
 
-## 6. Publikacja planu i wykonanie
+## 7. Publikacja planu i wykonanie
 
 - plan jest publikowany atomowo dopiero po pełnej walidacji;
 - aktualny rozpoczęty slot i sloty zamknięte nie są nadpisywane;
@@ -109,13 +136,13 @@ helperów wymienionych w sekcji 3.
 - ręczny i automatyczny replan korzystają z tej samej serializowanej ścieżki;
 - executor pozostaje domyślnie wyłączony i wymaga osobnej decyzji operatora.
 
-## 7. Panel
+## 8. Panel
 
 Panel Ingress pokazuje stan modułów, plan, wykonanie, agregaty godzinowe i
 dobowe, analitykę, sugestie oraz diagnostykę. Wybór widocznych kolumn jest
 lokalnym ustawieniem przeglądarki i nie zmienia danych ani algorytmu.
 
-## 8. Procedura wydania
+## 9. Procedura wydania
 
 Przed scaleniem i publikacją wymagane są:
 
