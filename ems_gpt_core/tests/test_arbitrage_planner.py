@@ -974,6 +974,26 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertEqual(result["flows"][1]["grid_charge_kwh"], 0.0)
 
+    def test_daily_close_keeps_historical_soc_boundary(self):
+        rows = [
+            {"buy_window": False, "forecast_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0},
+            {"buy_window": True, "forecast_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0},
+        ]
+        flows = [
+            {"soc_end_pct": 40.0, "battery_sell_kwh": 0.0,
+             "battery_to_load_kwh": 0.0, "pv_to_bat_kwh": 0.0,
+             "grid_charge_kwh": 0.0},
+            {"soc_end_pct": 40.0, "battery_sell_kwh": 0.0,
+             "battery_to_load_kwh": 0.0, "pv_to_bat_kwh": 0.0,
+             "grid_charge_kwh": 0.0},
+        ]
+        contracts = build_soc_contracts(
+            rows, flows, 15.0, 15.0, 0.90, 0.95, 0.0,
+            40.0, 100.0, 0.25, [40.0, 40.0])
+        self.assertEqual(contracts["required"], [40.0, 40.0])
+
     def test_grid_target_does_not_cap_pv_charging(self):
         rows = [{"price_buy_pln_kwh": 5.0, "price_sell_pln_kwh": 10.0,
                  "sale_window": False, "buy_window": False,

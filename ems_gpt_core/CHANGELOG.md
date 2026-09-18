@@ -2,6 +2,16 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.2
+
+- Historyczna prognoza końcowego SOC 7/14/28 jest twardą minimalną granicą
+  zamknięcia każdej doby w horyzoncie, a nie wyłącznie ostatniej doby planu.
+  Przy obecnej średniej około 40% planer nie może publikować końca dnia około 20%.
+- BUY pozostaje zakupem energii do baterii: nie może powstać wyłącznie dla
+  zużycia domu, a energia ładowania musi być co najmniej równa dobrowolnej
+  części zasilania odbiorów z sieci. Poza BUY pozostaje tylko techniczny ślad
+  kwantyzacji albo import nieunikniony z powodu rezerwy lub limitu mocy.
+
 ## 0.38.1
 
 - Naprawiono interpretację bazodanowego zera dla `heat_pump_window`: PPD nie

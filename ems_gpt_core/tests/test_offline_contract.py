@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.38.1"', APP_SOURCE)
-        self.assertIn('version: "0.38.1"', CONFIG)
+        self.assertIn('APP_VERSION = "0.38.2"', APP_SOURCE)
+        self.assertIn('version: "0.38.2"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -93,7 +93,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("selected.add('soc_start_pct')", WEBUI)
         self.assertIn("selected.add('soc_end_pct')", WEBUI)
 
-    def test_historical_soc_only_sets_the_terminal_boundary(self):
+    def test_historical_soc_sets_each_daily_terminal_boundary(self):
         planner = MODULE_SOURCES["planner_service.py"]
         executor = MODULE_SOURCES["executor_service.py"]
         for key in (
@@ -103,8 +103,10 @@ class OfflineContractTests(unittest.TestCase):
         ):
             self.assertIn(key, planner)
             self.assertIn(key, executor)
-        self.assertIn("terminal_soc = max(", planner)
+        self.assertIn("daily_terminal_soc[planning_day] = max(", planner)
         self.assertIn("backward_target_commitments(", planner)
+        self.assertIn("daily_required_soc[index] = daily_terminal_soc[row_day]", planner)
+        self.assertIn("required_soc_pcts=daily_required_soc", planner)
         self.assertIn("Wagi końcowego SOC 7/14/28 dni muszą sumować się do 100%", executor)
 
     def test_battery_flow_accuracy_is_diagnostic_only(self):
