@@ -96,6 +96,29 @@ CONFIG_SETTINGS["deye_program_soc_baseline_json"] = {
     "type": "text", "label": "Bazowe SOC programów Deye [JSON]", "group": "Bateria"
 }
 
+EXECUTOR_SCRIPT_DEFAULTS = {
+    "executor_battery_import_on_script": "script.ems_gpt_core_battery_import_on",
+    "executor_battery_import_off_script": "script.ems_gpt_core_battery_import_off",
+    "executor_battery_export_on_script": "script.ems_gpt_core_battery_export_on",
+    "executor_battery_export_off_script": "script.ems_gpt_core_battery_export_off",
+    "executor_pv_cwu_on_script": "script.ems_gpt_core_pv_cwu_on",
+    "executor_pv_cwu_off_script": "script.ems_gpt_core_pv_cwu_off",
+    "executor_pv_ev_on_script": "script.ems_gpt_core_pv_ev_on",
+    "executor_pv_ev_off_script": "script.ems_gpt_core_pv_ev_off",
+    "executor_hp_heat_dhw_on_script": "script.ems_gpt_core_hp_heat_dhw_on",
+    "executor_hp_heat_dhw_off_script": "script.ems_gpt_core_hp_heat_dhw_off",
+}
+
+for _key, _entity_id in EXECUTOR_SCRIPT_DEFAULTS.items():
+    process = _key.removeprefix("executor_").removesuffix("_script")
+    state = "ON" if process.endswith("_on") else "OFF"
+    process = process.removesuffix("_on").removesuffix("_off").upper()
+    CONFIG_SETTINGS[_key] = {
+        "type": "entity",
+        "label": f"{process} — skrypt {state}",
+        "group": "Executor — skrypty Home Assistant",
+    }
+
 
 DEFAULT_OPTIONS = {
     "timezone": "Europe/Warsaw",
@@ -166,6 +189,8 @@ DEFAULT_OPTIONS = {
     "backup_sha256_enabled": True,
     "backup_min_size_bytes": 1024 * 1024,
 }
+
+DEFAULT_OPTIONS.update(EXECUTOR_SCRIPT_DEFAULTS)
 
 for _key, (_label, _energy, _power, _water, _state, _counter, _threshold) in APPLIANCE_DEFAULTS.items():
     DEFAULT_OPTIONS.update({
