@@ -2,6 +2,14 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.5
+
+- Naprawiono klasyfikację wykonania `BATTERY_IMPORT`: ładowanie baterii z PV
+  nie jest już oznaczane jako ręczne uruchomienie importu. Obserwowana energia
+  procesu obejmuje wyłącznie część dodatniego importu sieciowego pozostałą po
+  pokryciu rzeczywistego deficytu odbiorów i jest ograniczona zmierzonym
+  ładowaniem baterii.
+
 ## 0.38.4
 
 - Konfiguracja aplikacji zawiera teraz dziesięć jawnych odniesień do skryptów
