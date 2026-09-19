@@ -84,6 +84,28 @@ class ExecutorAdapters:
 
 def build_executor(a: ExecutorAdapters):
     OPTIONS, OPERATIONAL_SETTINGS, CONFIG_SETTINGS = a.options, a.operational_settings, a.config_settings or {}
+
+    process_script_keys = {
+        "BATTERY_IMPORT": {"ON": "executor_battery_import_on_script", "OFF": "executor_battery_import_off_script"},
+        "BATTERY_EXPORT": {"ON": "executor_battery_export_on_script", "OFF": "executor_battery_export_off_script"},
+        "PV_CWU": {"ON": "executor_pv_cwu_on_script", "OFF": "executor_pv_cwu_off_script"},
+        "PV_EV": {"ON": "executor_pv_ev_on_script", "OFF": "executor_pv_ev_off_script"},
+        "HP_HEAT_DHW": {"ON": "executor_hp_heat_dhw_on_script", "OFF": "executor_hp_heat_dhw_off_script"},
+    }
+
+    def configured_service_map() -> dict:
+        """Return explicit script settings, with the legacy JSON as migration fallback."""
+        try:
+            legacy = json.loads(str(OPTIONS.get("connector_service_map_json") or "{}"))
+        except json.JSONDecodeError:
+            legacy = {}
+        service_map = {}
+        for process, states in process_script_keys.items():
+            service_map[process] = {}
+            for state, key in states.items():
+                explicit = str(OPTIONS.get(key) or "").strip()
+                service_map[process][state] = explicit or legacy.get(process, {}).get(state)
+        return service_map
     RUNTIME_SETTINGS_PATH, LOCK, STATE = a.runtime_settings_path, a.lock, a.state
     record_event, local_now, db, slot_start = a.record_event, a.local_now, a.db, a.slot_start
     tou_program_snapshot, active_tou_program = a.tou_program_snapshot, a.active_tou_program
@@ -274,10 +296,7 @@ def build_executor(a: ExecutorAdapters):
         if requested == "LIVE":
             if payload.get("confirmation") != "EMS_CONNECTOR_ACCEPTED":
                 raise ValueError("explicit executor confirmation required")
-            try:
-                service_map = json.loads(str(OPTIONS.get("connector_service_map_json") or "{}"))
-            except json.JSONDecodeError as exc:
-                raise ValueError("connector_service_map_json is invalid") from exc
+            service_map = configured_service_map()
             missing = [p for p in PROCESS_NAMES if not all(
                 isinstance(service_map.get(p, {}).get(state), str)
                 and service_map[p][state].startswith("script.")
@@ -325,10 +344,7 @@ def build_executor(a: ExecutorAdapters):
     
     def enable_production_on_startup() -> dict:
         """Start LIVE when the complete guarded script connector is available."""
-        try:
-            service_map = json.loads(str(OPTIONS.get("connector_service_map_json") or "{}"))
-        except json.JSONDecodeError:
-            service_map = {}
+        service_map = configured_service_map()
         missing = [p for p in PROCESS_NAMES if not all(
             isinstance(service_map.get(p, {}).get(state), str)
             and service_map[p][state].startswith("script.")
@@ -511,10 +527,7 @@ def build_executor(a: ExecutorAdapters):
             return {"status": "DISABLED_OR_DRY_RUN", "dispatched": 0}
         if OPTIONS.get("executor_activation_ack") != "EMS_CONNECTOR_ACCEPTED":
             return {"status": "ACTIVATION_ACK_REQUIRED", "dispatched": 0}
-        try:
-            service_map = json.loads(str(OPTIONS.get("connector_service_map_json") or "{}"))
-        except json.JSONDecodeError as exc:
-            raise ValueError("connector_service_map_json is invalid") from exc
+        service_map = configured_service_map()
         now = local_now().replace(tzinfo=None)
         current_slot = slot_start().replace(tzinfo=None)
         dispatched = 0
