@@ -1,5 +1,5 @@
 name: EMS-GPT Core
-version: "0.38.3"
+version: "0.38.4"
 slug: ems_gpt_core
 description: Niezależny silnik planowania i analityki EMS-GPT
 url: https://github.com/olo257/ems-gpt-core
@@ -37,6 +37,16 @@ options:
   executor_dry_run: true
   executor_activation_ack: ""
   connector_service_map_json: "{}"
+  executor_battery_import_on_script: script.ems_gpt_core_battery_import_on
+  executor_battery_import_off_script: script.ems_gpt_core_battery_import_off
+  executor_battery_export_on_script: script.ems_gpt_core_battery_export_on
+  executor_battery_export_off_script: script.ems_gpt_core_battery_export_off
+  executor_pv_cwu_on_script: script.ems_gpt_core_pv_cwu_on
+  executor_pv_cwu_off_script: script.ems_gpt_core_pv_cwu_off
+  executor_pv_ev_on_script: script.ems_gpt_core_pv_ev_on
+  executor_pv_ev_off_script: script.ems_gpt_core_pv_ev_off
+  executor_hp_heat_dhw_on_script: script.ems_gpt_core_hp_heat_dhw_on
+  executor_hp_heat_dhw_off_script: script.ems_gpt_core_hp_heat_dhw_off
   ai_observer_enabled: true
 map:
   - backup:rw
@@ -60,4 +70,14 @@ schema:
   executor_dry_run: bool
   executor_activation_ack: str
   connector_service_map_json: str
+  executor_battery_import_on_script: str
+  executor_battery_import_off_script: str
+  executor_battery_export_on_script: str
+  executor_battery_export_off_script: str
+  executor_pv_cwu_on_script: str
+  executor_pv_cwu_off_script: str
+  executor_pv_ev_on_script: str
+  executor_pv_ev_off_script: str
+  executor_hp_heat_dhw_on_script: str
+  executor_hp_heat_dhw_off_script: str
   ai_observer_enabled: bool

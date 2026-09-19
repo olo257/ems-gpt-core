@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.38.3"', APP_SOURCE)
-        self.assertIn('version: "0.38.3"', CONFIG)
+        self.assertIn('APP_VERSION = "0.38.4"', APP_SOURCE)
+        self.assertIn('version: "0.38.4"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -152,6 +152,20 @@ class OfflineContractTests(unittest.TestCase):
         waive = planner.index("enforced_daily_required[failed_index] = reserve")
         self.assertLess(disable, waive)
         self.assertIn('"battery_sales_disabled_for_daily_soc"', planner)
+
+    def test_executor_scripts_are_explicit_configuration_fields(self):
+        config_service = MODULE_SOURCES["config_service.py"]
+        executor = MODULE_SOURCES["executor_service.py"]
+        for process in (
+            "battery_import", "battery_export", "pv_cwu", "pv_ev", "hp_heat_dhw"
+        ):
+            for state in ("on", "off"):
+                key = f"executor_{process}_{state}_script"
+                entity_id = f"script.ems_gpt_core_{process}_{state}"
+                self.assertIn(f"{key}: {entity_id}", CONFIG)
+                self.assertIn(f'"{key}": "{entity_id}"', config_service)
+                self.assertIn(key, executor)
+        self.assertIn("configured_service_map()", executor)
 
     def test_planner_contract_is_versioned_and_keeps_core_definitions(self):
         self.assertIn("kanoniczny kontrakt RCE, planera i SOC", PLANNER_CONTRACT)

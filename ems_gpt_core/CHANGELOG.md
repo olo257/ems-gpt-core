@@ -2,6 +2,15 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.4
+
+- Konfiguracja aplikacji zawiera teraz dziesięć jawnych odniesień do skryptów
+  `ON/OFF` executora dla `BATTERY_IMPORT`, `BATTERY_EXPORT`, `PV_CWU`, `PV_EV`
+  oraz `HP_HEAT_DHW`. Pola mają domyślne wartości odpowiadające istniejącym
+  encjom `script.ems_gpt_core_*` i można je edytować w panelu konfiguracji.
+- Executor korzysta z jawnych pól jako źródła prawdy. Dotychczasowy
+  `connector_service_map_json` pozostaje wyłącznie fallbackiem migracyjnym.
+
 ## 0.38.3
 
 - Jeżeli sprzedaż z baterii koliduje z historycznym celem SOC końca doby,
