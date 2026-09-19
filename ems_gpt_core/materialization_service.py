@@ -107,6 +107,17 @@ def build_materializations(a: MaterializationAdapters):
                 hp_cop=hp_total_prod/hp_total_cons if hp_total_cons>.001 else None
                 hp_mode="HEATING" if hp_heat_prod>.001 else "DHW" if hp_dhw_prod>.001 else "COOLING" if hp_cool_prod>.001 else "IDLE"
                 grid_export=round(max(0,-grid),6)
+                # BATTERY_IMPORT is grid-to-battery energy, not every positive
+                # battery charge.  PV charging must remain ordinary AUTO
+                # operation.  Attribute only the part of positive grid import
+                # left after the native load deficit and cap it by the measured
+                # battery charge because the telemetry does not expose a
+                # dedicated grid-to-battery meter.
+                native_grid_need = max(0.0, load - pv)
+                grid_to_battery = min(
+                    battery_charge,
+                    max(0.0, grid - native_grid_need),
+                )
                 coverage=round(min(100.0, samples/15*100),2)
                 cur.execute("""UPDATE ems_gpt_slots SET actual_recorded_at=NOW(6),
                   actual_pv_total_kwh=%s,actual_load_kwh=%s,actual_buy_kwh=%s,
@@ -161,7 +172,7 @@ def build_materializations(a: MaterializationAdapters):
                        "ACCEPTED" if coverage>=float(OPTIONS.get("telemetry_learning_coverage_pct",80.0)) else "PARTIAL"))
                     observed_energy = {
                         # Below 50 Wh/slot the inverter flow is technical noise, not an EMS process.
-                        "BATTERY_IMPORT": round(battery_charge, 6) if battery_charge >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
+                        "BATTERY_IMPORT": round(grid_to_battery, 6) if grid_to_battery >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
                         "BATTERY_EXPORT": round(battery_discharge, 6) if battery_discharge >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
                         "PV_CWU": round(dhw_energy, 6),
                         "PV_EV": round(ev_energy, 6),

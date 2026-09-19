@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.38.4"', APP_SOURCE)
-        self.assertIn('version: "0.38.4"', CONFIG)
+        self.assertIn('APP_VERSION = "0.38.5"', APP_SOURCE)
+        self.assertIn('version: "0.38.5"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -378,7 +378,7 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_migration_audit_closure(self):
         self.assertIn('\"ai_observer\": \"SHADOW_READ_ONLY\"', SOURCE)
-        self.assertIn('battery_charge >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05))', SOURCE)
+        self.assertIn('grid_to_battery >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05))', SOURCE)
         self.assertIn("module_name=%s AND title=%s", SOURCE)
         self.assertIn("status IN ('WATCHING','OPEN','SUGGESTED')", SOURCE)
         self.assertIn('(command_id,slot_start,slot_id,process_name', SOURCE)
@@ -624,6 +624,12 @@ class OfflineContractTests(unittest.TestCase):
         for marker in ("MANUAL_FORCE_ON", "MANUAL_BLOCK", "EXTERNAL_MANUAL",
                        "override_id", "requested_by", "override_reason", "override_valid_until"):
             self.assertIn(marker, SOURCE)
+
+    def test_pv_battery_charge_is_not_classified_as_grid_import(self):
+        self.assertIn("native_grid_need = max(0.0, load - pv)", SOURCE)
+        self.assertIn("grid_to_battery = min(", SOURCE)
+        self.assertIn('"BATTERY_IMPORT": round(grid_to_battery, 6)', SOURCE)
+        self.assertNotIn('"BATTERY_IMPORT": round(battery_charge, 6)', SOURCE)
 
     def test_command_contract_and_ttl_are_present(self):
         for field in ("command_id", "expires_at", "plan_version", "acknowledgement_json"):
