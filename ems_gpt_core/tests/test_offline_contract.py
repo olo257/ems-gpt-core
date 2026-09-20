@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.38.6"', APP_SOURCE)
-        self.assertIn('version: "0.38.6"', CONFIG)
+        self.assertIn('APP_VERSION = "0.38.7"', APP_SOURCE)
+        self.assertIn('version: "0.38.7"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -634,6 +634,8 @@ class OfflineContractTests(unittest.TestCase):
     def test_executor_reads_import_guard_from_exact_plan_run(self):
         self.assertIn('plan_run_id = str(command.get("plan_version") or "").split(":", 1)[0]', SOURCE)
         self.assertIn("WHERE slot_start=%s AND plan_run_id=%s AND plan_stage='PUBLISHED'", SOURCE)
+        self.assertIn('planned_buy = scalar_number(plan_target.get("planned_buy_kwh"))', SOURCE)
+        self.assertNotIn('planned_buy = number(plan_target.get("planned_buy_kwh"))', SOURCE)
 
     def test_process_execution_separates_cwu_and_export_sources(self):
         materialization = MODULE_SOURCES["materialization_service.py"]
