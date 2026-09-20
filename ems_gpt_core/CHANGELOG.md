@@ -2,6 +2,13 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.7
+
+- Naprawiono ostatni etap ochrony `BATTERY_IMPORT`: `planned_buy_kwh` pobrane z
+  MariaDB jest teraz konwertowane jako skalar SQL, a nie jako obiekt stanu Home
+  Assistant. Poprawny zakup nie jest już odrzucany z
+  `IMPORT_PLAN_OR_SOC_UNAVAILABLE` mimo obecnej energii planu, targetu i SOC.
+
 ## 0.38.6
 
 - Executor wiąże ochronę `BATTERY_IMPORT` z dokładnym `plan_run_id` zapisanym
