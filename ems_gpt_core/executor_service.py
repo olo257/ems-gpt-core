@@ -594,7 +594,7 @@ def build_executor(a: ExecutorAdapters):
                     if target is None:
                         target = plan_target.get("soc_end_plan_pct")
                     live_soc = number(ha_state("sensor.inverter_battery"))
-                    planned_buy = number(plan_target.get("planned_buy_kwh"))
+                    planned_buy = scalar_number(plan_target.get("planned_buy_kwh"))
                     flow_threshold = float(OPTIONS.get("planned_flow_threshold_kwh", 0.02))
                     guard_buy = (max(flow_threshold * 2.0, 0.001)
                                  if command.get("source") == "OVERRIDE" else planned_buy)
