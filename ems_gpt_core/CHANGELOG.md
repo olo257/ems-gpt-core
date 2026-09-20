@@ -2,6 +2,19 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.6
+
+- Executor wiąże ochronę `BATTERY_IMPORT` z dokładnym `plan_run_id` zapisanym
+  w wersji komendy. Nie może już odrzucić poprawnego zakupu jako
+  `IMPORT_PLAN_OR_SOC_UNAVAILABLE` wskutek odczytu innego rekordu tego samego
+  slotu z `planned_buy_kwh=NULL`.
+- Obserwacja `PV_CWU` korzysta ze stanu rzeczywiście sterowanej grzałki
+  `light.sm_pro_3248d_1_grzalka_cwu`. Autonomiczne grzanie CWU przez pompę
+  ciepła nie jest już klasyfikowane jako ręczne uruchomienie `PV_CWU`.
+- Obserwacja `BATTERY_EXPORT` obejmuje wyłącznie rozładowanie przypisane do
+  rzeczywistego eksportu sieciowego. Autokonsumpcja bateria→dom nie jest już
+  klasyfikowana jako ręczna sprzedaż.
+
 ## 0.38.5
 
 - Naprawiono klasyfikację wykonania `BATTERY_IMPORT`: ładowanie baterii z PV
