@@ -36,7 +36,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.38.5"
+APP_VERSION = "0.38.6"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -127,6 +127,7 @@ ENTITIES = {
     "battery_direct": "sensor.inverter_battery_power",
     "ev_power": "sensor.sonoff_1002270ef4_power",
     "dhw_power": "sensor.panasonic_heat_pump_main_dhw_power_consumption",
+    "pv_cwu_state": "light.sm_pro_3248d_1_grzalka_cwu",
     "hp_outlet": "sensor.panasonic_heat_pump_main_main_outlet_temp",
     "hp_inlet": "sensor.panasonic_heat_pump_main_main_inlet_temp",
     "hp_compressor_freq": "sensor.panasonic_heat_pump_main_compressor_freq",
