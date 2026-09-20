@@ -583,8 +583,10 @@ def build_executor(a: ExecutorAdapters):
                 target_update = None
                 restored_targets = []
                 if command["process_name"] == "BATTERY_IMPORT" and command["decision"] == "ON":
+                    plan_run_id = str(command.get("plan_version") or "").split(":", 1)[0]
                     cur.execute("""SELECT soc_charge_target_pct,soc_target_pct,soc_end_plan_pct,planned_buy_kwh FROM ems_gpt_slots
-                      WHERE slot_start=%s LIMIT 1""", (current_slot,))
+                      WHERE slot_start=%s AND plan_run_id=%s AND plan_stage='PUBLISHED'
+                      LIMIT 1""", (current_slot, plan_run_id))
                     plan_target = cur.fetchone() or {}
                     target = (plan_target.get("soc_charge_target_pct")
                               if plan_target.get("soc_charge_target_pct") is not None
