@@ -1,6 +1,6 @@
 # EMS-GPT Core
 
-Wersja produkcyjna: **0.38.6**.
+Wersja produkcyjna: **0.38.7**.
 
 Dokumenty obowiązujące:
 
