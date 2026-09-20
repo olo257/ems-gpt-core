@@ -25,7 +25,7 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
           grid_power_w DOUBLE NULL, rce_sell_pln_kwh DOUBLE NULL,
           rce_buy_pln_kwh DOUBLE NULL, dhw_temperature_c DOUBLE NULL,
           battery_charge_power_w DOUBLE NULL, battery_discharge_power_w DOUBLE NULL,
-          ev_power_w DOUBLE NULL, dhw_power_w DOUBLE NULL,
+          ev_power_w DOUBLE NULL, dhw_power_w DOUBLE NULL, pv_cwu_on TINYINT NULL,
           source_status VARCHAR(24) NOT NULL, payload_json LONGTEXT NOT NULL,
           INDEX ix_telemetry_slot(slot_start,captured_at)) ENGINE=InnoDB""",
         """CREATE TABLE IF NOT EXISTS ems_gpt_core_hourly (
@@ -157,7 +157,7 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             cur.execute(sql)
         for column in (
             "battery_charge_power_w DOUBLE NULL", "battery_discharge_power_w DOUBLE NULL",
-            "ev_power_w DOUBLE NULL", "dhw_power_w DOUBLE NULL",
+            "ev_power_w DOUBLE NULL", "dhw_power_w DOUBLE NULL", "pv_cwu_on TINYINT NULL",
             "pv1_power_w DOUBLE NULL", "pv2_power_w DOUBLE NULL",
             "hp_outlet_temperature_c DOUBLE NULL", "hp_inlet_temperature_c DOUBLE NULL",
             "hp_compressor_frequency_hz DOUBLE NULL", "hp_compressor_current_a DOUBLE NULL",
