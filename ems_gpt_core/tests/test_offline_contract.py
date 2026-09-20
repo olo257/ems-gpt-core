@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.38.5"', APP_SOURCE)
-        self.assertIn('version: "0.38.5"', CONFIG)
+        self.assertIn('APP_VERSION = "0.38.6"', APP_SOURCE)
+        self.assertIn('version: "0.38.6"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -630,6 +630,22 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("grid_to_battery = min(", SOURCE)
         self.assertIn('"BATTERY_IMPORT": round(grid_to_battery, 6)', SOURCE)
         self.assertNotIn('"BATTERY_IMPORT": round(battery_charge, 6)', SOURCE)
+
+    def test_executor_reads_import_guard_from_exact_plan_run(self):
+        self.assertIn('plan_run_id = str(command.get("plan_version") or "").split(":", 1)[0]', SOURCE)
+        self.assertIn("WHERE slot_start=%s AND plan_run_id=%s AND plan_stage='PUBLISHED'", SOURCE)
+
+    def test_process_execution_separates_cwu_and_export_sources(self):
+        materialization = MODULE_SOURCES["materialization_service.py"]
+        telemetry = MODULE_SOURCES["telemetry_service.py"]
+        schema = MODULE_SOURCES["schema_service.py"]
+        self.assertIn('"pv_cwu_state": "light.sm_pro_3248d_1_grzalka_cwu"', SOURCE)
+        self.assertIn("pv_cwu_on TINYINT NULL", schema)
+        self.assertIn("pv_cwu_on", telemetry)
+        self.assertIn("MAX(pv_cwu_on) pv_cwu_on", materialization)
+        self.assertIn('"PV_CWU": None', materialization)
+        self.assertIn("battery_to_grid = min(", materialization)
+        self.assertIn('"BATTERY_EXPORT": round(battery_to_grid, 6)', materialization)
 
     def test_command_contract_and_ttl_are_present(self):
         for field in ("command_id", "expires_at", "plan_version", "acknowledgement_json"):

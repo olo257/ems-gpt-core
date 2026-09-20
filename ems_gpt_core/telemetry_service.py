@@ -84,18 +84,20 @@ def build_telemetry(a: TelemetryAdapters):
             cur.execute("""INSERT INTO ems_gpt_telemetry_snapshots
               (captured_at,slot_start,soc_pct,pv_power_w,load_power_w,grid_power_w,
                rce_sell_pln_kwh,rce_buy_pln_kwh,dhw_temperature_c,battery_charge_power_w,
-               battery_discharge_power_w,ev_power_w,dhw_power_w,pv1_power_w,pv2_power_w,
+               battery_discharge_power_w,ev_power_w,dhw_power_w,pv_cwu_on,pv1_power_w,pv2_power_w,
                hp_outlet_temperature_c,hp_inlet_temperature_c,hp_compressor_frequency_hz,
                hp_compressor_current_a,hp_flow_l_min,hp_heat_consumption_w,hp_heat_production_w,
                hp_dhw_production_w,hp_cool_consumption_w,hp_cool_production_w,outside_temperature_c,
                hp_operations_counter,hp_operations_hours,source_status,payload_json,
                slot_id,slot_start_utc,slot_start_local,utc_offset_minutes,local_fold,local_day,slot_index_local)
               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                      %s,%s,%s,%s,%s,%s,%s)""",
+                      %s,%s,%s,%s,%s,%s,%s,%s)""",
               (now, start, number(states["soc"]), power_w(states["pv"]), power_w(states["load"]),
                power_w(states["grid"]), rce_sell, rce_buy, number(states["dhw"]),
                battery_charge_w, battery_discharge_w,
                power_w(states["ev_power"]), power_w(states["dhw_power"]),
+               (None if states.get("pv_cwu_state") is None else
+                1 if str(states["pv_cwu_state"].get("state", "")).lower() == "on" else 0),
                power_w(states["pv1"]), power_w(states["pv2"]),
                number(states["hp_outlet"]), number(states["hp_inlet"]),
                number(states["hp_compressor_freq"]), number(states["hp_compressor_current"]),

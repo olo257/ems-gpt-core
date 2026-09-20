@@ -50,7 +50,7 @@ def build_materializations(a: MaterializationAdapters):
                 cur.execute("""SELECT AVG(pv_power_w) pv,AVG(pv1_power_w) pv1,AVG(pv2_power_w) pv2,
                   AVG(load_power_w) load_kwh,AVG(grid_power_w) grid,
                   AVG(battery_charge_power_w) battery_charge,AVG(battery_discharge_power_w) battery_discharge,
-                  AVG(ev_power_w) ev_power,AVG(dhw_power_w) dhw_power,
+                  AVG(ev_power_w) ev_power,AVG(dhw_power_w) dhw_power,MAX(pv_cwu_on) pv_cwu_on,
                   AVG(hp_outlet_temperature_c) hp_outlet,AVG(hp_inlet_temperature_c) hp_inlet,
                   AVG(hp_compressor_frequency_hz) hp_freq,AVG(hp_compressor_current_a) hp_current,
                   AVG(hp_flow_l_min) hp_flow,
@@ -118,6 +118,11 @@ def build_materializations(a: MaterializationAdapters):
                     battery_charge,
                     max(0.0, grid - native_grid_need),
                 )
+                native_pv_export = max(0.0, pv - load)
+                battery_to_grid = min(
+                    battery_discharge,
+                    max(0.0, grid_export - native_pv_export),
+                )
                 coverage=round(min(100.0, samples/15*100),2)
                 cur.execute("""UPDATE ems_gpt_slots SET actual_recorded_at=NOW(6),
                   actual_pv_total_kwh=%s,actual_load_kwh=%s,actual_buy_kwh=%s,
@@ -173,8 +178,13 @@ def build_materializations(a: MaterializationAdapters):
                     observed_energy = {
                         # Below 50 Wh/slot the inverter flow is technical noise, not an EMS process.
                         "BATTERY_IMPORT": round(grid_to_battery, 6) if grid_to_battery >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
-                        "BATTERY_EXPORT": round(battery_discharge, 6) if battery_discharge >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
-                        "PV_CWU": round(dhw_energy, 6),
+                        "BATTERY_EXPORT": round(battery_to_grid, 6) if battery_to_grid >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
+                        # The HP DHW meter belongs to the autonomous heat-pump
+                        # cycle. PV_CWU controls a separate immersion heater
+                        # without its own power meter, so execution state comes
+                        # from the actual controlled entity and energy remains
+                        # unavailable rather than borrowing HP consumption.
+                        "PV_CWU": None,
                         "PV_EV": round(ev_energy, 6),
                         # HP_HEAT_DHW represents space heating. DHW energy is
                         # tracked separately and must not create a false
@@ -193,7 +203,12 @@ def build_materializations(a: MaterializationAdapters):
                         requested = process.get("requested_state")
                         energy_value = observed_energy.get(process["process_name"])
                         running_threshold = 0.02 if process["process_name"] == "HP_HEAT_DHW" else 0.001
-                        observed = None if energy_value is None else ("RUNNING" if energy_value > running_threshold else "IDLE_OR_DISCONNECTED")
+                        if process["process_name"] == "PV_CWU":
+                            observed = (None if m.get("pv_cwu_on") is None else
+                                        "RUNNING" if bool(m.get("pv_cwu_on")) else
+                                        "IDLE_OR_DISCONNECTED")
+                        else:
+                            observed = None if energy_value is None else ("RUNNING" if energy_value > running_threshold else "IDLE_OR_DISCONNECTED")
                         external_manual = requested is None and observed == "RUNNING" and planned == "OFF"
                         effective = ("ON" if requested == "FORCE_ON" else
                                      "OFF" if requested == "FORCE_OFF" else
