@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.38.7"', APP_SOURCE)
-        self.assertIn('version: "0.38.7"', CONFIG)
+        self.assertIn('APP_VERSION = "0.38.8"', APP_SOURCE)
+        self.assertIn('version: "0.38.8"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -703,3 +703,4 @@ class OfflineContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
