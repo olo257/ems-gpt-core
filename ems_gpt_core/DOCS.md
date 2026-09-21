@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja produkcyjna: **0.38.7**.
+Status: obowiązująca. Wersja produkcyjna: **0.38.8**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -158,3 +158,4 @@ Przed scaleniem i publikacją wymagane są:
 
 Zmiana wersji w plikach nie oznacza publikacji. Dopiero scalone wydanie w
 repozytorium jest dostępne dla Home Assistant.
+
