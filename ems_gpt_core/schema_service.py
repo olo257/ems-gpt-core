@@ -1,6 +1,89 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
+
+_SLOT_ID_BACKFILL_KEY = "slot_id_backfill_batched_0_38_8"
+_SLOT_ID_TABLES = (
+    "ems_gpt_core_events",
+    "ems_gpt_core_module_runs",
+    "ems_gpt_core_slot_quality",
+    "ems_gpt_core_process_decisions",
+    "ems_gpt_core_commands",
+    "ems_gpt_core_process_execution",
+    "ems_gpt_core_execution_details",
+)
+
+
+def _index_exists(cur, table: str, index_name: str) -> bool:
+    cur.execute("""SELECT COUNT(*) n FROM information_schema.statistics
+      WHERE table_schema=DATABASE() AND table_name=%s AND index_name=%s""",
+                (table, index_name))
+    return bool(int(cur.fetchone()["n"]))
+
+
+def _ensure_slot_id_backfill_indexes(cur) -> None:
+    if not _index_exists(cur, "ems_gpt_core_slot_calendar", "ix_calendar_local_start_fold"):
+        cur.execute("""ALTER TABLE ems_gpt_core_slot_calendar
+          ADD INDEX ix_calendar_local_start_fold(slot_start_local,local_fold)""")
+    for table in _SLOT_ID_TABLES:
+        index_name = f"ix_{table.removeprefix('ems_gpt_core_')}_slot_id_start"
+        if not _index_exists(cur, table, index_name):
+            cur.execute(
+                f"ALTER TABLE {table} ADD INDEX {index_name}(slot_id,slot_start)"
+            )
+
+
+def _backfill_slot_ids_batched(conn, cur) -> dict:
+    cur.execute("SELECT COUNT(*) n FROM ems_gpt_core_migrations WHERE migration_key=%s",
+                (_SLOT_ID_BACKFILL_KEY,))
+    if int(cur.fetchone()["n"]):
+        return {"status": "ALREADY_APPLIED", "rows": 0, "batches": 0}
+
+    _ensure_slot_id_backfill_indexes(cur)
+    conn.commit()
+    total_rows = 0
+    batches = 0
+    try:
+        for table in _SLOT_ID_TABLES:
+            cur.execute(
+                f"""SELECT DATE(MIN(slot_start)) first_day,
+                           DATE(MAX(slot_start)) last_day
+                    FROM {table} WHERE slot_start IS NOT NULL AND slot_id IS NULL"""
+            )
+            bounds = cur.fetchone()
+            day = bounds["first_day"]
+            last_day = bounds["last_day"]
+            while day is not None and last_day is not None and day <= last_day:
+                next_day = day + timedelta(days=1)
+                cur.execute(
+                    f"""UPDATE {table} t
+                      JOIN ems_gpt_core_slot_calendar c
+                        ON c.slot_start_local=t.slot_start AND c.local_fold=0
+                      SET t.slot_id=c.slot_id
+                      WHERE t.slot_id IS NULL
+                        AND t.slot_start >= %s AND t.slot_start < %s""",
+                    (day, next_day),
+                )
+                total_rows += max(0, int(cur.rowcount))
+                batches += 1
+                conn.commit()
+                day = next_day
+        cur.execute(
+            """INSERT INTO ems_gpt_core_migrations
+              (migration_key,applied_at,details_json) VALUES(%s,NOW(6),%s)""",
+            (_SLOT_ID_BACKFILL_KEY, json.dumps({
+                "scope": "batched_slot_id_backfill",
+                "rows": total_rows,
+                "batches": batches,
+            })),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"status": "APPLIED", "rows": total_rows, "batches": batches}
+
 
 def ensure_runtime_schema(*, db, app_version: str) -> None:
     statements = [
@@ -152,7 +235,7 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
           PRIMARY KEY(local_day,appliance_key), INDEX ix_appliance_key_day(appliance_key,local_day)
         ) ENGINE=InnoDB""",
     ]
-    with db() as conn, conn.cursor() as cur:
+    with db(read_timeout=120, write_timeout=120) as conn, conn.cursor() as cur:
         for sql in statements:
             cur.execute(sql)
         for column in (
@@ -359,13 +442,9 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
                     ("core_schema_0_22_1", json.dumps({"version": app_version, "scope": "outage_recovery_hour_daily_quality"})))
         cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
                     ("core_schema_0_23_0", json.dumps({"version": app_version, "scope": "canonical_utc_dst_slot_calendar_rce_schedule"})))
-        for table in ("ems_gpt_core_events", "ems_gpt_core_module_runs", "ems_gpt_core_slot_quality",
-                      "ems_gpt_core_process_decisions", "ems_gpt_core_commands",
-                      "ems_gpt_core_process_execution", "ems_gpt_core_execution_details"):
+        for table in _SLOT_ID_TABLES:
             cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS slot_id VARCHAR(32) NULL")
-            cur.execute(f"""UPDATE {table} t JOIN ems_gpt_core_slot_calendar c
-              ON c.slot_start_local=t.slot_start AND c.local_fold=0
-              SET t.slot_id=c.slot_id WHERE t.slot_id IS NULL""")
+        _backfill_slot_ids_batched(conn, cur)
         cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
                     ("core_schema_0_24_0", json.dumps({"version": app_version, "scope": "independent_soc_quantitative_allocator_slot_id_relations"})))
         cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
@@ -395,3 +474,4 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             cur.execute(f"""UPDATE {table} SET {column}='NEUTRAL'
               WHERE UPPER(REPLACE({column},' ','')) IN ('NEURAL','NEUTRAL')
                 AND {column}<>'NEUTRAL'""")
+
