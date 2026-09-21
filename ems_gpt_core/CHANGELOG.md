@@ -2,6 +2,15 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.8 — bezpieczna migracja relacji `slot_id`
+
+- Zastąpiono pełne, restartowe `UPDATE JOIN` migracją wykonywaną partiami dobowymi.
+- Przed backfillem tworzone są indeksy dla `slot_id/slot_start` oraz kalendarza lokalnych slotów.
+- Po każdej partii wykonywany jest commit; błąd powoduje rollback bieżącej partii, a kolejny start bezpiecznie wznawia migrację.
+- Po pełnym zakończeniu zapisywany jest trwały marker `slot_id_backfill_batched_0_38_8`; kolejne restarty nie powtarzają aktualizacji historycznej.
+- Połączenie używane przez migrację ma lokalnie wydłużony timeout 120 s, bez zmiany zwykłych połączeń runtime.
+- Dodano test regresyjny symulujący 730 dni historii i 5 110 krótkich partii.
+
 ## 0.38.7
 
 - Naprawiono ostatni etap ochrony `BATTERY_IMPORT`: `planned_buy_kwh` pobrane z
@@ -1404,4 +1413,3 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
 - agregacja dobowa: OK;
 - restart wyłącznie aplikacji: OK, plan i baza zachowane;
 - brak poleceń do urządzeń: potwierdzony.
-
