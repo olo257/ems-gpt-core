@@ -8,7 +8,7 @@ from typing import Any
 
 def build_database(options: dict, timezone: Any):
     @contextmanager
-    def db(database: str | None = None):
+    def db(database: str | None = None, *, read_timeout: int = 30, write_timeout: int = 30):
         import pymysql
         from pymysql.cursors import DictCursor
 
@@ -17,7 +17,7 @@ def build_database(options: dict, timezone: Any):
             user=options["db_user"], password=options["db_password"],
             database=database or options["db_name"], charset="utf8mb4",
             autocommit=False, cursorclass=DictCursor, connect_timeout=10,
-            read_timeout=30, write_timeout=30,
+            read_timeout=read_timeout, write_timeout=write_timeout,
         )
         try:
             with conn.cursor() as cur:
@@ -40,3 +40,4 @@ def build_database(options: dict, timezone: Any):
         return f"`{value}`"
 
     return SimpleNamespace(db=db, qname=qname)
+
