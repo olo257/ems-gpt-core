@@ -152,6 +152,78 @@ def planning_tou_programs(live_programs: list[dict], baseline_json: str) -> list
     return result
 
 
+def tou_sale_safety_floors(rows: list[dict], tou_by_index: list[dict | None],
+                           flows: list[dict], capacity_kwh: float,
+                           reserve_pct: float, eta_d: float,
+                           uncertainty_weight: float,
+                           max_override_minutes: int,
+                           slot_minutes: int,
+                           daily_required_soc: list[float]) -> list[float]:
+    """Protect TOU safety SOC from deliberate export.
+
+    Normally a sale must leave the active TOU baseline plus the battery energy
+    needed by native loads until a later program deliberately lowers that
+    baseline.  Programs 5 and 6 may use a lower floor only when the economic
+    plan contains a real, near-term grid charge on the same local day and the
+    accepted trajectory still closes that day at its required SOC.
+    """
+    if not (len(rows) == len(tou_by_index) == len(flows) == len(daily_required_soc)):
+        raise ValueError("TOU_SALE_FLOOR_LENGTH_MISMATCH")
+    capacity = max(0.001, float(capacity_kwh))
+    reserve = max(0.0, min(100.0, float(reserve_pct)))
+    efficiency = max(0.01, float(eta_d))
+    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
+    max_slots = max(1, int(max_override_minutes) // max(1, int(slot_minutes)))
+    selected_buys = {
+        i for i, flow in enumerate(flows)
+        if float(flow.get("grid_charge_kwh") or 0.0) > 1e-9
+    }
+    floors = [100.0] * len(rows)
+
+    for i, row in enumerate(rows):
+        if not strict_database_bool(row.get("sale_window", False), "sale_window"):
+            continue
+        program = tou_by_index[i]
+        if not program:
+            continue
+        baseline = max(reserve, min(100.0, float(program["soc"])))
+        program_number = int(program["program"])
+        row_day = row.get("local_day") or row["slot_start"].date()
+
+        day_end = i
+        while (day_end + 1 < len(rows)
+               and (rows[day_end + 1].get("local_day")
+                    or rows[day_end + 1]["slot_start"].date()) == row_day):
+            day_end += 1
+        close_safe = (
+            float(flows[day_end].get("soc_end_pct") or reserve) + 0.01
+            >= float(daily_required_soc[day_end])
+        )
+        near_buy = next((j for j in range(i + 1, min(day_end, i + max_slots) + 1)
+                         if j in selected_buys), None)
+        if program_number in {5, 6} and near_buy is not None and close_safe:
+            # The constrained pass still enforces the continuous SOC contract;
+            # this only permits the executor to follow it below the TOU baseline.
+            floors[i] = reserve
+            continue
+
+        stop = day_end + 1
+        for j in range(i + 1, day_end + 1):
+            future_program = tou_by_index[j]
+            if future_program and float(future_program["soc"]) < baseline - 1e-9:
+                stop = j
+                break
+        bridge_internal = 0.0
+        for j in range(i + 1, stop):
+            future = rows[j]
+            load = (max(0.0, float(future.get("forecast_load_kwh") or 0.0))
+                    + max(0.0, float(future.get("forecast_heat_pump_load_kwh") or 0.0)))
+            pv = max(0.0, float(future.get("forecast_pv_total_kwh") or 0.0))
+            bridge_internal += max(0.0, load - pv) / efficiency * (1.0 + uncertainty)
+        floors[i] = min(100.0, baseline + bridge_internal / capacity * 100.0)
+    return floors
+
+
 def battery_sale_economics(rows: list[dict], index: int, eta_c: float, eta_d: float,
                            degradation: float, min_margin: float) -> dict:
     """Describe whether a slot pays for restoring the exported battery energy."""
@@ -1355,6 +1427,43 @@ def build_planner(a: PlannerAdapters):
                         "requested_soc_pct": daily_required_soc[failed_index],
                         "reason": str(exc),
                     }, "WARNING")
+            # Convert the immutable TOU baselines into sale-only safety floors.
+            # Iterate once after applying them because a permitted 5/6 bridge
+            # override is valid only while the resulting plan retains its real
+            # near-term battery BUY.
+            for _ in range(2):
+                guarded_floors = tou_sale_safety_floors(
+                    horizon_rows, tou_by_index, economic_optimization["flows"],
+                    capacity, reserve, eta_d, uncertainty_weight,
+                    int(OPTIONS.get("tou_bridge_override_max_minutes", 180)),
+                    int(OPTIONS["slot_minutes"]), enforced_daily_required)
+                if all(abs(a - b) < 1e-9
+                       for a, b in zip(guarded_floors, optimized_floors)):
+                    break
+                optimized_floors = guarded_floors
+                economic_optimization = optimize_energy_horizon(
+                    horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,
+                    degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
+                    optimized_floors,terminal_soc,internal_soc_step,target_cap,
+                    required_soc_pcts=enforced_daily_required,
+                    battery_sales_enabled=battery_sales_enabled)
+            final_guarded = tou_sale_safety_floors(
+                horizon_rows, tou_by_index, economic_optimization["flows"],
+                capacity, reserve, eta_d, uncertainty_weight,
+                int(OPTIONS.get("tou_bridge_override_max_minutes", 180)),
+                int(OPTIONS["slot_minutes"]), enforced_daily_required)
+            if any(abs(a - b) >= 1e-9
+                   for a, b in zip(final_guarded, optimized_floors)):
+                # A BUY must never validate its own relaxation circularly. If
+                # the two-pass result is not stable, retain the stricter floor.
+                optimized_floors = [max(a, b)
+                                    for a, b in zip(final_guarded, optimized_floors)]
+                economic_optimization = optimize_energy_horizon(
+                    horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,
+                    degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
+                    optimized_floors,terminal_soc,internal_soc_step,target_cap,
+                    required_soc_pcts=enforced_daily_required,
+                    battery_sales_enabled=battery_sales_enabled)
             commitment=build_soc_contracts(
                 horizon_rows,economic_optimization["flows"],capacity,reserve,
                 eta_c,eta_d,uncertainty_weight,terminal_soc,target_cap,0.25,

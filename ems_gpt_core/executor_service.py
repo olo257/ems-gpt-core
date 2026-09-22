@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import uuid
 from dataclasses import dataclass
@@ -144,6 +145,10 @@ def build_executor(a: ExecutorAdapters):
         restore.setdefault(str(program_number), float(configured_original))
         write_program_restore(restore)
         requested = max(0.0, min(100.0, float(target_pct)))
+        if round(float(live_value)) == round(requested):
+            return {"program": program_number, "entity_id": entity_id,
+                    "original_soc_pct": restore[str(program_number)],
+                    "target_soc_pct": round(requested), "already_set": True}
         response = ha_service_response("number", "set_value", {
             "entity_id": entity_id, "value": round(requested),
         })
@@ -199,6 +204,70 @@ def build_executor(a: ExecutorAdapters):
         if not (grid_off and export_off and program_grid_disabled):
             return []
         return restore_program_targets()
+
+    def apply_planned_tou_bridge_override(cur, now: datetime,
+                                          current_slot: datetime) -> dict | None:
+        """Let native load follow a proven program-5/6 bridge to a near BUY."""
+        grid_state = ha_state("switch.inverter_battery_grid_charging") or {}
+        mode_state = ha_state("select.inverter_work_mode") or {}
+        if (str(grid_state.get("state") or "").lower() == "on"
+                or str(mode_state.get("state") or "") == "Export First"):
+            return None
+        program = active_tou_program(now, tou_program_snapshot())
+        if not program or int(program["program"]) not in {5, 6}:
+            restore_program_targets_if_idle()
+            return None
+        cur.execute("""SELECT plan_run_id,local_day,soc_end_plan_pct,soc_required_pct
+          FROM ems_gpt_slots WHERE slot_start=%s AND plan_stage='PUBLISHED'
+          LIMIT 1""", (current_slot,))
+        plan = cur.fetchone() or {}
+        plan_run_id = plan.get("plan_run_id")
+        local_day = plan.get("local_day")
+        target = scalar_number(plan.get("soc_end_plan_pct"))
+        if not plan_run_id or local_day is None or target is None:
+            restore_program_targets_if_idle()
+            return None
+        deadline = current_slot + timedelta(minutes=max(
+            15, int(OPTIONS.get("tou_bridge_override_max_minutes", 180))))
+        threshold = float(OPTIONS.get("planned_flow_threshold_kwh", 0.02))
+        cur.execute("""SELECT slot_start FROM ems_gpt_slots
+          WHERE plan_run_id=%s AND plan_stage='PUBLISHED' AND local_day=%s
+            AND slot_start>%s AND slot_start<=%s AND planned_buy_kwh>%s
+          ORDER BY slot_start LIMIT 1""",
+          (plan_run_id, local_day, current_slot, deadline, threshold))
+        next_buy = cur.fetchone()
+        cur.execute("""SELECT soc_end_plan_pct,soc_required_pct FROM ems_gpt_slots
+          WHERE plan_run_id=%s AND plan_stage='PUBLISHED' AND local_day=%s
+          ORDER BY slot_start DESC LIMIT 1""", (plan_run_id, local_day))
+        day_close = cur.fetchone() or {}
+        close_end = scalar_number(day_close.get("soc_end_plan_pct"))
+        close_required = scalar_number(day_close.get("soc_required_pct"))
+        close_safe = (close_end is not None and close_required is not None
+                      and close_end + 0.01 >= close_required)
+        if not next_buy or not close_safe:
+            restore_program_targets_if_idle()
+            return None
+        try:
+            baselines = json.loads(str(OPTIONS.get(
+                "deye_program_soc_baseline_json", "{}")))
+            baseline = float(baselines[str(int(program["program"]))])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            restore_program_targets_if_idle()
+            return None
+        requested = max(float(OPTIONS.get("battery_min_soc_pct", 15.0)),
+                        min(baseline, math.ceil(target - 1e-9)))
+        if requested >= baseline - 0.01:
+            restore_program_targets_if_idle()
+            return None
+        set_active_program_charging(now, "Disabled")
+        update = set_active_program_target(now, requested)
+        record_event("tou_native_load_bridge_override", "executor", {
+            **update, "slot_start": str(current_slot),
+            "next_buy_slot": str(next_buy["slot_start"]),
+            "daily_close_soc_pct": close_end,
+            "daily_required_soc_pct": close_required,
+        })
+        return update
 
     def settings_payload() -> dict:
         result = {key: {"value": float(OPTIONS[key]), "min": spec[0], "max": spec[1],
@@ -720,6 +789,10 @@ def build_executor(a: ExecutorAdapters):
                     "actions": guard_actions, "live_soc": live_soc,
                     "planned_end_soc": plan.get("soc_end_plan_pct"), "slot_start": current_slot,
                 })
+            # Outside active BUY/SELL, programs 5/6 may follow the published
+            # native-load trajectory only when a near same-day BUY and the
+            # protected daily close are both present in the same plan version.
+            apply_planned_tou_bridge_override(cur, now, current_slot)
         return {"status": "DISPATCHED", "dispatched": dispatched}
     
     

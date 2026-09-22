@@ -172,6 +172,12 @@ pełnego cyklu wraz ze sprawnościami, degradacją i możliwością odtworzenia 
   SOC tego slotu.
 - Celowa sprzedaż nie może zakończyć slotu poniżej `soc_floor` ani naruszyć
   energii zarezerwowanej przez `soc_target`.
+- Dla aktywnego programu TOU floor sprzedaży obejmuje jego bazowy próg SOC oraz
+  prognozowaną energię odbiorów do wejścia następnego, niższego programu. Chroni
+  to przed importem domu bezpośrednio po zakończeniu sprzedaży.
+- Tylko programy 5 i 6 mogą czasowo zejść poniżej bazowego progu: ten sam plan
+  musi zawierać ilościowy BUY w skonfigurowanym krótkim horyzoncie i zachować
+  wymagany SOC zamknięcia doby. Brak któregokolwiek warunku przywraca baseline.
 
 ## 7. Priorytet wykorzystania PV
 
