@@ -2,6 +2,18 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.38.9 — ochrona SOC po sprzedaży i kontrolowany most do BUY
+
+- Sprzedaż z baterii zachowuje bazowy SOC aktywnego programu TOU oraz energię
+  potrzebną odbiorom do chwili wejścia kolejnego, niższego programu. Planner
+  nie może już sprzedać dokładnie do 40% i wymusić później importu dla domu.
+- Programy 5 i 6 mogą zostać tymczasowo obniżone wyłącznie wtedy, gdy ten sam
+  opublikowany plan zawiera rzeczywisty zakup do baterii w ciągu maksymalnie
+  180 minut oraz bezpieczne zamknięcie doby co najmniej na `soc_required`.
+- Executor prowadzi próg programu 5/6 za ilościową trajektorią SOC, wyłącza
+  ładowanie programu podczas mostu i przywraca bazowe wartości po utracie
+  warunków, zmianie planu lub zakończeniu zakupu.
+
 ## 0.38.8 — bezpieczna migracja relacji `slot_id`
 
 - Zastąpiono pełne, restartowe `UPDATE JOIN` migracją wykonywaną partiami dobowymi.

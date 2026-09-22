@@ -1,5 +1,5 @@
 name: EMS-GPT Core
-version: "0.38.8"
+version: "0.38.9"
 slug: ems_gpt_core
 description: Niezależny silnik planowania i analityki EMS-GPT
 url: https://github.com/olo257/ems-gpt-core
@@ -33,6 +33,7 @@ options:
   bootstrap_from_source: false
   direct_battery_power_mode: discharge_positive
   deye_program_soc_baseline_json: '{"1":20,"2":20,"3":40,"4":40,"5":40,"6":30}'
+  tou_bridge_override_max_minutes: 180
   executor_enabled: false
   executor_dry_run: true
   executor_activation_ack: ""
@@ -66,6 +67,7 @@ schema:
   bootstrap_from_source: bool
   direct_battery_power_mode: list(legacy_helpers|charge_positive|discharge_positive)
   deye_program_soc_baseline_json: str
+  tou_bridge_override_max_minutes: int(15,720)
   executor_enabled: bool
   executor_dry_run: bool
   executor_activation_ack: str
@@ -81,4 +83,3 @@ schema:
   executor_hp_heat_dhw_on_script: str
   executor_hp_heat_dhw_off_script: str
   ai_observer_enabled: bool
-
