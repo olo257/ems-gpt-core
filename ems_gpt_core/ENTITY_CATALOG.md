@@ -1,6 +1,6 @@
 # EMS-GPT Core — katalog helperów i encji Home Assistant
 
-Status: wygenerowano na podstawie bieżącego kodu wersji 0.37.5. Ten katalog
+Status: zaktualizowano dla kodu wersji 0.39.0. Ten katalog
 opisuje faktyczne odczyty i zapisy. Core nie tworzy żadnej z wymienionych encji.
 
 ## 1. Helpery wymagane przez Core
@@ -31,7 +31,7 @@ konfiguracji runtime.
 | `sensor.inverter_grid_power` | moc wymiany z siecią |
 | `sensor.inverter_battery_power` | bezpośrednia moc baterii; znak według `direct_battery_power_mode` |
 | `sensor.sonoff_1002270ef4_power` | moc ładowania EV |
-| `sensor.klimat_w_ogrodzie_temperature` | rzeczywista temperatura zewnętrzna |
+| `garden_temperature_entity` (domyślnie `sensor.klimat_w_ogrodzie_temperature`) | rzeczywista temperatura zewnętrzna |
 
 Próbki są zapisywane do `ems_gpt_telemetry_snapshots`. Brak części encji daje
 status próbki `PARTIAL`; brak wszystkich blokuje świeżość telemetrii.
@@ -76,8 +76,8 @@ Encje energii do uzgadniania i odtwarzania danych:
 | `sensor.open_meteo_pv2_w_energy_production_tomorrow` | energia PV2 na jutro |
 | `weather.dom` | godzinowa prognoza temperatury, zachmurzenia i opadów przez `weather.get_forecasts` |
 
-Do automatycznego `HP_HEAT_DHW` kwalifikuje rzeczywista temperatura z
-`sensor.klimat_w_ogrodzie_temperature`: wymagane są co najmniej 3 zapisy z
+Do automatycznego `HP_HEAT_DHW` kwalifikuje rzeczywista temperatura z encji
+ustawionej jako `garden_temperature_entity`: wymagane są co najmniej 3 zapisy z
 okna 00:00–06:00. Prognoza z `weather.dom` nie bierze udziału w tej decyzji.
 
 ## 5. Encje falownika Deye

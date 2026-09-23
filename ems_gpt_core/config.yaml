@@ -1,5 +1,5 @@
 name: EMS-GPT Core
-version: "0.38.9"
+version: "0.39.0"
 slug: ems_gpt_core
 description: Niezależny silnik planowania i analityki EMS-GPT
 url: https://github.com/olo257/ems-gpt-core
@@ -32,7 +32,13 @@ options:
   source_db: ems_gpt
   bootstrap_from_source: false
   direct_battery_power_mode: discharge_positive
-  deye_program_soc_baseline_json: '{"1":20,"2":20,"3":40,"4":40,"5":40,"6":30}'
+  deye_program_1_soc_pct: 10
+  deye_program_2_soc_pct: 10
+  deye_program_3_soc_pct: 10
+  deye_program_4_soc_pct: 10
+  deye_program_5_soc_pct: 10
+  deye_program_6_soc_pct: 30
+  garden_temperature_entity: sensor.klimat_w_ogrodzie_temperature
   tou_bridge_override_max_minutes: 180
   executor_enabled: false
   executor_dry_run: true
@@ -66,7 +72,13 @@ schema:
   source_db: str
   bootstrap_from_source: bool
   direct_battery_power_mode: list(legacy_helpers|charge_positive|discharge_positive)
-  deye_program_soc_baseline_json: str
+  deye_program_1_soc_pct: int(0,100)
+  deye_program_2_soc_pct: int(0,100)
+  deye_program_3_soc_pct: int(0,100)
+  deye_program_4_soc_pct: int(0,100)
+  deye_program_5_soc_pct: int(0,100)
+  deye_program_6_soc_pct: int(0,100)
+  garden_temperature_entity: str
   tou_bridge_override_max_minutes: int(15,720)
   executor_enabled: bool
   executor_dry_run: bool

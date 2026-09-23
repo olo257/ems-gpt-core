@@ -19,6 +19,7 @@ from planner_service import (
     optimize_energy_horizon,
     pv_first_target_caps,
     next_replenishment_prices,
+    morning_sale_soc_requirements,
     planning_tou_programs,
     strict_database_bool,
     historical_terminal_soc,
@@ -538,13 +539,31 @@ class PairedArbitrageTests(unittest.TestCase):
             {"program": 4, "soc": 100, "time": "19:30"},
             {"program": 5, "soc": 40, "time": "20:30"},
         ]
-        result = planning_tou_programs(live, '{"4":40,"5":40}')
+        result = planning_tou_programs(live, {"4": 40, "5": 40})
         self.assertEqual([row["soc"] for row in result], [40.0, 40.0])
         self.assertEqual([row["time"] for row in result], ["19:30", "20:30"])
 
     def test_missing_planning_baseline_fails_closed(self):
         with self.assertRaisesRegex(RuntimeError, "DEYE_PROGRAM_SOC_BASELINE_MISSING:4"):
-            planning_tou_programs([{"program": 4, "soc": 100}], '{}')
+            planning_tou_programs([{"program": 4, "soc": 100}], {})
+
+    def test_morning_sale_requirement_protects_soc_after_overnight_load(self):
+        start = datetime(2026, 9, 24, 5, 45)
+        rows = []
+        for index in range(8):
+            slot = start + timedelta(minutes=15 * index)
+            rows.append({
+                "slot_start": slot,
+                "slot_start_local": slot,
+                "local_day": slot.date(),
+                "sale_window": index >= 5,
+            })
+        requirements, protected = morning_sale_soc_requirements(
+            rows, [15.0] * len(rows), {start.date(): 40.0})
+        self.assertEqual(protected, [4])
+        self.assertEqual(requirements[4], 40.0)
+        self.assertTrue(all(requirements[index] == 15.0
+                            for index in range(len(rows)) if index != 4))
 
     @staticmethod
     def optimize(rows, initial_soc=40.0, terminal_soc=40.0, floors=None):

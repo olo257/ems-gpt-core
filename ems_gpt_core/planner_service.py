@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from typing import Callable
 
+from config_service import deye_program_soc_baselines
 from ingestion_service import derive_price_windows
 
 
@@ -135,12 +136,8 @@ def pv_first_target_caps(rows: list[dict], flows: list[dict],
     return caps
 
 
-def planning_tou_programs(live_programs: list[dict], baseline_json: str) -> list[dict]:
+def planning_tou_programs(live_programs: list[dict], baselines: dict[str, float]) -> list[dict]:
     """Use live TOU times but immutable configured SOC baselines for planning."""
-    try:
-        baselines = json.loads(str(baseline_json or "{}"))
-    except json.JSONDecodeError as exc:
-        raise RuntimeError("DEYE_PROGRAM_SOC_BASELINE_INVALID") from exc
     result = []
     for live in live_programs:
         program = int(live["program"])
@@ -247,6 +244,39 @@ def battery_sale_economics(rows: list[dict], index: int, eta_c: float, eta_d: fl
         ),
         "eligible": required_sell is not None and sell_now >= required_sell,
     }
+
+
+def morning_sale_soc_requirements(rows: list[dict], required_soc_pcts: list[float],
+                                  daily_terminal_soc: dict) -> tuple[list[float], list[int]]:
+    """Require the historical daily SOC target immediately before a morning sale.
+
+    The midnight boundary alone is insufficient: native overnight load can
+    consume that reserve before the first high-price sale slot.  Placing the
+    same quantitative requirement on the slot immediately preceding the
+    morning SELL transition makes the optimizer preserve (or economically
+    rebuild in an earlier BUY window) enough energy for the morning peak.
+    """
+    if len(rows) != len(required_soc_pcts):
+        raise ValueError("rows and required SOC lengths differ")
+    result = list(required_soc_pcts)
+    protected_indices = []
+    for index in range(1, len(rows)):
+        row = rows[index]
+        previous = rows[index - 1]
+        slot_time = row.get("slot_start_local") or row["slot_start"]
+        sale_starts = (strict_database_bool(row.get("sale_window"), "sale_window")
+                       and not strict_database_bool(
+                           previous.get("sale_window"), "sale_window"))
+        if not sale_starts or slot_time.hour >= 12:
+            continue
+        sale_day = row.get("local_day") or slot_time.date()
+        target = daily_terminal_soc.get(sale_day)
+        if target is None:
+            continue
+        protected_index = index - 1
+        result[protected_index] = max(result[protected_index], float(target))
+        protected_indices.append(protected_index)
+    return result, protected_indices
 
 
 def economic_sell_indices(rows: list[dict], eta_c: float, eta_d: float,
@@ -1138,7 +1168,7 @@ def build_planner(a: PlannerAdapters):
         run_id = str(uuid.uuid4())
         hp_shortfalls = []
         tou_programs = planning_tou_programs(
-            tou_program_snapshot(), OPTIONS.get("deye_program_soc_baseline_json", "{}"))
+            tou_program_snapshot(), deye_program_soc_baselines(OPTIONS))
         with db() as conn, conn.cursor() as cur:
             cur.execute("""SELECT * FROM ems_gpt_slots
               WHERE slot_start>=%s AND actual_recorded_at IS NULL
@@ -1378,6 +1408,14 @@ def build_planner(a: PlannerAdapters):
                             if index + 1 < len(horizon_rows) else None)
                 if next_day != row_day:
                     daily_required_soc[index] = daily_terminal_soc[row_day]
+            daily_required_soc, morning_protected_indices = morning_sale_soc_requirements(
+                horizon_rows, daily_required_soc, daily_terminal_soc)
+            for index in morning_protected_indices:
+                record_event("morning_sale_soc_protected", "planner", {
+                    "slot_start": str(horizon_rows[index]["slot_start"]),
+                    "required_soc_pct": round(daily_required_soc[index], 3),
+                    "sale_slot_start": str(horizon_rows[index + 1]["slot_start"]),
+                })
             audit_stage(cur,run_id,"WINDOW_CANDIDATES","OK",len(rows),"pass 1: full horizon")
             audit_stage(cur,run_id,"LOAD","OK",len(rows),"pass 2: native and controllable load")
             audit_stage(cur,run_id,"PV","OK",len(rows),"pass 3: corrected PV balance")

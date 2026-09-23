@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja produkcyjna: **0.38.8**.
+Status: obowiązująca. Wersja przygotowana: **0.39.0**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -62,6 +62,10 @@ Zabronione jest tworzenie lub aktualizowanie przez Core:
 Core odczytuje istniejącą telemetrię instalacji, między innymi SOC baterii,
 temperaturę ogrodu, `weather.dom` i prognozy PV. Nazwy tych encji są częścią
 konfiguracji integracji, a nie encjami tworzonymi przez Core.
+
+SOC sześciu programów Deye oraz encja temperatury ogrodu mają jedno źródło
+prawdy: opcje dodatku Supervisor. Nie są zapisywane w konfiguracji runtime
+panelu aplikacji. Programy 1–5 mają bazowo 10%, a program 6 — 30%.
 
 ## 4. Pompa ciepła `HP_HEAT_DHW`
 
@@ -158,4 +162,3 @@ Przed scaleniem i publikacją wymagane są:
 
 Zmiana wersji w plikach nie oznacza publikacji. Dopiero scalone wydanie w
 repozytorium jest dostępne dla Home Assistant.
-

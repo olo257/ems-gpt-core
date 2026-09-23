@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.38.8"', APP_SOURCE)
-        self.assertIn('version: "0.38.8"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.0"', APP_SOURCE)
+        self.assertIn('version: "0.39.0"', CONFIG)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
@@ -42,7 +42,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("target_due_indices=set()",planner)
         self.assertNotIn('raise RuntimeError(\n                        f"SOC_TARGET_PATH_OSCILLATION',planner)
 
-    def test_daily_exposes_learning_counts_soc_means_and_pv_bounds(self):
+    def test_daily_exposes_soc_means_and_pv_bounds_without_global_counts(self):
         schema=MODULE_SOURCES["schema_service.py"]
         api=MODULE_SOURCES["api_service.py"]
         materializations=MODULE_SOURCES["materialization_service.py"]
@@ -53,8 +53,8 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(field,WEBUI)
         for field in ("daily_record_count","learning_record_count",
                       "non_learning_record_count"):
-            self.assertIn(field,api)
-            self.assertIn(field,WEBUI)
+            self.assertNotIn(field,api)
+            self.assertNotIn(field,WEBUI)
         self.assertIn("actual_pv_total_kwh>0.001",materializations)
 
     def test_four_soc_contracts_are_persisted_and_visible(self):
@@ -656,7 +656,7 @@ class OfflineContractTests(unittest.TestCase):
     def test_soc_program_writes_are_scoped_and_restored(self):
         for marker in ("soc_programs_1_6_write_allowed", "soc_restore_required",
                        "battery_program_soc_restore.json", "restore_program_targets",
-                       "deye_program_soc_baseline_json"):
+                       "deye_program_soc_baselines"):
             self.assertIn(marker, SOURCE)
         import_off = SOURCE.index('if command["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"} and command["decision"] == "OFF"')
         disable_grid = SOURCE.index('set_active_program_charging(now, "Disabled")', import_off)
@@ -676,7 +676,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn('effective_floor=max(reserve,tou_floor)', planner)
 
     def test_outside_temperature_contract(self):
-        self.assertIn('"outside_temperature": "sensor.klimat_w_ogrodzie_temperature"', SOURCE)
+        self.assertIn('"outside_temperature": OPTIONS["garden_temperature_entity"]', SOURCE)
+        self.assertIn("garden_temperature_entity", CONFIG)
 
     def test_missing_optional_sensor_is_safe(self):
         self.assertIn("if not isinstance(state, dict):", SOURCE)
@@ -703,4 +704,3 @@ class OfflineContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
