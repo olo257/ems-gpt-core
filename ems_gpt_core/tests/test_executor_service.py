@@ -131,7 +131,9 @@ class ExecutorServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             service_under_test = build_executor(ExecutorAdapters(
                 options={"executor_enabled": True, "executor_dry_run": False,
-                         "deye_program_soc_baseline_json": '{"4":40}'},
+                         **{f"deye_program_{program}_soc_pct":
+                            (40 if program == 4 else 10)
+                            for program in range(1, 7)}},
                 operational_settings={},
                 runtime_settings_path=pathlib.Path(directory) / "runtime-settings.json",
                 lock=RLock(), state={"modules": {}, "executor": "LIVE"},

@@ -36,7 +36,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.38.8"
+APP_VERSION = "0.39.0"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -133,7 +133,7 @@ ENTITIES = {
     "hp_compressor_freq": "sensor.panasonic_heat_pump_main_compressor_freq",
     "hp_compressor_current": "sensor.panasonic_heat_pump_main_compressor_current",
     "hp_flow": "sensor.panasonic_heat_pump_main_pump_flow",
-    "outside_temperature": "sensor.klimat_w_ogrodzie_temperature",
+    "outside_temperature": OPTIONS["garden_temperature_entity"],
     "hp_heat_consumption": "sensor.panasonic_heat_pump_main_heat_power_consumption",
     "hp_heat_production": "sensor.panasonic_heat_pump_main_heat_power_production",
     "hp_dhw_production": "sensor.panasonic_heat_pump_main_dhw_power_production",
@@ -448,4 +448,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

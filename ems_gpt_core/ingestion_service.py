@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from typing import Any, Callable
 from urllib.parse import urlencode
 
+from config_service import deye_program_soc_baselines
+
 
 def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
                          degradation: float, min_margin: float,
@@ -202,7 +204,7 @@ def build_ingestion(a: IngestionAdapters):
         degradation=max(0,float(OPTIONS.get("battery_degradation_cost_pln_kwh",.08)))
         min_margin=max(0,float(OPTIONS.get("minimum_arbitrage_margin_pln_kwh",.05)))
         buy_tolerance=max(0.0,float(OPTIONS.get("buy_window_tolerance_pln_kwh",.05)))
-        baseline=json.loads(str(OPTIONS.get("deye_program_soc_baseline_json") or "{}"))
+        baseline=deye_program_soc_baselines(OPTIONS)
         terminal_pct=max([float(value) for value in baseline.values()] or [15.0])
         capacity=max(1.0,float(OPTIONS.get("battery_capacity_kwh",15.0)))
         reserve=max(0.0,float(OPTIONS.get("battery_min_soc_pct",15.0)))

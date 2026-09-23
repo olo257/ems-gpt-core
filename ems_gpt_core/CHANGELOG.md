@@ -2,6 +2,21 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.0 — jedno źródło konfiguracji i ochrona porannego SOC
+
+- Zastąpiono `deye_program_soc_baseline_json` sześcioma osobnymi opcjami
+  dodatku. Programy 1–5 mają wartość 10%, program 6 — 30%. Panel aplikacji nie
+  przechowuje drugiej kopii tych parametrów, a dawna wartość runtime jest
+  jawnie ignorowana.
+- Encja rzeczywistej temperatury ogrodu jest opcją dodatku
+  `garden_temperature_entity`; nie jest już wpisana na sztywno w `app.py`.
+- Widok Daily nie wykonuje globalnego zliczania wszystkich dób i nie pokazuje
+  pól `Doby razem`, `Doby do nauki` ani `Doby poza nauką`.
+- Przed rozpoczęciem porannego okna SELL planer wymaga historycznego targetu
+  końcowego SOC danej doby. Bilans wsteczny zachowuje dodatkowo energię na
+  nocne odbiory, dlatego target północy nie może zostać zużyty przed porannym
+  szczytem RCE.
+
 ## 0.38.9 — ochrona SOC po sprzedaży i kontrolowany most do BUY
 
 - Sprzedaż z baterii zachowuje bazowy SOC aktywnego programu TOU oraz energię

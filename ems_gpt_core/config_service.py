@@ -4,6 +4,38 @@ import json
 from pathlib import Path
 
 
+DEYE_PROGRAM_SOC_DEFAULTS = {
+    "deye_program_1_soc_pct": 10,
+    "deye_program_2_soc_pct": 10,
+    "deye_program_3_soc_pct": 10,
+    "deye_program_4_soc_pct": 10,
+    "deye_program_5_soc_pct": 10,
+    "deye_program_6_soc_pct": 30,
+}
+
+# These values belong exclusively to Supervisor add-on options. They must
+# never be shadowed by runtime-settings.json written from the application UI.
+ADDON_ONLY_SETTINGS = {
+    *DEYE_PROGRAM_SOC_DEFAULTS,
+    "garden_temperature_entity",
+}
+
+
+def deye_program_soc_baselines(options: dict) -> dict[str, float]:
+    """Return the six validated TOU SOC values from add-on configuration."""
+    result = {}
+    for program in range(1, 7):
+        key = f"deye_program_{program}_soc_pct"
+        try:
+            value = float(options[key])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"DEYE_PROGRAM_SOC_BASELINE_INVALID:{program}") from exc
+        if not 0.0 <= value <= 100.0:
+            raise RuntimeError(f"DEYE_PROGRAM_SOC_BASELINE_INVALID:{program}:{value}")
+        result[str(program)] = value
+    return result
+
+
 OPERATIONAL_SETTINGS = {
     "purchase_margin_pln_kwh": (0.0, 5.0, "Marża zakupu [PLN/kWh]", "Ceny i ekonomia"),
     "minimum_arbitrage_margin_pln_kwh": (0.0, 5.0, "Minimalna marża arbitrażu [PLN/kWh]", "Ceny i ekonomia"),
@@ -92,10 +124,6 @@ CONFIG_SETTINGS.update({
         "type": "boolean", "label": "Korekta PV z historii", "group": "Prognozy i procesy"
     },
 })
-CONFIG_SETTINGS["deye_program_soc_baseline_json"] = {
-    "type": "text", "label": "Bazowe SOC programów Deye [JSON]", "group": "Bateria"
-}
-
 EXECUTOR_SCRIPT_DEFAULTS = {
     "executor_battery_import_on_script": "script.ems_gpt_core_battery_import_on",
     "executor_battery_import_off_script": "script.ems_gpt_core_battery_import_off",
@@ -142,7 +170,8 @@ DEFAULT_OPTIONS = {
     "technical_flow_threshold_kwh": 0.05,
     "soc_floor_max_pct": 90.0,
     "soc_target_max_pct": 95.0,
-    "deye_program_soc_baseline_json": '{"1":20,"2":20,"3":40,"4":40,"5":40,"6":30}',
+    **DEYE_PROGRAM_SOC_DEFAULTS,
+    "garden_temperature_entity": "sensor.klimat_w_ogrodzie_temperature",
     "night_heating_threshold_c": 10.0,
     "hp_min_heating_hours": 10.0,
     "hp_min_cycle_hours": 2.0,
@@ -206,9 +235,15 @@ for _key, (_label, _energy, _power, _water, _state, _counter, _threshold) in APP
 
 def load_options(options_path: Path, runtime_settings_path: Path) -> dict:
     result = dict(DEFAULT_OPTIONS)
-    for path in (options_path, runtime_settings_path):
-        try:
-            result.update(json.loads(path.read_text(encoding="utf-8")))
-        except FileNotFoundError:
-            pass
+    try:
+        result.update(json.loads(options_path.read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        pass
+    try:
+        runtime = json.loads(runtime_settings_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        runtime = {}
+    result.update({key: value for key, value in runtime.items()
+                   if key not in ADDON_ONLY_SETTINGS
+                   and key != "deye_program_soc_baseline_json"})
     return result

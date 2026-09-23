@@ -142,6 +142,13 @@ prognoza rzeczywistego SOC zamknięcia z niezależnych okien 7/14/28 dni.
 Granica dotyczy każdej doby w horyzoncie, jest zaokrąglana w górę do kroku SOC
 i nie może zostać wyzerowana przez BUY lub PV następnego dnia.
 
+Jeżeli kolejna doba zawiera poranne okno `SELL`, ten sam minimalny SOC jest
+wymagany również na końcu slotu bezpośrednio poprzedzającego początek tego
+okna. Bilans wsteczny musi zatem zachować na koniec poprzedniej doby dodatkową
+energię potrzebną na nocne odbiory. BUY może ją uzupełnić wyłącznie w
+rzeczywistym oknie zakupu; w przeciwnym razie wcześniejsza sprzedaż baterii
+jest ograniczana.
+
 Target obejmuje:
 
 - prognozowane zużycie do granicy uzupełnienia;

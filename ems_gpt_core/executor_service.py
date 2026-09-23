@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
+from config_service import deye_program_soc_baselines
+
 
 def scalar_number(value) -> float | None:
     """Parse a numeric SQL scalar without using the HA-state adapter."""
@@ -136,11 +138,7 @@ def build_executor(a: ExecutorAdapters):
         if live_value is None:
             raise RuntimeError("ACTIVE_TOU_SOC_UNAVAILABLE")
         restore = read_program_restore()
-        try:
-            configured_baselines = json.loads(str(OPTIONS.get(
-                "deye_program_soc_baseline_json", "{}")))
-        except json.JSONDecodeError as exc:
-            raise RuntimeError("DEYE_PROGRAM_SOC_BASELINE_INVALID") from exc
+        configured_baselines = deye_program_soc_baselines(OPTIONS)
         configured_original = configured_baselines.get(str(program_number), live_value)
         restore.setdefault(str(program_number), float(configured_original))
         write_program_restore(restore)
@@ -248,10 +246,8 @@ def build_executor(a: ExecutorAdapters):
             restore_program_targets_if_idle()
             return None
         try:
-            baselines = json.loads(str(OPTIONS.get(
-                "deye_program_soc_baseline_json", "{}")))
-            baseline = float(baselines[str(int(program["program"]))])
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            baseline = deye_program_soc_baselines(OPTIONS)[str(int(program["program"]))]
+        except (KeyError, RuntimeError):
             restore_program_targets_if_idle()
             return None
         requested = max(float(OPTIONS.get("battery_min_soc_pct", 15.0)),
