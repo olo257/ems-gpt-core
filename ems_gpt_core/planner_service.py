@@ -1509,6 +1509,58 @@ def build_planner(a: PlannerAdapters):
                     "shortfall_pct": economic_optimization["terminal_shortfall_pct"],
                     "battery_sales_enabled": battery_sales_enabled,
                 }, "WARNING")
+
+            def optimize_remaining_pass(
+                    pass_name: str, floors: list[float],
+                    minimum_targets: list[float] | None = None,
+                    hard_indices: set[int] | None = None,
+                    due_indices: set[int] | None = None,
+                    required_pcts: list[float] | None = None) -> dict:
+                """Apply the terminal-SOC recovery contract to every later pass."""
+                nonlocal battery_sales_enabled, terminal_shortfall_allowed, terminal_soc
+                requested_terminal_soc = terminal_soc
+                while True:
+                    try:
+                        result = optimize_energy_horizon(
+                            horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,
+                            degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
+                            floors,terminal_soc,internal_soc_step,target_cap,
+                            minimum_targets,hard_indices,due_indices,required_pcts,
+                            battery_sales_enabled=battery_sales_enabled,
+                            allow_terminal_shortfall=terminal_shortfall_allowed)
+                        break
+                    except RuntimeError as exc:
+                        if str(exc) != "No feasible terminal SOC state for complete horizon":
+                            raise
+                        if battery_sales_enabled:
+                            battery_sales_enabled = False
+                            record_event("battery_sales_disabled_for_terminal_soc", "planner", {
+                                "stage": pass_name,
+                                "terminal_day": str(terminal_day),
+                                "requested_soc_pct": terminal_soc,
+                                "reason": str(exc),
+                            }, "WARNING")
+                            continue
+                        if terminal_day != local_now().date():
+                            raise
+                        terminal_shortfall_allowed = True
+                        record_event("current_day_terminal_soc_best_effort", "planner", {
+                            "stage": pass_name,
+                            "terminal_day": str(terminal_day),
+                            "requested_soc_pct": terminal_soc,
+                            "reason": str(exc),
+                        }, "WARNING")
+                if result.get("terminal_shortfall_pct", 0.0) > 1e-9:
+                    terminal_soc = float(result["achieved_terminal_soc_pct"])
+                    record_event("current_day_terminal_soc_unreachable", "planner", {
+                        "stage": pass_name,
+                        "terminal_day": str(terminal_day),
+                        "requested_soc_pct": requested_terminal_soc,
+                        "achieved_soc_pct": terminal_soc,
+                        "shortfall_pct": result["terminal_shortfall_pct"],
+                        "battery_sales_enabled": battery_sales_enabled,
+                    }, "WARNING")
+                return result
             # Convert the immutable TOU baselines into sale-only safety floors.
             # Iterate once after applying them because a permitted 5/6 bridge
             # override is valid only while the resulting plan retains its real
@@ -1523,12 +1575,9 @@ def build_planner(a: PlannerAdapters):
                        for a, b in zip(guarded_floors, optimized_floors)):
                     break
                 optimized_floors = guarded_floors
-                economic_optimization = optimize_energy_horizon(
-                    horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,
-                    degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
-                    optimized_floors,terminal_soc,internal_soc_step,target_cap,
-                    required_soc_pcts=enforced_daily_required,
-                    battery_sales_enabled=battery_sales_enabled)
+                economic_optimization = optimize_remaining_pass(
+                    "TOU_GUARD_ITERATION", optimized_floors,
+                    required_pcts=enforced_daily_required)
             final_guarded = tou_sale_safety_floors(
                 horizon_rows, tou_by_index, economic_optimization["flows"],
                 capacity, reserve, eta_d, uncertainty_weight,
@@ -1540,12 +1589,9 @@ def build_planner(a: PlannerAdapters):
                 # the two-pass result is not stable, retain the stricter floor.
                 optimized_floors = [max(a, b)
                                     for a, b in zip(final_guarded, optimized_floors)]
-                economic_optimization = optimize_energy_horizon(
-                    horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,
-                    degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
-                    optimized_floors,terminal_soc,internal_soc_step,target_cap,
-                    required_soc_pcts=enforced_daily_required,
-                    battery_sales_enabled=battery_sales_enabled)
+                economic_optimization = optimize_remaining_pass(
+                    "TOU_GUARD_FINAL", optimized_floors,
+                    required_pcts=enforced_daily_required)
             commitment=build_soc_contracts(
                 horizon_rows,economic_optimization["flows"],capacity,reserve,
                 eta_c,eta_d,uncertainty_weight,terminal_soc,target_cap,0.25,
@@ -1557,12 +1603,9 @@ def build_planner(a: PlannerAdapters):
                     charge_targets[index], daily_required_soc[index])
             target_due_indices=set(commitment["buy_due_indices"])
             selected_buy_indices=set(commitment["selected_buy_indices"])
-            optimization=optimize_energy_horizon(
-                horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,degradation,min_margin,
-                max_kw,int(OPTIONS["slot_minutes"]),optimized_floors,
-                terminal_soc,internal_soc_step,target_cap,charge_targets,set(),
-                target_due_indices,required_soc,
-                battery_sales_enabled=battery_sales_enabled)
+            optimization=optimize_remaining_pass(
+                "TARGET_COMMITMENT", optimized_floors, charge_targets, set(),
+                target_due_indices, required_soc)
             targets=list(optimization.get("effective_target_pcts",charge_targets))
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
