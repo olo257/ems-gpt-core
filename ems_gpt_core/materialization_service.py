@@ -623,8 +623,11 @@ def build_materializations(a: MaterializationAdapters):
                 # provides the slot-specific profile.
                 if row.get("forecast_load_kwh") is not None:
                     continue
-                cur.execute("""SELECT AVG(actual_load_kwh) value FROM (
-                  SELECT actual_load_kwh FROM ems_gpt_slots
+                cur.execute("""SELECT AVG(native_load_kwh) value FROM (
+                  SELECT GREATEST(0, actual_load_kwh
+                    - COALESCE(actual_heat_pump_electric_kwh,0)
+                    - COALESCE(actual_ev_kwh,0)) native_load_kwh
+                  FROM ems_gpt_slots
                   WHERE actual_load_kwh IS NOT NULL AND actual_load_kwh>0
                     AND slot_start<%s ORDER BY slot_start DESC LIMIT 288
                 ) recent""", (s,))

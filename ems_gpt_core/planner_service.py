@@ -52,6 +52,40 @@ def historical_terminal_soc(closing_rows: list[dict], terminal_day,
             "available_weight_pct": available_weight, "source": source}
 
 
+def historical_hp_power_kw(heating_rows: list[dict], planning_day,
+                           weights_pct: dict[int, float], fallback_kw: float) -> dict:
+    """Forecast electric heating power from active historical HP slots."""
+    means: dict[int, float | None] = {}
+    samples: dict[int, int] = {}
+    for horizon in (7, 14, 28):
+        values = []
+        for row in heating_rows:
+            day = row.get("local_day")
+            if isinstance(day, str):
+                day = datetime.strptime(day[:10], "%Y-%m-%d").date()
+            age = (planning_day - day).days if day is not None else 0
+            energy = row.get("actual_heating_consumed_kwh")
+            if 1 <= age <= horizon and energy is not None and float(energy) > 0.02:
+                values.append(float(energy) * 4.0)
+        samples[horizon] = len(values)
+        means[horizon] = sum(values) / len(values) if values else None
+    available_weight = sum(
+        max(0.0, float(weights_pct.get(horizon, 0.0)))
+        for horizon in (7, 14, 28) if means[horizon] is not None
+    )
+    if available_weight <= 0.0:
+        power_kw = max(0.0, float(fallback_kw))
+        source = "FALLBACK_CONFIG"
+    else:
+        power_kw = sum(
+            float(means[horizon]) * max(0.0, float(weights_pct.get(horizon, 0.0)))
+            for horizon in (7, 14, 28) if means[horizon] is not None
+        ) / available_weight
+        source = "WEIGHTED_ACTUAL_HEATING_7_14_28D"
+    return {"power_kw": power_kw, "means": means, "samples": samples,
+            "available_weight_pct": available_weight, "source": source}
+
+
 def strict_database_bool(value, field: str) -> bool:
     """Normalize MariaDB BOOLEAN/TINYINT once and reject ambiguous values."""
     if isinstance(value, bool):
@@ -1309,10 +1343,34 @@ def build_planner(a: PlannerAdapters):
             min_cycle_slots = max(1, int(float(OPTIONS.get("hp_min_cycle_hours", 2.0)) * 4 + 0.999999))
             min_gap_slots = max(1, int(float(OPTIONS.get("hp_min_cycle_break_hours", 1.0)) * 4 + 0.999999))
             max_gap_slots = max(min_gap_slots, int(float(OPTIONS.get("hp_max_cycle_break_hours", 3.0)) * 4 + 0.999999))
-            planned_hp_kw = max(0.0, float(OPTIONS.get("hp_planned_power_kw", 2.5)))
+            hp_fallback_kw = max(0.0, float(OPTIONS.get("hp_planned_power_kw", 1.5)))
+            hp_history_start = min(day_values) - timedelta(days=28) if day_values else now.date()
+            cur.execute("""SELECT local_day,actual_heating_consumed_kwh
+              FROM ems_gpt_slots WHERE local_day>=%s AND local_day<%s
+                AND actual_recorded_at IS NOT NULL AND plan_published=1
+                AND execution_reason LIKE 'CORE_TELEMETRY_%%'
+                AND actual_heating_consumed_kwh>0.02""",
+                (hp_history_start, min(day_values) if day_values else now.date()))
+            hp_heating_history = list(cur.fetchall())
+            hp_history_weights = {
+                7: float(OPTIONS.get("soc_target_history_weight_7d_pct", 50.0)),
+                14: float(OPTIONS.get("soc_target_history_weight_14d_pct", 25.0)),
+                28: float(OPTIONS.get("soc_target_history_weight_28d_pct", 25.0)),
+            }
+            planned_hp_kw_by_day = {}
+            for day_value in day_values:
+                hp_power = historical_hp_power_kw(
+                    hp_heating_history, day_value, hp_history_weights, hp_fallback_kw)
+                planned_hp_kw_by_day[day_value] = max(0.0, float(hp_power["power_kw"]))
+                record_event("historical_hp_power_forecast", "planner", {
+                    "planning_day": str(day_value),
+                    "planned_power_kw": round(planned_hp_kw_by_day[day_value], 3),
+                    **hp_power,
+                })
             cycle_penalty = max(0.0, float(OPTIONS.get("hp_cycle_start_penalty_pln", 0.25)))
             hp_selected_indices = set()
             for day_value in day_values:
+                planned_hp_kw = planned_hp_kw_by_day[day_value]
                 day_key = str(day_value)
                 night_forecast = night_min_by_day.get(day_key) or {}
                 if not hp_temperature_eligible(
@@ -1363,7 +1421,9 @@ def build_planner(a: PlannerAdapters):
                 slot_time = row.get("slot_start_local") or row["slot_start"]
                 key = (0 if slot_time.weekday() < 5 else 1, slot_time.hour, slot_time.minute)
                 historical_dhw_kwh = max(0.0, dhw_profile.get(key, 0.0))
-                planned_heating_kwh = planned_hp_kw*0.25 if index in hp_selected_indices else 0.0
+                row_day = row.get("local_day") or row["slot_start"].date()
+                planned_heating_kwh = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25
+                                       if index in hp_selected_indices else 0.0)
                 work["forecast_heat_pump_load_kwh"] = max(
                     planned_heating_kwh, historical_dhw_kwh)
                 work["forecast_heat_pump_dhw_load_kwh"] = historical_dhw_kwh
@@ -1698,7 +1758,9 @@ def build_planner(a: PlannerAdapters):
                 item["start"],item["end"]=item["soc_start_pct"],item["soc_end_pct"]
                 pv=float(row.get("forecast_pv_total_kwh") or 0)
                 native_load=float(row.get("forecast_load_kwh") or 0)
-                hp_load=planned_hp_kw * 0.25 if i in hp_selected_indices else 0.0
+                row_day = row.get("local_day") or row["slot_start"].date()
+                hp_load = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25
+                           if i in hp_selected_indices else 0.0)
                 load=native_load+hp_load
                 pv_surplus=max(0.0,pv-load)
                 pv_to_bat=item["pv_to_bat_kwh"]

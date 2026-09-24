@@ -23,6 +23,7 @@ from planner_service import (
     planning_tou_programs,
     strict_database_bool,
     historical_terminal_soc,
+    historical_hp_power_kw,
     hp_heating_window_indices,
     bridge_soc_commitments,
     derive_soc_commitments,
@@ -32,6 +33,22 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_hp_power_uses_weighted_history_and_falls_back_to_1_5_kw(self):
+        planning_day = date(2026, 9, 24)
+        rows = [
+            {"local_day": date(2026, 9, 23), "actual_heating_consumed_kwh": 0.25},
+            {"local_day": date(2026, 9, 14), "actual_heating_consumed_kwh": 0.50},
+            {"local_day": date(2026, 9, 4), "actual_heating_consumed_kwh": 0.75},
+        ]
+        weights = {7: 50.0, 14: 25.0, 28: 25.0}
+
+        result = historical_hp_power_kw(rows, planning_day, weights, 1.5)
+        fallback = historical_hp_power_kw([], planning_day, weights, 1.5)
+
+        self.assertEqual(result["source"], "WEIGHTED_ACTUAL_HEATING_7_14_28D")
+        self.assertAlmostEqual(result["power_kw"], 1.375)
+        self.assertEqual(fallback["power_kw"], 1.5)
+        self.assertEqual(fallback["source"], "FALLBACK_CONFIG")
     def test_current_day_terminal_shortfall_returns_highest_reachable_soc(self):
         rows = [{
             "price_buy_pln_kwh": 1.0,

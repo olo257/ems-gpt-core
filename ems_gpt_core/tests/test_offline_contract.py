@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.2"', APP_SOURCE)
-        self.assertIn('version: "0.39.2"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.3"', APP_SOURCE)
+        self.assertIn('version: "0.39.3"', CONFIG)
 
     def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -590,9 +590,9 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('"hp_min_heating_hours": 10.0', SOURCE)
 
     def test_hp_load_is_coupled_into_soc_and_recharge_plan(self):
-        self.assertIn('planned_heating_kwh = planned_hp_kw*0.25 if index in hp_selected_indices else 0.0', SOURCE)
+        self.assertIn('planned_heating_kwh = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25', SOURCE)
         self.assertIn('max(\n                    planned_heating_kwh, historical_dhw_kwh)', SOURCE)
-        self.assertIn("hp_load=planned_hp_kw * 0.25 if i in hp_selected_indices else 0.0", SOURCE)
+        self.assertIn('hp_load = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25', SOURCE)
         self.assertIn("load = native_load + hp_load", SOURCE)
         self.assertIn("load=native_load+hp_load", SOURCE)
         self.assertIn("hp_load_kwh={hp_load:.3f}", SOURCE)
