@@ -24,8 +24,15 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.1"', APP_SOURCE)
-        self.assertIn('version: "0.39.1"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.2"', APP_SOURCE)
+        self.assertIn('version: "0.39.2"', CONFIG)
+
+    def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        self.assertIn('def optimize_remaining_pass(', planner)
+        self.assertIn('"TOU_GUARD_ITERATION"', planner)
+        self.assertIn('"TOU_GUARD_FINAL"', planner)
+        self.assertIn('"TARGET_COMMITMENT"', planner)
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
