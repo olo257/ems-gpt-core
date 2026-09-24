@@ -2,6 +2,15 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.1 — przywrócenie fallbacku terminalnego SOC
+
+- Błąd `No feasible terminal SOC state for complete horizon` ponawia plan bez
+  `SELL_BAT`, przywracając zasadę bezpieczeństwa wprowadzoną w 0.38.3.
+- Jeżeli po wyłączeniu sprzedaży cel końcowy bieżącej doby nadal jest fizycznie
+  nieosiągalny, planer publikuje najwyższy osiągalny SOC i jawny niedobór zamiast
+  wycofywać cały plan. Dzięki temu może opublikować także `HP_HEAT_DHW`.
+- Cele końcowe przyszłych dób pozostają twarde i nie korzystają z fallbacku.
+
 ## 0.39.0 — jedno źródło konfiguracji i ochrona porannego SOC
 
 - Zastąpiono `deye_program_soc_baseline_json` sześcioma osobnymi opcjami
