@@ -177,7 +177,7 @@ DEFAULT_OPTIONS = {
     "hp_min_cycle_hours": 2.0,
     "hp_min_cycle_break_hours": 1.0,
     "hp_max_cycle_break_hours": 3.0,
-    "hp_planned_power_kw": 2.5,
+    "hp_planned_power_kw": 1.5,
     "hp_cycle_start_penalty_pln": 0.25,
     "telemetry_min_samples_per_slot": 10.0,
     "telemetry_learning_coverage_pct": 80.0,
