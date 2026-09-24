@@ -2,6 +2,15 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.3 — bazowe zużycie bez HP i historyczna moc ogrzewania
+
+- Awaryjna prognoza zużycia bazowego odejmuje rzeczywistą energię pompy ciepła
+  i EV, więc odbiory sterowane nie są drugi raz dodawane do bilansu planera.
+- Planowana moc ogrzewania korzysta z ważonej średniej rzeczywistych aktywnych
+  slotów HP z okien 7/14/28 dni, z tymi samymi wagami co target SOC.
+- Przy braku historii startowy fallback HP wynosi 1,5 kW. Planer zapisuje źródło,
+  liczbę próbek i wynikową moc w zdarzeniu audytowym.
+
 ## 0.39.2 — terminalny fallback we wszystkich przebiegach planera
 
 - Wspólna obsługa niewykonalnego terminalnego SOC obejmuje teraz także iteracje
