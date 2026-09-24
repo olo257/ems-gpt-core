@@ -2,6 +2,15 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.2 — terminalny fallback we wszystkich przebiegach planera
+
+- Wspólna obsługa niewykonalnego terminalnego SOC obejmuje teraz także iteracje
+  zabezpieczeń TOU, ich końcową walidację oraz przebieg `TARGET_COMMITMENT`.
+- Każdy z tych etapów najpierw ponawia obliczenia bez `SELL_BAT`, a dla bieżącej
+  doby publikuje najwyższy fizycznie osiągalny SOC zamiast wycofywać cały plan.
+- Dodano nazwę etapu do zdarzeń audytowych, aby kolejna niewykonalność wskazywała
+  dokładne miejsce bez analizy stosu wyjątków.
+
 ## 0.39.1 — przywrócenie fallbacku terminalnego SOC
 
 - Błąd `No feasible terminal SOC state for complete horizon` ponawia plan bez
