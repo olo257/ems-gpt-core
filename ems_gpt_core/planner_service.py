@@ -424,7 +424,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             hard_target_indices: set[int] | None = None,
                             target_due_indices: set[int] | None = None,
                             required_soc_pcts: list[float] | None = None,
-                            battery_sales_enabled: bool = True) -> dict:
+                            battery_sales_enabled: bool = True,
+                            allow_terminal_shortfall: bool = False) -> dict:
     """Minimize total energy cost across every available slot and SOC state."""
     if not rows:
         return {"flows": [], "objective_pln": 0.0, "soc_step_pct": soc_step_pct}
@@ -628,13 +629,23 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         costs, predecessors = next_costs, predecessors+[next_predecessors]
     candidates = [(cost, unit) for unit, cost in costs.items() if unit >= terminal_unit]
     if not candidates:
-        raise RuntimeError("No feasible terminal SOC state for complete horizon")
+        if not allow_terminal_shortfall:
+            raise RuntimeError("No feasible terminal SOC state for complete horizon")
+        # A shortfall may be published only when the caller has already
+        # exhausted the safer retry without deliberate battery sales and has
+        # verified that the horizon ends in the current local day.  Preserve
+        # as much energy as physics permits; price is only a tie-breaker for
+        # the highest reachable SOC state.
+        best_reachable_unit = max(costs)
+        candidates = [(costs[best_reachable_unit], best_reachable_unit)]
     objective, unit = min(candidates, key=lambda value: (value[0], -value[1]))
     flows = [None]*len(rows)
     for index in range(len(rows)-1, -1, -1):
         unit, flows[index] = predecessors[index][unit]
     return {"flows": flows, "objective_pln": round(objective, 6),
             "soc_step_pct": step, "terminal_soc_pct": terminal_unit*step,
+            "achieved_terminal_soc_pct": unit*step,
+            "terminal_shortfall_pct": max(0.0, (terminal_unit-unit)*step),
             "effective_target_pcts": effective_target_pcts}
 
 
@@ -1433,6 +1444,7 @@ def build_planner(a: PlannerAdapters):
             enforced_daily_required = list(daily_required_soc)
             waived_daily_closes = set()
             battery_sales_enabled = True
+            terminal_shortfall_allowed = False
             while True:
                 try:
                     economic_optimization = optimize_energy_horizon(
@@ -1440,9 +1452,31 @@ def build_planner(a: PlannerAdapters):
                         degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
                         optimized_floors,terminal_soc,internal_soc_step,target_cap,
                         required_soc_pcts=enforced_daily_required,
-                        battery_sales_enabled=battery_sales_enabled)
+                        battery_sales_enabled=battery_sales_enabled,
+                        allow_terminal_shortfall=terminal_shortfall_allowed)
                     break
                 except RuntimeError as exc:
+                    terminal_failure = (
+                        str(exc) == "No feasible terminal SOC state for complete horizon"
+                    )
+                    if terminal_failure:
+                        if battery_sales_enabled:
+                            battery_sales_enabled = False
+                            record_event("battery_sales_disabled_for_terminal_soc", "planner", {
+                                "terminal_day": str(terminal_day),
+                                "requested_soc_pct": terminal_soc,
+                                "reason": str(exc),
+                            }, "WARNING")
+                            continue
+                        if terminal_day != local_now().date():
+                            raise
+                        terminal_shortfall_allowed = True
+                        record_event("current_day_terminal_soc_best_effort", "planner", {
+                            "terminal_day": str(terminal_day),
+                            "requested_soc_pct": terminal_soc,
+                            "reason": str(exc),
+                        }, "WARNING")
+                        continue
                     prefix = "No feasible SOC state at horizon slot "
                     if not str(exc).startswith(prefix):
                         raise
@@ -1465,6 +1499,16 @@ def build_planner(a: PlannerAdapters):
                         "requested_soc_pct": daily_required_soc[failed_index],
                         "reason": str(exc),
                     }, "WARNING")
+            if economic_optimization.get("terminal_shortfall_pct", 0.0) > 1e-9:
+                requested_terminal_soc = terminal_soc
+                terminal_soc = float(economic_optimization["achieved_terminal_soc_pct"])
+                record_event("current_day_terminal_soc_unreachable", "planner", {
+                    "terminal_day": str(terminal_day),
+                    "requested_soc_pct": requested_terminal_soc,
+                    "achieved_soc_pct": terminal_soc,
+                    "shortfall_pct": economic_optimization["terminal_shortfall_pct"],
+                    "battery_sales_enabled": battery_sales_enabled,
+                }, "WARNING")
             # Convert the immutable TOU baselines into sale-only safety floors.
             # Iterate once after applying them because a permitted 5/6 bridge
             # override is valid only while the resulting plan retains its real
