@@ -32,6 +32,31 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_current_day_terminal_shortfall_returns_highest_reachable_soc(self):
+        rows = [{
+            "price_buy_pln_kwh": 1.0,
+            "price_sell_pln_kwh": 0.0,
+            "buy_window": False,
+            "sale_window": False,
+            "forecast_load_kwh": 0.0,
+            "forecast_heat_pump_load_kwh": 0.0,
+            "forecast_pv_total_kwh": 0.0,
+        }]
+
+        with self.assertRaisesRegex(RuntimeError, "No feasible terminal SOC"):
+            optimize_energy_horizon(
+                rows, 20.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+                5.0, 15, [15.0], 40.0, 0.10, 100.0,
+                battery_sales_enabled=False)
+
+        result = optimize_energy_horizon(
+            rows, 20.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 40.0, 0.10, 100.0,
+            battery_sales_enabled=False, allow_terminal_shortfall=True)
+
+        self.assertEqual(result["achieved_terminal_soc_pct"], 20.0)
+        self.assertEqual(result["terminal_shortfall_pct"], 20.0)
+
     def test_optimizer_can_disable_battery_sales_without_blocking_native_load(self):
         rows = [{
             "price_buy_pln_kwh": 1.0,
