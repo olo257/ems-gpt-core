@@ -176,7 +176,13 @@ def _target_history(rows: list[dict], *, reserve_pct: float, capacity_kwh: float
         relief = _find_target_relief(
             rows, index, pv_threshold_kwh=pv_threshold_kwh, slot_minutes=slot_minutes)
         if relief is None:
-            result.append({**base, "status": "INVALID", "reason": "NO_COMPLETE_RELIEF_HORIZON"})
+            continuous_tail = all(
+                _is_contiguous(rows[next_index - 1], rows[next_index], slot_minutes)
+                for next_index in range(index + 1, len(rows)))
+            result.append({**base,
+                           "status": "OCZEKUJE" if continuous_tail else "INVALID",
+                           "reason": ("NO_COMPLETE_RELIEF_HORIZON" if continuous_tail
+                                      else "NON_CONTIGUOUS_SLOTS")})
             continue
         relief_index, relief_type = relief
         horizon = rows[index:relief_index]
@@ -232,7 +238,8 @@ def _target_history_metrics(samples: list[dict], *, minimum_samples: int,
     evening_shortfalls = [float(sample["target_shortfall_pct"]) for sample in evening]
     return {
         "target_history_samples": len(valid),
-        "target_history_invalid_samples": len(samples) - len(valid),
+        "target_history_invalid_samples": sum(
+            sample.get("status") == "INVALID" for sample in samples),
         "target_error_bias_pct": None if not errors else round(sum(errors) / len(errors), 3),
         "target_shortfall_p80_pct": p80,
         "target_shortfall_p90_pct": p90,

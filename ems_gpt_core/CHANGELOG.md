@@ -2,6 +2,21 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.4 — ekonomika sprzedaży, przywracanie SOC i historia targetu
+
+- Plan z `SELL_BAT` przechodzi dodatkową symulację bez sprzedaży przy tym samym
+  horyzoncie, prognozie i wymaganym SOC. Weryfikacja uwzględnia wybrane sloty
+  ładowania i ich ceny, wartość energii pozostającej w baterii oraz dodatkowy
+  import dla domu. Niekorzystny wariant jest ponownie planowany bez sprzedaży.
+- Wynik i przyczyna odrzucenia są zapisywane w zdarzeniu
+  `battery_sale_counterfactual`.
+- Po restarcie znacznik przywracania programu falownika nie zawiera już
+  dawnego SOC. Executor odczytuje obowiązującą wartość z bieżących opcji
+  dodatku; stary plik z zapisanym `20%` jest traktowany jako sam znacznik.
+- Nieukończony, ciągły horyzont historii targetu otrzymuje stan `OCZEKUJE`,
+  pozostaje w zakładce historii i nie zwiększa licznika próbek nieważnych.
+  Przerwany horyzont nadal jest oznaczany jako nieważny.
+
 ## 0.39.3 — bazowe zużycie bez HP i historyczna moc ogrzewania
 
 - Awaryjna prognoza zużycia bazowego odejmuje rzeczywistą energię pompy ciepła

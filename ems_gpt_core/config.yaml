@@ -1,5 +1,5 @@
 name: EMS-GPT Core
-version: "0.39.3"
+version: "0.39.4"
 slug: ems_gpt_core
 description: Niezależny silnik planowania i analityki EMS-GPT
 url: https://github.com/olo257/ems-gpt-core

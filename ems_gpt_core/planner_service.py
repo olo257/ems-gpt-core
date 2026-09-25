@@ -280,6 +280,76 @@ def battery_sale_economics(rows: list[dict], index: int, eta_c: float, eta_d: fl
     }
 
 
+def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
+                                     rows: list[dict], min_margin: float,
+                                     capacity_kwh: float, eta_c: float,
+                                     tolerance_kwh: float = 0.05) -> dict:
+    """Check the full cost of export against keeping the energy for native load.
+
+    The counterfactual has the same forecast and required terminal SOC. Both
+    objectives include the grid purchases actually selected by each plan.
+    Any remaining inventory difference is valued separately; grid supply to
+    the house may not increase as a consequence of battery sale.
+    """
+    sales = sale_plan["flows"]
+    baseline = no_sale_plan["flows"]
+    if len(sales) != len(rows) or len(baseline) != len(rows):
+        raise ValueError("SALE_COUNTERFACTUAL_LENGTH_MISMATCH")
+    sold = sum(max(0.0, float(f.get("battery_sell_kwh") or 0.0)) for f in sales)
+    extra_native_import = sum(max(0.0, float(a.get("grid_load_kwh") or 0.0)
+                                  - float(b.get("grid_load_kwh") or 0.0))
+                              for a, b in zip(sales, baseline))
+    extra_grid_charge = sum(max(0.0, float(a.get("grid_charge_kwh") or 0.0)
+                                - float(b.get("grid_charge_kwh") or 0.0))
+                            for a, b in zip(sales, baseline))
+    extra_grid_charge_cost = sum(
+        max(0.0, float(a.get("grid_charge_kwh") or 0.0)
+            - float(b.get("grid_charge_kwh") or 0.0))
+        * float(row.get("price_buy_pln_kwh") or 0.0)
+        for a, b, row in zip(sales, baseline, rows))
+    gross_gain = float(no_sale_plan["objective_pln"]) - float(sale_plan["objective_pln"])
+    ending_energy_shortfall = max(0.0,
+        (float(baseline[-1].get("soc_end_pct") or 0.0)
+         - float(sales[-1].get("soc_end_pct") or 0.0))
+        * capacity_kwh / 100.0)
+    last_sale = max((i for i, flow in enumerate(sales)
+                     if float(flow.get("battery_sell_kwh") or 0.0) > 1e-9),
+                    default=-1)
+    future_rows = rows[last_sale + 1:]
+    feasible_buy_prices = [float(row["price_buy_pln_kwh"])
+                           for row in future_rows
+                           if row.get("price_buy_pln_kwh") is not None
+                           and strict_database_bool(row.get("buy_window", False), "buy_window")]
+    future_prices = [float(row["price_buy_pln_kwh"])
+                     for row in future_rows if row.get("price_buy_pln_kwh") is not None]
+    # Without a permitted BUY, energy kept in the battery can avoid the
+    # expensive future native-load tariff. A theoretical cheap price outside
+    # BUY is not a feasible replacement for depleted terminal inventory.
+    replacement_price = (min(feasible_buy_prices) if feasible_buy_prices else
+                         max(future_prices) if future_prices else None)
+    ending_energy_cost = (
+        0.0 if ending_energy_shortfall <= 1e-9 else
+        ending_energy_shortfall * replacement_price / max(0.01, eta_c)
+        if replacement_price is not None else None)
+    gain = (gross_gain - ending_energy_cost
+            if ending_energy_cost is not None else None)
+    # The optimizer already charges degradation and minimum margin per kWh of
+    # export. The positive counterfactual gain is an independent final check.
+    eligible = (sold <= 1e-9 or
+                (gain is not None and gain > 1e-6
+                 and extra_native_import <= tolerance_kwh + 1e-9))
+    return {"eligible": eligible, "sold_kwh": round(sold, 6),
+            "gross_gain_pln": round(gross_gain, 6),
+            "net_gain_pln": round(gain, 6) if gain is not None else None,
+            "ending_energy_shortfall_kwh": round(ending_energy_shortfall, 6),
+            "ending_energy_replacement_cost_pln": (
+                round(ending_energy_cost, 6) if ending_energy_cost is not None else None),
+            "extra_native_import_kwh": round(extra_native_import, 6),
+            "extra_grid_charge_kwh": round(extra_grid_charge, 6),
+            "extra_grid_charge_cost_pln": round(extra_grid_charge_cost, 6),
+            "minimum_margin_pln_kwh": min_margin}
+
+
 def morning_sale_soc_requirements(rows: list[dict], required_soc_pcts: list[float],
                                   daily_terminal_soc: dict) -> tuple[list[float], list[int]]:
     """Require the historical daily SOC target immediately before a morning sale.
@@ -1652,20 +1722,50 @@ def build_planner(a: PlannerAdapters):
                 economic_optimization = optimize_remaining_pass(
                     "TOU_GUARD_FINAL", optimized_floors,
                     required_pcts=enforced_daily_required)
-            commitment=build_soc_contracts(
-                horizon_rows,economic_optimization["flows"],capacity,reserve,
-                eta_c,eta_d,uncertainty_weight,terminal_soc,target_cap,0.25,
-                enforced_daily_required)
-            required_soc=list(commitment["required"])
-            charge_targets=list(commitment["charge_targets"])
-            for index in waived_daily_closes:
-                charge_targets[index] = max(
-                    charge_targets[index], daily_required_soc[index])
-            target_due_indices=set(commitment["buy_due_indices"])
-            selected_buy_indices=set(commitment["selected_buy_indices"])
-            optimization=optimize_remaining_pass(
-                "TARGET_COMMITMENT", optimized_floors, charge_targets, set(),
-                target_due_indices, required_soc)
+            for sale_guard_attempt in range(2):
+                commitment=build_soc_contracts(
+                    horizon_rows,economic_optimization["flows"],capacity,reserve,
+                    eta_c,eta_d,uncertainty_weight,terminal_soc,target_cap,0.25,
+                    enforced_daily_required)
+                required_soc=list(commitment["required"])
+                charge_targets=list(commitment["charge_targets"])
+                for index in waived_daily_closes:
+                    charge_targets[index] = max(
+                        charge_targets[index], daily_required_soc[index])
+                target_due_indices=set(commitment["buy_due_indices"])
+                selected_buy_indices=set(commitment["selected_buy_indices"])
+                optimization=optimize_remaining_pass(
+                    "TARGET_COMMITMENT", optimized_floors, charge_targets, set(),
+                    target_due_indices, required_soc)
+                if not any(float(flow.get("battery_sell_kwh") or 0.0) > flow_threshold
+                           for flow in optimization["flows"]):
+                    break
+                try:
+                    no_sale_optimization = optimize_energy_horizon(
+                        horizon_rows, soc_now, capacity, reserve, eta_c, eta_d,
+                        degradation, min_margin, max_kw, int(OPTIONS["slot_minutes"]),
+                        optimized_floors, terminal_soc, internal_soc_step, target_cap,
+                        charge_targets, set(), target_due_indices, required_soc,
+                        battery_sales_enabled=False,
+                        allow_terminal_shortfall=terminal_shortfall_allowed)
+                    sale_assessment = assess_sale_plan_against_no_sale(
+                        optimization, no_sale_optimization, horizon_rows,
+                        min_margin, capacity, eta_c, technical_threshold)
+                except RuntimeError as exc:
+                    sale_assessment = {"eligible": False, "reason": str(exc)}
+                record_event("battery_sale_counterfactual", "planner", {
+                    "run_id": run_id, **sale_assessment,
+                    "comparison": "same_forecast_and_terminal_target",
+                }, "INFO" if sale_assessment["eligible"] else "WARNING")
+                if sale_assessment["eligible"]:
+                    break
+                battery_sales_enabled = False
+                economic_optimization = optimize_remaining_pass(
+                    "SALE_GUARD_REPLAN", optimized_floors,
+                    required_pcts=enforced_daily_required)
+                ensure_deadline("SALE_GUARD_REPLAN")
+            else:
+                raise RuntimeError("SALE_GUARD_REPLAN_EXHAUSTED")
             targets=list(optimization.get("effective_target_pcts",charge_targets))
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
