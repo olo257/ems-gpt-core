@@ -212,6 +212,11 @@ ich własnych progów i ekonomiki.
   jeżeli PV przed terminem bezpiecznie pokryje deficyt.
 - SELL_BAT jest dopuszczalny tylko dla energii ponad wszystkie przyszłe
   zobowiązania i tylko gdy pełny cykl ma dodatni wynik netto.
+- Przed publikacją SELL_BAT planer porównuje pełny plan z wariantem bez sprzedaży
+  przy tej samej prognozie i wymaganym SOC. Różnica obejmuje faktyczne zakupy
+  wybrane przez oba warianty, straty baterii, koszt energii pozostawionej na
+  końcu horyzontu oraz import dla domu. Sprzedaż odpada, jeżeli obniża wynik
+  netto lub zwiększa import na potrzeby domu ponad próg techniczny.
 - Nie wolno doprowadzić sprzedażą do zakupu w droższym oknie, jeśli tańszy,
   wcześniejszy zakup lub rezygnacja z części sprzedaży daje lepszy wynik.
 - Jeżeli wcześniejszy BUY zajmuje pojemność, a najbliższa nadwyżka PV byłaby

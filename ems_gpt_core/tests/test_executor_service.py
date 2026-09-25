@@ -156,6 +156,37 @@ class ExecutorServiceTests(unittest.TestCase):
             self.assertFalse((pathlib.Path(directory) / "battery_program_soc_restore.json").read_text().strip() == "")
             self.assertEqual(calls[-1][2]["value"], 40)
 
+    def test_restart_ignores_stale_restore_soc_and_uses_current_addon_option(self):
+        states = {"number.inverter_program_1_soc": {"state": "20"}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            (path / "battery_program_soc_restore.json").write_text('{"1":20}')
+
+            def service_call(_domain, _action, data, **_kwargs):
+                states[data["entity_id"]] = {"state": str(data["value"])}
+                return {"ok": True}
+
+            executor = build_executor(ExecutorAdapters(
+                options={f"deye_program_{program}_soc_pct":
+                         (10 if program == 1 else 30)
+                         for program in range(1, 7)},
+                operational_settings={},
+                runtime_settings_path=path / "runtime-settings.json",
+                lock=RLock(), state={"modules": {}, "executor": "LIVE"},
+                record_event=lambda *args: None, local_now=datetime.now,
+                db=lambda: None, slot_start=lambda value: value,
+                tou_program_snapshot=lambda: [],
+                active_tou_program=lambda *_args: {"program": 1, "soc": 20},
+                number=lambda value: float(value["state"]) if value else None,
+                ha_state=lambda entity: states.get(entity),
+                ha_service_response=service_call,
+            ))
+
+            restored = executor.restore_program_targets()
+            self.assertEqual(restored[0]["restored_soc_pct"], 10.0)
+            self.assertEqual(states["number.inverter_program_1_soc"]["state"], "10")
+            self.assertEqual((path / "battery_program_soc_restore.json").read_text(), "{}")
+
     def test_program_soc_is_not_restored_while_grid_or_export_is_active(self):
         states = {
             "number.inverter_program_4_soc": {"state": "25"},

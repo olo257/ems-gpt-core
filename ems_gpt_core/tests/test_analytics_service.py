@@ -159,7 +159,7 @@ class AnalyticsQualityWindowTests(unittest.TestCase):
             rows, reserve_pct=15.0, capacity_kwh=10.0,
             discharge_efficiency=1.0, pv_threshold_kwh=0.1,
             slot_minutes=15, minimum_samples=10)
-        self.assertEqual(samples[0]["status"], "INVALID")
+        self.assertEqual(samples[0]["status"], "OCZEKUJE")
         self.assertEqual(samples[0]["reason"], "NO_COMPLETE_RELIEF_HORIZON")
 
     def test_target_history_rejects_incomplete_tail(self):
@@ -175,8 +175,34 @@ class AnalyticsQualityWindowTests(unittest.TestCase):
             rows, reserve_pct=15.0, capacity_kwh=15.6,
             discharge_efficiency=.95, pv_threshold_kwh=.1,
             slot_minutes=15, minimum_samples=10)[0]
-        self.assertEqual(sample["status"], "INVALID")
+        self.assertEqual(sample["status"], "OCZEKUJE")
         self.assertEqual(sample["reason"], "NO_COMPLETE_RELIEF_HORIZON")
+
+    def test_discontinuous_target_horizon_is_invalid_not_pending(self):
+        start = datetime(2026, 9, 14, 23, 45)
+        rows = [{"slot_start": start, "soc_target_pct": 30.0},
+                {"slot_start": start + timedelta(minutes=30),
+                 "soc_target_pct": 30.0}]
+        samples = _target_history(
+            rows, reserve_pct=15.0, capacity_kwh=15.0,
+            discharge_efficiency=.95, pv_threshold_kwh=.1,
+            slot_minutes=15, minimum_samples=10)
+        self.assertEqual(samples[0]["status"], "INVALID")
+        self.assertEqual(samples[0]["reason"], "NON_CONTIGUOUS_SLOTS")
+        self.assertEqual(samples[1]["status"], "OCZEKUJE")
+
+    def test_pending_target_history_does_not_inflate_invalid_count(self):
+        samples = [
+            {"status": "OCZEKUJE"},
+            {"status": "INVALID"},
+            {"status": "VALID", "target_error_pct": 2.0,
+             "target_shortfall_pct": 2.0,
+             "slot_start": datetime(2026, 9, 14, 18, 30)},
+        ]
+        metrics = _target_history_metrics(
+            samples, minimum_samples=1, correction_cap_pct=15.0)
+        self.assertEqual(metrics["target_history_samples"], 1)
+        self.assertEqual(metrics["target_history_invalid_samples"], 1)
 
     def test_target_correction_needs_minimum_samples_and_is_capped(self):
         start = datetime(2026, 9, 1, 18, 30)

@@ -115,14 +115,19 @@ def build_executor(a: ExecutorAdapters):
     number, ha_state, ha_service_response = a.number, a.ha_state, a.ha_service_response
     program_restore_path = RUNTIME_SETTINGS_PATH.with_name("battery_program_soc_restore.json")
 
-    def read_program_restore() -> dict[str, float]:
+    def read_program_restore() -> dict[str, bool]:
         try:
             payload = json.loads(program_restore_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return {}
-        return {str(key): float(value) for key, value in payload.items()}
+        # Older files stored the SOC value at the time of the override. Treat
+        # those values only as markers: the current configuration owns SOC.
+        if not isinstance(payload, dict):
+            return {}
+        return {str(key): True for key in payload
+                if str(key) in {str(program) for program in range(1, 7)}}
 
-    def write_program_restore(payload: dict[str, float]) -> None:
+    def write_program_restore(payload: dict[str, bool]) -> None:
         temporary = program_restore_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(temporary, program_restore_path)
@@ -139,13 +144,13 @@ def build_executor(a: ExecutorAdapters):
             raise RuntimeError("ACTIVE_TOU_SOC_UNAVAILABLE")
         restore = read_program_restore()
         configured_baselines = deye_program_soc_baselines(OPTIONS)
-        configured_original = configured_baselines.get(str(program_number), live_value)
-        restore.setdefault(str(program_number), float(configured_original))
+        configured_original = configured_baselines[str(program_number)]
+        restore[str(program_number)] = True
         write_program_restore(restore)
         requested = max(0.0, min(100.0, float(target_pct)))
         if round(float(live_value)) == round(requested):
             return {"program": program_number, "entity_id": entity_id,
-                    "original_soc_pct": restore[str(program_number)],
+                    "original_soc_pct": float(configured_original),
                     "target_soc_pct": round(requested), "already_set": True}
         response = ha_service_response("number", "set_value", {
             "entity_id": entity_id, "value": round(requested),
@@ -153,7 +158,7 @@ def build_executor(a: ExecutorAdapters):
         if response is None:
             raise RuntimeError("ACTIVE_TOU_SOC_WRITE_FAILED")
         return {"program": program_number, "entity_id": entity_id,
-                "original_soc_pct": restore[str(program_number)],
+                "original_soc_pct": float(configured_original),
                 "target_soc_pct": round(requested)}
 
     def set_active_program_charging(now: datetime, option: str) -> dict:
@@ -174,13 +179,15 @@ def build_executor(a: ExecutorAdapters):
         """Restore every TOU target changed by EMS; retain failed entries for retry."""
         restore = read_program_restore()
         restored, pending = [], {}
-        for program_number, original in restore.items():
+        baselines = deye_program_soc_baselines(OPTIONS)
+        for program_number in restore:
+            original = float(baselines[program_number])
             entity_id = f"number.inverter_program_{int(program_number)}_soc"
             response = ha_service_response("number", "set_value", {
                 "entity_id": entity_id, "value": round(float(original)),
             })
             if response is None:
-                pending[program_number] = original
+                pending[program_number] = True
             else:
                 restored.append({"program": int(program_number),
                                  "entity_id": entity_id,

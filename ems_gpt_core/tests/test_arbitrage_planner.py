@@ -9,6 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from planner_service import (
+    assess_sale_plan_against_no_sale,
     allocate_slot_discharge,
     backward_target_commitments,
     build_soc_contracts,
@@ -33,6 +34,85 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_optimizer_apparent_sale_profit_loses_value_of_remaining_energy(self):
+        rows = [
+            {"price_buy_pln_kwh": 2.29, "price_sell_pln_kwh": 1.70,
+             "buy_window": False, "sale_window": True,
+             "forecast_load_kwh": 0.0, "forecast_heat_pump_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0},
+            {"price_buy_pln_kwh": 1.80, "price_sell_pln_kwh": 1.20,
+             "buy_window": False, "sale_window": False,
+             "forecast_load_kwh": 1.2, "forecast_heat_pump_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0},
+        ]
+        args = (rows, 35.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+                5.0, 15, [15.0] * 2, 15.0, 0.10, 100.0)
+        sale = optimize_energy_horizon(*args)
+        keep = optimize_energy_horizon(*args, battery_sales_enabled=False)
+
+        self.assertGreater(sale["flows"][0]["battery_sell_kwh"], 1.0)
+        self.assertLess(sale["objective_pln"], keep["objective_pln"])
+        result = assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90)
+        self.assertFalse(result["eligible"])
+        self.assertLess(result["net_gain_pln"], 0.0)
+
+    def test_sale_counterfactual_rejects_import_for_native_load(self):
+        rows = [{"price_buy_pln_kwh": 1.9}, {"price_buy_pln_kwh": 1.4}]
+        sale = {"objective_pln": -1.0, "flows": [
+            {"battery_sell_kwh": 1.0, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0},
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.30,
+             "grid_charge_kwh": 0.20},
+        ]}
+        keep = {"objective_pln": 0.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0},
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0},
+        ]}
+
+        result = assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90)
+
+        self.assertFalse(result["eligible"])
+        self.assertAlmostEqual(result["extra_native_import_kwh"], 0.30)
+        self.assertAlmostEqual(result["extra_grid_charge_cost_pln"], 0.28)
+
+    def test_sale_counterfactual_requires_net_gain_at_same_terminal_soc(self):
+        rows = [{"price_buy_pln_kwh": 1.4}]
+        sale = {"objective_pln": 0.9, "flows": [
+            {"battery_sell_kwh": 1.0, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0}]}
+        keep = {"objective_pln": 0.8, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0}]}
+        self.assertFalse(assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90)["eligible"])
+        sale["objective_pln"] = 0.5
+        self.assertTrue(assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90)["eligible"])
+
+    def test_sale_counterfactual_prices_unrecovered_terminal_energy(self):
+        rows = [{"price_buy_pln_kwh": 1.8}, {"price_buy_pln_kwh": 1.2}]
+        sale = {"objective_pln": -0.8, "flows": [
+            {"battery_sell_kwh": 1.0, "grid_load_kwh": 0.0,
+             "soc_end_pct": 50.0},
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "soc_end_pct": 40.0}]}
+        keep = {"objective_pln": 0.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "soc_end_pct": 60.0},
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "soc_end_pct": 50.0}]}
+
+        result = assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90)
+
+        self.assertFalse(result["eligible"])
+        self.assertAlmostEqual(result["gross_gain_pln"], 0.8)
+        self.assertAlmostEqual(result["ending_energy_replacement_cost_pln"], 2.0)
+
     def test_hp_power_uses_weighted_history_and_falls_back_to_1_5_kw(self):
         planning_day = date(2026, 9, 24)
         rows = [
