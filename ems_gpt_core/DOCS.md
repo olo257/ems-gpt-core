@@ -115,9 +115,10 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
 - Rzeczywiste wykonanie i ręczne odstępstwa są domeną tabel wykonania i
   analityki; nie wracają jako ukryte wejście kolejnego planu.
 - `PV_CWU` oraz `PV_EV` są wyznaczane przez PPD po zamrożeniu targetu. Planer
-  może otworzyć ich kandydackie okno od następnego slotu po osiągnięciu targetu,
+  może otworzyć ich wspólne kandydackie okno od następnego slotu po osiągnięciu targetu,
   ale ich rzeczywista praca zależy od świeżej telemetrii nadwyżki PV i
-  automatyki wykonawczej. Wykonawca stosuje kolejność CWU → EV i histerezę;
+  automatyki wykonawczej. Wspólne okno zapobiega sytuacji EV=ALLOWED przy
+  CWU=BLOCKED; wykonawca stosuje kolejność CWU → EV i histerezę;
   brak danych, SOC poniżej opublikowanego targetu albo zanik nadwyżki wymusza
   wyłączenie w trybie AUTO. Procesy nie są częścią load ani targetu.
 - PPD publikuje `SELL_BAT` i `SELL_PV` na dwóch niezależnych osiach:

@@ -2,6 +2,14 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.8 — wspólne okno PV_CWU/PV_EV i priorytet runtime
+
+- PPD publikuje wspólne okno dopuszczenia odbiorów elastycznych po osiągnięciu
+  targetu. Osobne progi prognozy nie mogą już dać EV=ALLOWED przy CWU=BLOCKED.
+- Wewnątrz wspólnego okna executor stosuje rzeczywistą telemetrię i osobne
+  progi ON/OFF: najpierw CWU 2,0 kW, następnie EV 1,5 kW z pozostałej mocy.
+- Zachowano histerezę, tryby ręczne oraz brak wpływu CWU/EV na target i load.
+
 ## 0.39.7 — odbiory PV po osiągnięciu targetu
 
 - Po osiągnięciu opublikowanego targetu runtime guard liczy energię dostępną

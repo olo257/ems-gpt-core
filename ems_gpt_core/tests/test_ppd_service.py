@@ -45,6 +45,23 @@ class FlexiblePpdTests(unittest.TestCase):
         result = build_flexible_ppd(rows(pv=(0.1, 0.1, 0.1, 0.1, 0.0)), cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
         self.assertFalse(any(x.pv_cwu_allowed or x.pv_ev_allowed for x in result))
 
+    def test_shared_window_allows_runtime_to_reapply_cwu_priority(self):
+        result = build_flexible_ppd(
+            rows(pv=(0.1, 0.4, 0.4, 0.4, 0.0)),
+            cwu_threshold_kwh=0.5,
+            ev_threshold_kwh=0.4,
+        )
+        self.assertEqual(
+            [x.pv_cwu_allowed for x in result],
+            [False, True, True, True, False],
+        )
+        self.assertEqual(
+            [x.pv_ev_allowed for x in result],
+            [False, True, True, True, False],
+        )
+        self.assertFalse(result[1].cwu_anchor)
+        self.assertTrue(result[1].ev_anchor)
+
     def test_windows_do_not_cross_local_day(self):
         source = rows()
         source[3]["local_day"] = datetime(2026, 9, 17).date()
