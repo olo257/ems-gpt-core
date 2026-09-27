@@ -2,6 +2,16 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.7 — odbiory PV po osiągnięciu targetu
+
+- Po osiągnięciu opublikowanego targetu runtime guard liczy energię dostępną
+  dla `PV_CWU/PV_EV` jako `PV - load`, bez odejmowania dalszego ładowania
+  baterii ponad target.
+- Włączenie CWU/EV naturalnie zmniejsza moc ładowania baterii; target pozostaje
+  bramą odczytywaną przez executor i nie jest modyfikowany.
+- Zachowano kolejność CWU przed EV, progi 2,0/1,5 kW oraz histerezę.
+- Nie zmieniono obliczeń SOC target, SOC required, floor ani trajektorii SOC.
+
 ## 0.39.6 — niezależne procesy sprzedaży baterii i PV
 
 - Zastąpiono niejednoznaczną nazwę procesu PPD `BATTERY_EXPORT` nazwą

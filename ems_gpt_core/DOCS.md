@@ -127,11 +127,14 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
   PV i nie tworzy polecenia rozładowania baterii.
 
 Obowiązująca kolejność wykorzystania bieżącej produkcji to:
-`PV → load (w tym HP) → ładowanie baterii → PV_CWU → PV_EV → eksport PV`.
+`PV → load (w tym HP) → bateria do targetu → PV_CWU → PV_EV → dalsze
+ładowanie baterii / eksport pozostałego PV`.
 Wartość możliwego eksportu PV nie może przestawić ani pominąć etapów CWU/EV.
-Przed decyzją wykonawczą nadwyżka jest liczona z aktualnej telemetrii jako
-`PV - load - moc ładowania baterii`. Moc już działających CWU/EV jest dodawana
-z powrotem wyłącznie do oceny histerezy, aby uniknąć oscylacji ON/OFF.
+Przed osiągnięciem targetu cała dostępna produkcja pozostaje dla baterii.
+Po osiągnięciu targetu nadwyżka dla odbiorów elastycznych jest liczona jako
+`PV - load`; bieżące ładowanie baterii nie blokuje CWU/EV, lecz zostaje
+naturalnie zmniejszone po ich włączeniu. Moc już działających CWU/EV jest
+dodawana z powrotem wyłącznie do oceny histerezy.
 
 Historyczne średnie końcowego SOC 7/14/28 dni są liczone niezależnie z pełnych,
 rzeczywiście zamkniętych dób. Doba z brakiem lub `MISSING_OUTAGE` nie jest

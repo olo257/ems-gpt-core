@@ -78,8 +78,7 @@ def flexible_surplus_runtime_decisions(
     here. Existing flexible consumption is added back to inverter load before
     priority is reapplied, preventing immediate ON/OFF oscillation.
     """
-    required = (pv_power_w, load_power_w, battery_charge_power_w,
-                live_soc_pct, target_soc_pct)
+    required = (pv_power_w, load_power_w, live_soc_pct, target_soc_pct)
     if any(value is None for value in required):
         return {"pv_cwu": False, "pv_ev": False,
                 "reason": "LIVE_SURPLUS_DATA_UNAVAILABLE", "surplus_kw": None}
@@ -93,8 +92,11 @@ def flexible_surplus_runtime_decisions(
     cwu_running = bool(pv_cwu_on)
     # inverter_load already contains running flexible consumers; add them back
     # to reconstruct the surplus which existed before CWU/EV allocation.
+    # Below target the gate above reserves all PV for the battery. Once target
+    # is reached, flexible consumers take priority over *additional* PV
+    # charging; enabling them naturally reduces inverter battery charge.
     pre_flexible_kw = (
-        float(pv_power_w) - float(load_power_w) - max(0.0, float(battery_charge_power_w))
+        float(pv_power_w) - float(load_power_w)
     ) / 1000.0 + ev_running_kw + (cwu_threshold if cwu_running else 0.0)
     cwu_required = cwu_threshold * (ratio if cwu_running else 1.0)
     cwu_on = bool(cwu_allowed and pre_flexible_kw + 1e-9 >= cwu_required)
@@ -107,6 +109,9 @@ def flexible_surplus_runtime_decisions(
         "reason": "LIVE_SURPLUS_PRIORITY",
         "surplus_kw": round(pre_flexible_kw, 3),
         "after_cwu_kw": round(after_cwu, 3),
+        "battery_charge_kw_observed": (
+            None if battery_charge_power_w is None
+            else round(max(0.0, float(battery_charge_power_w)) / 1000.0, 3)),
     }
 
 

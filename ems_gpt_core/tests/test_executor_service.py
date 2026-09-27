@@ -37,17 +37,19 @@ class ExecutorServiceTests(unittest.TestCase):
             cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
         self.assertTrue(decision["pv_cwu"])
         self.assertTrue(decision["pv_ev"])
-        self.assertEqual(decision["surplus_kw"], 4.5)
-        self.assertEqual(decision["after_cwu_kw"], 2.5)
+        self.assertEqual(decision["surplus_kw"], 5.5)
+        self.assertEqual(decision["after_cwu_kw"], 3.5)
 
     def test_live_surplus_applies_cwu_before_ev(self):
         decision = flexible_surplus_runtime_decisions(
-            pv_power_w=5000, load_power_w=1500, battery_charge_power_w=1000,
+            pv_power_w=4840, load_power_w=1425, battery_charge_power_w=3236,
             ev_power_w=0, pv_cwu_on=False, live_soc_pct=80,
             target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
             cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
         self.assertTrue(decision["pv_cwu"])
         self.assertFalse(decision["pv_ev"])
+        self.assertEqual(decision["surplus_kw"], 3.415)
+        self.assertEqual(decision["battery_charge_kw_observed"], 3.236)
 
     def test_live_surplus_fails_closed_below_target_or_without_telemetry(self):
         below = flexible_surplus_runtime_decisions(
