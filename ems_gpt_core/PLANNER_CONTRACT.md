@@ -203,8 +203,10 @@ ich własnych progów. Cena eksportu PV nie może zmienić kolejności CWU → E
 sprzedaż pozostałości.
 
 Okno PPD jest wyłącznie pozwoleniem. W trybie AUTO wykonawca ponownie sprawdza
-świeżą telemetrię i rzeczywistą nadwyżkę `PV - load - ładowanie baterii`, dodając
-z powrotem już pracujące CWU/EV wyłącznie na potrzeby histerezy. Odbiory te nie
+świeżą telemetrię. Poniżej targetu blokuje odbiory elastyczne; po osiągnięciu
+targetu liczy nadwyżkę jako `PV - load`, dzięki czemu dalsze ładowanie baterii
+ponad target nie blokuje CWU/EV. Moc już pracujących CWU/EV jest dodawana
+z powrotem wyłącznie na potrzeby histerezy. Odbiory te nie
 wracają do `load`, `soc_target`, `soc_required` ani planowanej trajektorii SOC.
 
 ## 8. Ekonomiczne BUY i SELL
@@ -311,7 +313,7 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
 - `PV_CWU` i `PV_EV` są jedynymi procesami, których okna PPD może wyliczyć po
   publikacji planu; nie zmieniają one targetu.
 - Ich wykonanie w `AUTO` wymaga świeżej telemetrii, SOC co najmniej równego
-  opublikowanemu targetowi i nadwyżki `PV - load - ładowanie baterii`.
+  opublikowanemu targetowi i nadwyżki `PV - load`.
   CWU ma pierwszeństwo przed EV, a brak danych lub utrata nadwyżki wymusza OFF.
 - Executor nakłada override na decyzję planowaną i zapisuje osobno stan
   planowany, efektywny oraz obserwowany.
