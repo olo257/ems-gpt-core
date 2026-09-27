@@ -216,8 +216,10 @@ wracają do `load`, `soc_target`, `soc_required` ani planowanej trajektorii SOC.
   najtańsze sloty.
 - Nie wolno kupować w SELL ani kupować tylko dlatego, że bieżący SOC jest niski,
   jeżeli PV przed terminem bezpiecznie pokryje deficyt.
-- SELL_BAT jest dopuszczalny tylko dla energii ponad wszystkie przyszłe
-  zobowiązania i tylko gdy pełny cykl ma dodatni wynik netto.
+- SELL_BAT jest dopuszczalny tylko przy cenie sprzedaży większej od zera,
+  dla energii ponad wszystkie przyszłe zobowiązania i tylko gdy pełny cykl ma
+  dodatni wynik netto. Warunek ceny jest sprawdzany podczas wyznaczania okna,
+  optymalizacji oraz końcowej walidacji publikowanego przepływu.
 - Przed publikacją SELL_BAT planer porównuje pełny plan z wariantem bez sprzedaży
   przy tej samej prognozie i wymaganym SOC. Różnica obejmuje faktyczne zakupy
   wybrane przez oba warianty, straty baterii, koszt energii pozostawionej na
@@ -304,6 +306,9 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
 - PPD kopiuje ich zamrożone decyzje do wersjonowanej macierzy procesów.
 - `PV_CWU` i `PV_EV` są jedynymi procesami, których okna PPD może wyliczyć po
   publikacji planu; nie zmieniają one targetu.
+- Ich wykonanie w `AUTO` wymaga świeżej telemetrii, SOC co najmniej równego
+  opublikowanemu targetowi i nadwyżki `PV - load - ładowanie baterii`.
+  CWU ma pierwszeństwo przed EV, a brak danych lub utrata nadwyżki wymusza OFF.
 - Executor nakłada override na decyzję planowaną i zapisuje osobno stan
   planowany, efektywny oraz obserwowany.
 - Żadna tabela wynikowa PPD ani executora nie może być wejściem planera.

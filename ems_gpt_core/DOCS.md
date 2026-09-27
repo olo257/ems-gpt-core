@@ -121,6 +121,13 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
   brak danych, SOC poniżej opublikowanego targetu albo zanik nadwyżki wymusza
   wyłączenie w trybie AUTO. Procesy nie są częścią load ani targetu.
 
+Obowiązująca kolejność wykorzystania bieżącej produkcji to:
+`PV → load (w tym HP) → ładowanie baterii → PV_CWU → PV_EV → eksport PV`.
+Wartość możliwego eksportu PV nie może przestawić ani pominąć etapów CWU/EV.
+Przed decyzją wykonawczą nadwyżka jest liczona z aktualnej telemetrii jako
+`PV - load - moc ładowania baterii`. Moc już działających CWU/EV jest dodawana
+z powrotem wyłącznie do oceny histerezy, aby uniknąć oscylacji ON/OFF.
+
 Historyczne średnie końcowego SOC 7/14/28 dni są liczone niezależnie z pełnych,
 rzeczywiście zamkniętych dób. Doba z brakiem lub `MISSING_OUTAGE` nie jest
 próbką. Krótszy zakres odbudowy agregatów nie może ograniczać horyzontu 14/28.
@@ -137,6 +144,11 @@ błędem bez usuwania poprawnie zaimportowanego RCE.
 Scheduler odczytuje zakup i sprzedaż z jednego aktywnego rekordu
 `ems_gpt_slots`, zaokrągla wartości do trzech miejsc i zapisuje je do dwóch
 helperów wymienionych w sekcji 3.
+
+Cena sprzedaży mniejsza lub równa zero bezwzględnie blokuje sprzedaż baterii.
+Kontrola występuje przy tworzeniu okien, w optymalizacji i w walidacji przed
+publikacją. Ujemna cena zakupu może pozostać poprawnym sygnałem ekonomicznym,
+ale zakup nadal podlega ograniczeniom BUY, pojemności i targetu.
 
 ## 7. Publikacja planu i wykonanie
 
