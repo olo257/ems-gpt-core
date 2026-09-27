@@ -2,6 +2,22 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.5 — przywrócenie priorytetu nadwyżki PV
+
+- Przywrócono stałą kolejność wykorzystania PV: odbiory domu wraz z HP,
+  ładowanie baterii, PV_CWU, PV_EV, a dopiero potem eksport pozostałego PV.
+  Cena możliwego eksportu PV nie może już blokować PV_CWU ani PV_EV.
+- Sprzedaż baterii jest bezwzględnie wykluczona przy cenie sprzedaży mniejszej
+  lub równej zero: podczas wyznaczania okien, w optymalizatorze oraz w końcowej
+  walidacji opublikowanego przepływu.
+- Nie zmieniono obliczeń SOC target, SOC required, podłóg ani trajektorii SOC.
+- W trybie AUTO wykonawca przepuszcza `PV_CWU` i `PV_EV` dopiero po kontroli
+  świeżej telemetrii: rzeczywistego PV, load, ładowania baterii i osiągnięcia
+  opublikowanego targetu. CWU ma pierwszeństwo, EV otrzymuje wyłącznie
+  pozostałość, a brak danych lub zanik nadwyżki wymusza stan OFF.
+- Dodano histerezę wykonawczą oraz osobne wersjonowanie przejść ON/OFF w slocie.
+  Odbiory elastyczne pozostają poza load i nie zmieniają żadnej wartości SOC.
+
 ## 0.39.4 — ekonomika sprzedaży, przywracanie SOC i historia targetu
 
 - Plan z `SELL_BAT` przechodzi dodatkową symulację bez sprzedaży przy tym samym

@@ -116,7 +116,10 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
   analityki; nie wracają jako ukryte wejście kolejnego planu.
 - `PV_CWU` oraz `PV_EV` są wyznaczane przez PPD po zamrożeniu targetu. Planer
   może otworzyć ich kandydackie okno od następnego slotu po osiągnięciu targetu,
-  ale ich rzeczywista praca zależy od nadwyżki PV i automatyki wykonawczej.
+  ale ich rzeczywista praca zależy od świeżej telemetrii nadwyżki PV i
+  automatyki wykonawczej. Wykonawca stosuje kolejność CWU → EV i histerezę;
+  brak danych, SOC poniżej opublikowanego targetu albo zanik nadwyżki wymusza
+  wyłączenie w trybie AUTO. Procesy nie są częścią load ani targetu.
 
 Historyczne średnie końcowego SOC 7/14/28 dni są liczone niezależnie z pełnych,
 rzeczywiście zamkniętych dób. Doba z brakiem lub `MISSING_OUTAGE` nie jest

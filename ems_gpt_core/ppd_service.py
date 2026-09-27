@@ -62,7 +62,6 @@ def _anchor(row: dict, threshold_kwh: float) -> bool:
     """
     return (
         not bool(row.get("sell_battery"))
-        and bool(row.get("flexible_is_economic", True))
         and float(row.get("pv_flex_kwh") or 0.0) + 1e-9 >= threshold_kwh
         and float(row.get("soc_end_pct") or 0.0) + 0.01
         >= float(row.get("soc_target_pct") or 0.0)
@@ -73,7 +72,6 @@ def _corridor_open(row: dict) -> bool:
     """Hard policy conflicts split a window; weak PV forecasts do not."""
     return (
         not bool(row.get("sell_battery"))
-        and bool(row.get("flexible_is_economic", True))
     )
 
 
@@ -165,17 +163,6 @@ class PpdAdapters:
     record_event: Callable
 
 
-def _next_buy_prices(rows: list[dict]) -> list[float | None]:
-    result: list[float | None] = [None] * len(rows)
-    best = None
-    for index in range(len(rows) - 1, -1, -1):
-        result[index] = best
-        price = rows[index].get("price_buy_pln_kwh")
-        if price is not None:
-            best = float(price) if best is None else min(best, float(price))
-    return result
-
-
 def plan_bound_decisions(row: dict, threshold: float) -> tuple[tuple[str, bool, str, str], ...]:
     """Publish planner-owned processes without recalculating their policy.
 
@@ -219,7 +206,6 @@ def build_ppd_runner(a: PpdAdapters):
         ppd_run_id = str(uuid.uuid4())
         cutoff = a.slot_start().replace(tzinfo=None)
         eta_d = max(0.01, min(1.0, float(options.get("battery_discharge_efficiency", 0.95))))
-        margin = max(0.0, float(options.get("minimum_arbitrage_margin_pln_kwh", 0.05)))
         threshold = max(0.0, float(options.get("planned_flow_threshold_kwh", 0.02)))
         technical_threshold = max(
             threshold, float(options.get("technical_flow_threshold_kwh", 0.05)))
@@ -244,14 +230,12 @@ def build_ppd_runner(a: PpdAdapters):
             rows = list(cur.fetchall())
             if not rows:
                 raise RuntimeError(f"PPD_PLAN_ROWS_MISSING:{plan_run_id}")
-            next_buy = _next_buy_prices(rows)
             flexible_rows = []
             for index, row in enumerate(rows):
                 raw_flexible = sum(max(0.0, float(row.get(field) or 0.0)) for field in (
                     "planned_pv_export_kwh", "planned_pv_to_cwu_kwh",
                     "planned_pv_to_ev_kwh", "planned_pv_curtail_kwh"))
                 sell_battery = float(row.get("planned_sell_kwh") or 0.0) > threshold
-                replacement = next_buy[index]
                 flexible_rows.append({
                     "slot_start": row["slot_start"], "local_day": row.get("local_day"),
                     "soc_end_pct": row.get("soc_end_plan_pct"),
@@ -259,8 +243,6 @@ def build_ppd_runner(a: PpdAdapters):
                                        if row.get("soc_charge_target_pct") is not None
                                        else row.get("soc_target_pct")),
                     "pv_flex_kwh": raw_flexible, "sell_battery": sell_battery,
-                    "flexible_is_economic": (replacement is None or
-                        float(row.get("price_sell_pln_kwh") or 0.0) <= replacement + margin),
                 })
             flexible = build_flexible_ppd(
                 flexible_rows, cwu_threshold_kwh=cwu_threshold,

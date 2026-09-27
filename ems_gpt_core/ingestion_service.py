@@ -28,7 +28,9 @@ def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
         required_sell = (replacement / (eta_c * eta_d) + degradation + min_margin
                          if replacement is not None else None)
         sale_flags.append(bool(
-            required_sell is not None and float(current["sell"]) >= required_sell
+            float(current["sell"]) > 0.0
+            and required_sell is not None
+            and float(current["sell"]) >= required_sell
         ))
     buy_candidates: set[int] = set()
     # A 4-hour neighbourhood suppresses insignificant quarter-hour noise.

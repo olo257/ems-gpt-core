@@ -15,11 +15,64 @@ from executor_service import (
     battery_import_guard_reason,
     battery_soc_guard_actions,
     build_executor,
+    flexible_command_plan_version,
+    flexible_surplus_runtime_decisions,
     scalar_number,
 )
 
 
 class ExecutorServiceTests(unittest.TestCase):
+    def test_live_surplus_transition_key_is_stable_and_fits_database(self):
+        value = flexible_command_plan_version(
+            "1" * 36, "2" * 36, "3" * 32, "ON")
+        self.assertLessEqual(len(value), 80)
+        self.assertEqual(value, flexible_command_plan_version(
+            "1" * 36, "2" * 36, "3" * 32, "ON"))
+
+    def test_live_surplus_keeps_cwu_and_ev_outside_load_and_soc(self):
+        decision = flexible_surplus_runtime_decisions(
+            pv_power_w=7000, load_power_w=1500, battery_charge_power_w=1000,
+            ev_power_w=0, pv_cwu_on=False, live_soc_pct=80,
+            target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
+            cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
+        self.assertTrue(decision["pv_cwu"])
+        self.assertTrue(decision["pv_ev"])
+        self.assertEqual(decision["surplus_kw"], 4.5)
+        self.assertEqual(decision["after_cwu_kw"], 2.5)
+
+    def test_live_surplus_applies_cwu_before_ev(self):
+        decision = flexible_surplus_runtime_decisions(
+            pv_power_w=5000, load_power_w=1500, battery_charge_power_w=1000,
+            ev_power_w=0, pv_cwu_on=False, live_soc_pct=80,
+            target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
+            cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
+        self.assertTrue(decision["pv_cwu"])
+        self.assertFalse(decision["pv_ev"])
+
+    def test_live_surplus_fails_closed_below_target_or_without_telemetry(self):
+        below = flexible_surplus_runtime_decisions(
+            pv_power_w=7000, load_power_w=1000, battery_charge_power_w=0,
+            ev_power_w=0, pv_cwu_on=False, live_soc_pct=69,
+            target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
+            cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
+        missing = flexible_surplus_runtime_decisions(
+            pv_power_w=None, load_power_w=1000, battery_charge_power_w=0,
+            ev_power_w=0, pv_cwu_on=False, live_soc_pct=80,
+            target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
+            cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
+        self.assertEqual((below["pv_cwu"], below["pv_ev"]), (False, False))
+        self.assertEqual((missing["pv_cwu"], missing["pv_ev"]), (False, False))
+
+    def test_live_surplus_hysteresis_adds_back_running_flexible_loads(self):
+        decision = flexible_surplus_runtime_decisions(
+            pv_power_w=5000, load_power_w=5500, battery_charge_power_w=0,
+            ev_power_w=1500, pv_cwu_on=True, live_soc_pct=80,
+            target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
+            cwu_threshold_kw=2.0, ev_threshold_kw=1.5,
+            hysteresis_ratio=0.80)
+        self.assertTrue(decision["pv_cwu"])
+        self.assertFalse(decision["pv_ev"])
+
     def test_sql_floor_scalar_does_not_use_ha_state_parser(self):
         self.assertEqual(scalar_number(55.65), 55.65)
         self.assertEqual(scalar_number("40.00"), 40.0)

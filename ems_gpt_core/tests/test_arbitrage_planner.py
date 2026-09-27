@@ -1074,6 +1074,31 @@ class PairedArbitrageTests(unittest.TestCase):
 
         self.assertEqual(windows[0], (True, False))
 
+    def test_nonpositive_sale_is_never_enabled_even_before_negative_buy(self):
+        prices = [
+            {"sell": -0.01, "buy": 0.58},
+            {"sell": -0.50, "buy": -1.00},
+        ]
+
+        windows = derive_price_windows(
+            prices, 1.0, 1.0, 0.0, 0.0, 0.05)
+
+        self.assertFalse(windows[0][0])
+        self.assertFalse(windows[1][0])
+
+    def test_full_day_never_opens_battery_sale_at_nonpositive_price(self):
+        prices = [
+            {"sell": -0.01, "buy": 0.58}
+            for _ in range(96)
+        ]
+        prices[60]["buy"] = -1.00
+
+        windows = derive_price_windows(
+            prices, 0.90, 0.95, 0.08, 0.05, 0.05)
+
+        self.assertEqual(len(windows), 96)
+        self.assertFalse(any(sale for sale, _buy in windows))
+
     def test_terminal_price_valley_is_wide_enough_for_physical_recovery(self):
         prices = [
             {"sell": 0.0, "buy": 2.0},
