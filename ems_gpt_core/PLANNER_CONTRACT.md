@@ -312,7 +312,8 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
   `ALLOWED + OFF`. Proces nie uruchamia skryptu sprzedaży baterii.
 - `PV_CWU` i `PV_EV` są jedynymi procesami, których okna PPD może wyliczyć po
   publikacji planu; nie zmieniają one targetu. Korzystają ze wspólnego okna
-  dopuszczenia, a osobne progi mocy są stosowane dopiero przez runtime guard.
+  dopuszczenia od istotnej dodatniej nadwyżki planu po osiągnięciu targetu;
+  osobne progi mocy są stosowane dopiero przez runtime guard.
 - Ich wykonanie w `AUTO` wymaga świeżej telemetrii, SOC co najmniej równego
   opublikowanemu targetowi i nadwyżki `PV - load`.
   CWU ma pierwszeństwo przed EV, a brak danych lub utrata nadwyżki wymusza OFF.

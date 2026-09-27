@@ -116,7 +116,10 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
   analityki; nie wracają jako ukryte wejście kolejnego planu.
 - `PV_CWU` oraz `PV_EV` są wyznaczane przez PPD po zamrożeniu targetu. Planer
   może otworzyć ich wspólne kandydackie okno od następnego slotu po osiągnięciu targetu,
-  ale ich rzeczywista praca zależy od świeżej telemetrii nadwyżki PV i
+  gdy istnieje istotna planowana nadwyżka PV, nawet poniżej progów uruchomienia
+  odbiorników. Prognoza służy wyłącznie do wyznaczenia okna; osobne progi
+  uruchomienia sprawdza wykonawca na podstawie rzeczywistego pomiaru.
+  Rzeczywista praca zależy od świeżej telemetrii nadwyżki PV i
   automatyki wykonawczej. Wspólne okno zapobiega sytuacji EV=ALLOWED przy
   CWU=BLOCKED; wykonawca stosuje kolejność CWU → EV i histerezę;
   brak danych, SOC poniżej opublikowanego targetu albo zanik nadwyżki wymusza

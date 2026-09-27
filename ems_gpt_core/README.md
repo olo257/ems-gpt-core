@@ -1,6 +1,6 @@
 # EMS-GPT Core
 
-Wersja produkcyjna: **0.39.8**.
+Wersja produkcyjna: **0.39.9**.
 
 Dokumenty obowiązujące:
 
@@ -12,7 +12,7 @@ Dokumenty obowiązujące:
 Materiały dawnych wydań zostały przeniesione do [`docs/archive/`](docs/archive/)
 i nie są bieżącą specyfikacją.
 
-Najważniejsze reguły wykonawcze 0.39.8:
+Najważniejsze reguły wykonawcze 0.39.9:
 
 - energia PV jest przydzielana kolejno do: load domu wraz z HP, ładowania
   baterii, `PV_CWU`, `PV_EV`, a dopiero potem do eksportu;
