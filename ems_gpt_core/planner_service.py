@@ -276,7 +276,8 @@ def battery_sale_economics(rows: list[dict], index: int, eta_c: float, eta_d: fl
             sell_now - replacement / (eta_c * eta_d) - degradation
             if replacement is not None else None
         ),
-        "eligible": required_sell is not None and sell_now >= required_sell,
+        "eligible": (sell_now > 0.0 and required_sell is not None
+                     and sell_now >= required_sell),
     }
 
 
@@ -576,7 +577,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         # MariaDB returns BOOL/TINYINT as 0/1 (and some drivers as Decimal),
         # so identity checks against False would incorrectly allow 0.
         grid_charge_allowed = strict_database_bool(row.get("buy_window", True), "buy_window")
-        battery_sale_allowed = (battery_sales_enabled
+        battery_sale_allowed = (battery_sales_enabled and sell_price > 0.0
                                 and strict_database_bool(
                                     row.get("sale_window", False), "sale_window"))
         available_charge_internal = min(
@@ -1786,6 +1787,9 @@ def build_planner(a: PlannerAdapters):
                 if (battery_sell > flow_threshold
                         and not strict_database_bool(row.get("sale_window"), "sale_window")):
                     raise RuntimeError(f"SALE_OUTSIDE_WINDOW:{index}")
+                if battery_sell > flow_threshold and float(
+                        row.get("price_sell_pln_kwh") or 0.0) <= 0.0:
+                    raise RuntimeError(f"SALE_AT_NONPOSITIVE_PRICE:{index}")
                 if (float(flow.get("battery_sell_kwh") or 0.0) > flow_threshold
                         and float(flow.get("soc_end_pct") or 0.0) + 1e-9
                         < optimized_floors[index]):

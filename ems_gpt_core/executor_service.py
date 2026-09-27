@@ -66,6 +66,59 @@ def battery_import_guard_reason(live_soc, target, planned_buy, flow_threshold: f
     return None
 
 
+def flexible_surplus_runtime_decisions(
+        *, pv_power_w, load_power_w, battery_charge_power_w, ev_power_w,
+        pv_cwu_on, live_soc_pct, target_soc_pct, cwu_allowed: bool,
+        ev_allowed: bool, cwu_threshold_kw: float, ev_threshold_kw: float,
+        hysteresis_ratio: float = 0.80) -> dict:
+    """Gate flexible PV loads from live surplus without feeding SOC planning.
+
+    PV_CWU and PV_EV remain outside native load and every SOC calculation.
+    The target is read only: it opens the surplus layer but is never changed
+    here. Existing flexible consumption is added back to inverter load before
+    priority is reapplied, preventing immediate ON/OFF oscillation.
+    """
+    required = (pv_power_w, load_power_w, battery_charge_power_w,
+                live_soc_pct, target_soc_pct)
+    if any(value is None for value in required):
+        return {"pv_cwu": False, "pv_ev": False,
+                "reason": "LIVE_SURPLUS_DATA_UNAVAILABLE", "surplus_kw": None}
+    if float(live_soc_pct) + 0.01 < float(target_soc_pct):
+        return {"pv_cwu": False, "pv_ev": False,
+                "reason": "LIVE_SOC_BELOW_TARGET", "surplus_kw": None}
+    ratio = max(0.0, min(1.0, float(hysteresis_ratio)))
+    cwu_threshold = max(0.0, float(cwu_threshold_kw))
+    ev_threshold = max(0.0, float(ev_threshold_kw))
+    ev_running_kw = max(0.0, float(ev_power_w or 0.0) / 1000.0)
+    cwu_running = bool(pv_cwu_on)
+    # inverter_load already contains running flexible consumers; add them back
+    # to reconstruct the surplus which existed before CWU/EV allocation.
+    pre_flexible_kw = (
+        float(pv_power_w) - float(load_power_w) - max(0.0, float(battery_charge_power_w))
+    ) / 1000.0 + ev_running_kw + (cwu_threshold if cwu_running else 0.0)
+    cwu_required = cwu_threshold * (ratio if cwu_running else 1.0)
+    cwu_on = bool(cwu_allowed and pre_flexible_kw + 1e-9 >= cwu_required)
+    after_cwu = max(0.0, pre_flexible_kw - (cwu_threshold if cwu_on else 0.0))
+    ev_running = ev_running_kw > 0.10
+    ev_required = ev_threshold * (ratio if ev_running else 1.0)
+    ev_on = bool(ev_allowed and after_cwu + 1e-9 >= ev_required)
+    return {
+        "pv_cwu": cwu_on, "pv_ev": ev_on,
+        "reason": "LIVE_SURPLUS_PRIORITY",
+        "surplus_kw": round(pre_flexible_kw, 3),
+        "after_cwu_kw": round(after_cwu, 3),
+    }
+
+
+def flexible_command_plan_version(plan_run_id, ppd_run_id, revision, decision) -> str:
+    """Return a stable live-transition key that fits commands.plan_version."""
+    value = ":".join((str(plan_run_id)[:16], str(ppd_run_id or "NO_PPD")[:16],
+                      str(revision or "base")[:16], "FLEX", str(decision)))
+    if len(value) > 80:
+        raise RuntimeError("FLEX_PLAN_VERSION_TOO_LONG")
+    return value
+
+
 @dataclass(frozen=True)
 class ExecutorAdapters:
     options: dict
@@ -550,6 +603,7 @@ def build_executor(a: ExecutorAdapters):
         staged = 0
         with db() as conn, conn.cursor() as cur:
             cur.execute("""SELECT d.*,s.heat_pump_window planner_heat_pump_window,
+              COALESCE(s.soc_charge_target_pct,s.soc_target_pct) runtime_soc_target_pct,
               o.requested_state,o.override_id FROM ems_gpt_core_process_decisions d
               JOIN ems_gpt_slots s ON s.slot_start=d.slot_start
                AND s.plan_run_id=d.plan_run_id AND s.plan_stage='PUBLISHED'
@@ -557,7 +611,33 @@ def build_executor(a: ExecutorAdapters):
                AND o.status='ACTIVE' AND o.valid_from<=%s AND o.valid_until>%s
               WHERE d.slot_start=%s AND d.ppd_run_id IS NOT NULL
               ORDER BY d.process_name""", (now, now, start))
-            for row in cur.fetchall():
+            decision_rows = list(cur.fetchall())
+            cur.execute("""SELECT pv_power_w,load_power_w,battery_charge_power_w,
+              ev_power_w,pv_cwu_on,soc_pct,captured_at
+              FROM ems_gpt_telemetry_snapshots
+              WHERE captured_at>=%s ORDER BY captured_at DESC LIMIT 1""",
+              (now - timedelta(seconds=max(30, int(OPTIONS.get(
+                  "telemetry_degraded_seconds", 120)))),))
+            live = cur.fetchone() or {}
+            planned = {str(row["process_name"]): database_bool(row["eligible"], "eligible")
+                       for row in decision_rows}
+            runtime_flexible = flexible_surplus_runtime_decisions(
+                pv_power_w=live.get("pv_power_w"),
+                load_power_w=live.get("load_power_w"),
+                battery_charge_power_w=live.get("battery_charge_power_w"),
+                ev_power_w=live.get("ev_power_w"),
+                pv_cwu_on=bool(live.get("pv_cwu_on")),
+                live_soc_pct=live.get("soc_pct"),
+                target_soc_pct=next((row.get("runtime_soc_target_pct")
+                                     for row in decision_rows
+                                     if row.get("runtime_soc_target_pct") is not None), None),
+                cwu_allowed=planned.get("PV_CWU", False),
+                ev_allowed=planned.get("PV_EV", False),
+                cwu_threshold_kw=float(OPTIONS.get("pv_cwu_min_surplus_kw", 2.0)),
+                ev_threshold_kw=float(OPTIONS.get("pv_ev_min_surplus_kw", 1.5)),
+                hysteresis_ratio=float(OPTIONS.get("pv_flexible_hysteresis_ratio", 0.80)),
+            )
+            for row in decision_rows:
                 planned_on = database_bool(row["eligible"], "eligible")
                 if row["process_name"] == "HP_HEAT_DHW":
                     planner_window = database_bool(
@@ -568,6 +648,10 @@ def build_executor(a: ExecutorAdapters):
                         }, "ERROR")
                     planned_on = planned_on and planner_window
                 requested = row.get("requested_state")
+                if requested is None and row["process_name"] == "PV_CWU":
+                    planned_on = bool(runtime_flexible["pv_cwu"])
+                elif requested is None and row["process_name"] == "PV_EV":
+                    planned_on = bool(runtime_flexible["pv_ev"])
                 effective_on = (True if requested == "FORCE_ON" else
                                 False if requested == "FORCE_OFF" else planned_on)
                 decision = "ON" if effective_on else "OFF"
@@ -575,11 +659,20 @@ def build_executor(a: ExecutorAdapters):
                 command_id = str(uuid.uuid4())
                 plan_version = (str(row["plan_run_id"]) + ":" + str(row.get("ppd_run_id") or "NO_PPD") + ":"
                                 + str(OPTIONS.get("_process_control_revision") or "base"))
+                if row["process_name"] in {"PV_CWU", "PV_EV"} and requested is None:
+                    # Allow one live ON and one live OFF transition per slot and
+                    # plan version without emitting duplicate commands each minute.
+                    # Compact UUID fragments keep the value within VARCHAR(80).
+                    plan_version = flexible_command_plan_version(
+                        row["plan_run_id"], row.get("ppd_run_id"),
+                        OPTIONS.get("_process_control_revision"), decision)
                 battery_flow = row["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"}
                 safety = {"executor_enabled": True, "dry_run": dry_run, "connector_required": True,
                           "soc_programs_1_6_write_allowed": battery_flow,
                           "soc_restore_required": battery_flow,
-                          "override_id": row.get("override_id")}
+                          "override_id": row.get("override_id"),
+                          "live_surplus_guard": (runtime_flexible
+                              if row["process_name"] in {"PV_CWU", "PV_EV"} else None)}
                 cur.execute("""INSERT IGNORE INTO ems_gpt_core_commands
                   (command_id,slot_start,slot_id,process_name,decision,plan_version,created_at,expires_at,
                    source,status,safety_json) VALUES(%s,%s,%s,%s,%s,%s,NOW(6),%s,%s,%s,%s)""",

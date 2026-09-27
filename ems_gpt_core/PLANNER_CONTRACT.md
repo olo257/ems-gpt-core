@@ -199,7 +199,13 @@ Prognozowane i rzeczywiste PV jest alokowane w kolejności:
 
 CWU/EV lub sprzedaż PV nie mogą wystąpić, gdy ta sama energia jest potrzebna do
 osiągnięcia targetu. Dopuszczenie CWU/EV wymaga nadwyżki po target oraz spełnienia
-ich własnych progów i ekonomiki.
+ich własnych progów. Cena eksportu PV nie może zmienić kolejności CWU → EV →
+sprzedaż pozostałości.
+
+Okno PPD jest wyłącznie pozwoleniem. W trybie AUTO wykonawca ponownie sprawdza
+świeżą telemetrię i rzeczywistą nadwyżkę `PV - load - ładowanie baterii`, dodając
+z powrotem już pracujące CWU/EV wyłącznie na potrzeby histerezy. Odbiory te nie
+wracają do `load`, `soc_target`, `soc_required` ani planowanej trajektorii SOC.
 
 ## 8. Ekonomiczne BUY i SELL
 

@@ -58,6 +58,44 @@ class FlexiblePpdTests(unittest.TestCase):
         result = build_flexible_ppd(source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
         self.assertEqual([x.pv_cwu_allowed for x in result], [False, False, False, True, False])
 
+    def test_pv_sale_opportunity_cost_never_blocks_cwu_or_ev_priority(self):
+        source = rows(pv=(0.1, 0.6, 0.1, 0.7, 0.0))
+        for row in source:
+            row["flexible_is_economic"] = False
+        result = build_flexible_ppd(
+            source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
+        self.assertEqual(
+            [x.pv_cwu_allowed for x in result],
+            [False, True, True, True, False],
+        )
+        self.assertEqual(
+            [x.pv_ev_allowed for x in result],
+            [False, True, True, True, False],
+        )
+
+    def test_full_day_keeps_flexible_priority_despite_export_opportunity(self):
+        start = datetime(2026, 9, 27)
+        source = []
+        for index in range(96):
+            daytime = 32 <= index <= 64
+            source.append({
+                "slot_start": start + timedelta(minutes=15 * index),
+                "local_day": start.date(),
+                "soc_end_pct": 80.0,
+                "soc_target_pct": 70.0,
+                "pv_flex_kwh": 0.75 if daytime else 0.0,
+                "sell_battery": False,
+                "flexible_is_economic": False,
+            })
+
+        result = build_flexible_ppd(
+            source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
+
+        self.assertTrue(all(result[index].pv_cwu_allowed for index in range(32, 65)))
+        self.assertTrue(all(result[index].pv_ev_allowed for index in range(32, 65)))
+        self.assertFalse(any(result[index].pv_cwu_allowed for index in range(0, 32)))
+        self.assertFalse(any(result[index].pv_cwu_allowed for index in range(65, 96)))
+
     def test_target_affecting_processes_are_copied_from_the_frozen_plan(self):
         decisions = plan_bound_decisions({
             "planned_buy_kwh": 0.75,
