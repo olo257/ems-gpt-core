@@ -1908,6 +1908,7 @@ def build_planner(a: PlannerAdapters):
                   soc_target_reserved_pv_kwh=%s,planned_buy_kwh=%s,planned_battery_charge_kwh=%s,
                   planned_battery_discharge_kwh=%s,planned_sell_kwh=%s,planned_pv_export_kwh=%s,
                   recommendation=%s,grid_policy_planned=%s,export_policy_planned=%s,
+                  sell_bat_policy_allowed=%s,sell_pv_policy_allowed=%s,
                   planned_pv_to_bat_kwh=%s,planned_pv_to_cwu_kwh=%s,planned_pv_to_ev_kwh=%s,
                   planned_pv_curtail_kwh=%s,ppd_reason=%s,soc_updated_at=NOW(6),ppd_updated_at=NOW(6)
                   WHERE run_id=%s AND slot_start=%s""",
@@ -1916,6 +1917,7 @@ def build_planner(a: PlannerAdapters):
                    commitment["due"][i],commitment["source"][i],round(commitment["reserved_pv_kwh"][i],6),round(buy,6),
                    round(item["charge"],6),round(item["discharge"],6),round(item["sell"],6),round(item["pv_export"],6),
                    recommendation,grid_policy,export_policy,
+                   int(bool(economics["eligible"])),int(sell_price>0.0),
                    round(pv_to_bat,6),round(cwu_kwh,6),round(ev_kwh,6),
                    round(pv_curtail_kwh,6),reason[:255],run_id,row["slot_start"]))
                 hp_window = i in hp_selected_indices
@@ -1964,6 +1966,8 @@ def build_planner(a: PlannerAdapters):
               p.planned_battery_charge_kwh=s.planned_battery_charge_kwh,
               p.planned_battery_discharge_kwh=s.planned_battery_discharge_kwh,p.recommendation=s.recommendation,
               p.grid_policy_planned=s.grid_policy_planned,p.export_policy_planned=s.export_policy_planned,
+              p.sell_bat_policy_allowed=s.sell_bat_policy_allowed,
+              p.sell_pv_policy_allowed=s.sell_pv_policy_allowed,
               p.planned_pv_to_bat_kwh=s.planned_pv_to_bat_kwh,
               p.planned_pv_to_cwu_kwh=s.planned_pv_to_cwu_kwh,
               p.planned_pv_to_ev_kwh=s.planned_pv_to_ev_kwh,

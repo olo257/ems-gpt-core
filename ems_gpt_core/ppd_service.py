@@ -61,18 +61,15 @@ def _anchor(row: dict, threshold_kwh: float) -> bool:
     load forecast that could feed target calculation back into the planner.
     """
     return (
-        not bool(row.get("sell_battery"))
-        and float(row.get("pv_flex_kwh") or 0.0) + 1e-9 >= threshold_kwh
+        float(row.get("pv_flex_kwh") or 0.0) + 1e-9 >= threshold_kwh
         and float(row.get("soc_end_pct") or 0.0) + 0.01
         >= float(row.get("soc_target_pct") or 0.0)
     )
 
 
 def _corridor_open(row: dict) -> bool:
-    """Hard policy conflicts split a window; weak PV forecasts do not."""
-    return (
-        not bool(row.get("sell_battery"))
-    )
+    """Battery export is independent from the flexible-PV corridor."""
+    return True
 
 
 def _best_window(indices: list[int], anchors: list[bool], rows: list[dict]) -> tuple[int, int] | None:
@@ -172,6 +169,12 @@ def plan_bound_decisions(row: dict, threshold: float) -> tuple[tuple[str, bool, 
     """
     buy = float(row.get("planned_buy_kwh") or 0.0)
     sell = float(row.get("planned_sell_kwh") or 0.0)
+    pv_export = float(row.get("planned_pv_export_kwh") or 0.0)
+    sell_price = float(row.get("price_sell_pln_kwh") or 0.0)
+    sell_bat_allowed = _database_bool(
+        row.get("sell_bat_policy_allowed") or 0, "sell_bat_policy_allowed")
+    sell_pv_allowed = _database_bool(
+        row.get("sell_pv_policy_allowed") or 0, "sell_pv_policy_allowed")
     grid_policy = str(row.get("grid_policy_planned") or "NEUTRAL")
     export_policy = str(row.get("export_policy_planned") or "NEUTRAL")
     hp_window = _database_bool(row.get("heat_pump_window"), "heat_pump_window")
@@ -186,8 +189,12 @@ def plan_bound_decisions(row: dict, threshold: float) -> tuple[tuple[str, bool, 
     return (
         ("BATTERY_IMPORT", buy > threshold, grid_policy,
          f"planner_bound; planned_buy={buy:.3f}"),
-        ("BATTERY_EXPORT", sell > threshold, export_policy,
-         f"planner_bound; planned_sell={sell:.3f}"),
+        ("SELL_BAT", sell > threshold, "ALLOWED" if sell_bat_allowed else "BLOCKED",
+         f"planner_bound; policy={'ALLOWED' if sell_bat_allowed else 'BLOCKED'}; "
+         f"planned_sell={sell:.3f}"),
+        ("SELL_PV", pv_export > threshold and sell_pv_allowed,
+         "ALLOWED" if sell_pv_allowed else "BLOCKED",
+         f"planner_bound; planned_pv_export={pv_export:.3f}; sell_price={sell_price:.3f}"),
         ("HP_HEAT_DHW", hp_window, "ON" if hp_window else "OFF",
          "planner_bound; published_heat_pump_window"),
     )
@@ -286,7 +293,9 @@ def build_ppd_runner(a: PpdAdapters):
                   (round(cwu, 6), round(ev, 6), round(pv_export, 6), round(curtail, 6),
                    recommendation, reason, run_type,
                    row["slot_start"], plan_run_id))
-                decisions = plan_bound_decisions(row, threshold) + (
+                decision_row = dict(row)
+                decision_row["planned_pv_export_kwh"] = pv_export
+                decisions = plan_bound_decisions(decision_row, threshold) + (
                     ("PV_CWU", flex.pv_cwu_allowed, "ALLOW" if flex.pv_cwu_allowed else "BLOCK", flex.reason),
                     ("PV_EV", flex.pv_ev_allowed, "ALLOW" if flex.pv_ev_allowed else "BLOCK", flex.reason),
                 )
@@ -294,14 +303,15 @@ def build_ppd_runner(a: PpdAdapters):
                     cur.execute("""INSERT INTO ems_gpt_core_process_decisions
                       (slot_start,slot_id,process_name,decision,eligible,reason,plan_run_id,
                        ppd_run_id,valid_until,connector_required,published_at)
-                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,1,NOW(6))
+                      VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(6))
                       ON DUPLICATE KEY UPDATE decision=VALUES(decision),eligible=VALUES(eligible),
                        reason=VALUES(reason),slot_id=COALESCE(slot_id,VALUES(slot_id)),
                        plan_run_id=VALUES(plan_run_id),ppd_run_id=VALUES(ppd_run_id),
                        valid_until=VALUES(valid_until),published_at=NOW(6)""",
                       (row["slot_start"], row.get("slot_id"), process, decision, eligible,
                        process_reason[:1000], plan_run_id, ppd_run_id,
-                       row["slot_start"] + timedelta(minutes=16)))
+                       row["slot_start"] + timedelta(minutes=16),
+                       0 if process == "SELL_PV" else 1))
                     decision_count += 1
             cur.execute("""UPDATE ems_gpt_core_module_runs SET status='COMPLETED',
               completed_at=NOW(6),output_version=%s,reason=%s WHERE run_id=%s""",

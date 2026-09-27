@@ -103,7 +103,7 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
 ## 5. Granica odpowiedzialności planer–PPD–executor
 
 - Planer jest jedynym właścicielem rekomendacji `BATTERY_IMPORT`,
-  `BATTERY_EXPORT` i `HP_HEAT_DHW`, ponieważ ich energia wpływa na bilans, SOC
+  `SELL_BAT` i `HP_HEAT_DHW`, ponieważ ich energia wpływa na bilans, SOC
   oraz target. PPD nie przelicza ich ekonomiki ani kwalifikacji.
 - PPD publikuje zamrożoną rekomendację planera jako decyzję `AUTO`, a executor
   nakłada aktywny `FORCE_ON` albo `FORCE_OFF` i tworzy decyzję efektywną.
@@ -120,6 +120,11 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
   automatyki wykonawczej. Wykonawca stosuje kolejność CWU → EV i histerezę;
   brak danych, SOC poniżej opublikowanego targetu albo zanik nadwyżki wymusza
   wyłączenie w trybie AUTO. Procesy nie są częścią load ani targetu.
+- PPD publikuje `SELL_BAT` i `SELL_PV` na dwóch niezależnych osiach:
+  polityka `ALLOWED/BLOCKED` oraz stan planowany/efektywny `ON/OFF`.
+  `SELL_BAT` korzysta z dotychczasowych bezpiecznych
+  skryptów baterii. `SELL_PV` opisuje wyłącznie sprzedaż pozostałej nadwyżki
+  PV i nie tworzy polecenia rozładowania baterii.
 
 Obowiązująca kolejność wykorzystania bieżącej produkcji to:
 `PV → load (w tym HP) → ładowanie baterii → PV_CWU → PV_EV → eksport PV`.

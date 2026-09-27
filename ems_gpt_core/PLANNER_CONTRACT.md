@@ -300,10 +300,14 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
 
 ## 12. Kontrakt granicy PPD
 
-- `BATTERY_IMPORT`, `BATTERY_EXPORT` i `HP_HEAT_DHW` są planowane ilościowo
+- `BATTERY_IMPORT`, `SELL_BAT` i `HP_HEAT_DHW` są planowane ilościowo
   wyłącznie przez planer. PPD nie posiada drugiej implementacji ekonomiki,
   okien ani targetu dla tych procesów.
 - PPD kopiuje ich zamrożone decyzje do wersjonowanej macierzy procesów.
+- PPD publikuje `SELL_PV` jako osobny proces. Pole decyzji opisuje politykę
+  `ALLOWED/BLOCKED`, a `eligible` opisuje planowane `ON/OFF`. Cena mniejsza
+  lub równa zero daje `BLOCKED + OFF`; dodatnia cena bez nadwyżki daje
+  `ALLOWED + OFF`. Proces nie uruchamia skryptu sprzedaży baterii.
 - `PV_CWU` i `PV_EV` są jedynymi procesami, których okna PPD może wyliczyć po
   publikacji planu; nie zmieniają one targetu.
 - Ich wykonanie w `AUTO` wymaga świeżej telemetrii, SOC co najmniej równego

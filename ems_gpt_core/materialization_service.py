@@ -178,7 +178,8 @@ def build_materializations(a: MaterializationAdapters):
                     observed_energy = {
                         # Below 50 Wh/slot the inverter flow is technical noise, not an EMS process.
                         "BATTERY_IMPORT": round(grid_to_battery, 6) if grid_to_battery >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
-                        "BATTERY_EXPORT": round(battery_to_grid, 6) if battery_to_grid >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
+                        "SELL_BAT": round(battery_to_grid, 6) if battery_to_grid >= float(OPTIONS.get("technical_flow_threshold_kwh",0.05)) else 0.0,
+                        "SELL_PV": round(max(0.0, grid_export - battery_to_grid), 6),
                         # The HP DHW meter belongs to the autonomous heat-pump
                         # cycle. PV_CWU controls a separate immersion heater
                         # without its own power meter, so execution state comes

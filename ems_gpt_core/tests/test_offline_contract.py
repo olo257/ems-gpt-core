@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.5"', APP_SOURCE)
-        self.assertIn('version: "0.39.5"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.6"', APP_SOURCE)
+        self.assertIn('version: "0.39.6"', CONFIG)
 
     def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -513,8 +513,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('"source": "EMS_GPT_SLOTS"', SOURCE)
         self.assertNotIn('battery_source = "LEGACY_HELPERS"', SOURCE)
 
-    def test_five_processes_are_present(self):
-        for name in ("BATTERY_IMPORT", "BATTERY_EXPORT", "PV_CWU", "PV_EV", "HP_HEAT_DHW"):
+    def test_independent_processes_are_present(self):
+        for name in ("BATTERY_IMPORT", "SELL_BAT", "SELL_PV", "PV_CWU", "PV_EV", "HP_HEAT_DHW"):
             self.assertIn(name, SOURCE)
         self.assertNotIn('"HP_DHW"', SOURCE)
         self.assertNotIn('"MANUAL_CIRCULATION"', SOURCE)
@@ -555,7 +555,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("def plan_bound_decisions", ppd)
         self.assertNotIn("def _sale_economics", ppd)
         self.assertNotIn("grid_policy_planned=%s,export_policy_planned=%s", ppd)
-        self.assertIn("decisions = plan_bound_decisions(row, threshold)", ppd)
+        self.assertIn("decisions = plan_bound_decisions(decision_row, threshold)", ppd)
+        self.assertIn('0 if process == "SELL_PV" else 1', ppd)
 
     def test_process_view_separates_plan_override_and_effective_state(self):
         api = MODULE_SOURCES["api_service.py"]
@@ -654,7 +655,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("MAX(pv_cwu_on) pv_cwu_on", materialization)
         self.assertIn('"PV_CWU": None', materialization)
         self.assertIn("battery_to_grid = min(", materialization)
-        self.assertIn('"BATTERY_EXPORT": round(battery_to_grid, 6)', materialization)
+        self.assertIn('"SELL_BAT": round(battery_to_grid, 6)', materialization)
+        self.assertIn('"SELL_PV": round(max(0.0, grid_export - battery_to_grid), 6)', materialization)
 
     def test_command_contract_and_ttl_are_present(self):
         for field in ("command_id", "expires_at", "plan_version", "acknowledgement_json"):
@@ -665,7 +667,7 @@ class OfflineContractTests(unittest.TestCase):
                        "battery_program_soc_restore.json", "restore_program_targets",
                        "deye_program_soc_baselines"):
             self.assertIn(marker, SOURCE)
-        import_off = SOURCE.index('if command["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"} and command["decision"] == "OFF"')
+        import_off = SOURCE.index('if command["process_name"] in {"BATTERY_IMPORT", "SELL_BAT"} and command["decision"] == "OFF"')
         disable_grid = SOURCE.index('set_active_program_charging(now, "Disabled")', import_off)
         restore_soc = SOURCE.index("restore_program_targets_if_idle()", disable_grid)
         self.assertLess(import_off, disable_grid)

@@ -1,6 +1,6 @@
 # EMS-GPT Core
 
-Wersja produkcyjna: **0.39.5**.
+Wersja produkcyjna: **0.39.6**.
 
 Dokumenty obowiązujące:
 
@@ -12,7 +12,7 @@ Dokumenty obowiązujące:
 Materiały dawnych wydań zostały przeniesione do [`docs/archive/`](docs/archive/)
 i nie są bieżącą specyfikacją.
 
-Najważniejsze reguły wykonawcze 0.39.5:
+Najważniejsze reguły wykonawcze 0.39.6:
 
 - energia PV jest przydzielana kolejno do: load domu wraz z HP, ładowania
   baterii, `PV_CWU`, `PV_EV`, a dopiero potem do eksportu;
@@ -20,4 +20,6 @@ Najważniejsze reguły wykonawcze 0.39.5:
   wymagają świeżej telemetrii, osiągniętego targetu i rzeczywistej nadwyżki PV;
 - sprzedaż baterii wymaga dodatniej ceny sprzedaży oraz dodatniego wyniku
   ekonomicznego pełnego wariantu planu;
+- PPD publikuje osobno `SELL_BAT` i `SELL_PV`; niedodatnia cena eksportu
+  ustawia `NO_SELL_PV` bez blokowania CWU/EV;
 - brak danych wykonawczych działa fail-safe i wyłącza odbiory elastyczne.
