@@ -52,11 +52,11 @@ class FlexiblePpdTests(unittest.TestCase):
         result = build_flexible_ppd(source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
         self.assertEqual([x.pv_cwu_allowed for x in result], [False, True, False, True, False])
 
-    def test_battery_sale_is_a_hard_window_boundary(self):
+    def test_battery_sale_does_not_block_independent_flexible_pv_window(self):
         source = rows(pv=(0.1, 0.6, 0.6, 0.7, 0.0))
         source[2]["sell_battery"] = True
         result = build_flexible_ppd(source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
-        self.assertEqual([x.pv_cwu_allowed for x in result], [False, False, False, True, False])
+        self.assertEqual([x.pv_cwu_allowed for x in result], [False, True, True, True, False])
 
     def test_pv_sale_opportunity_cost_never_blocks_cwu_or_ev_priority(self):
         source = rows(pv=(0.1, 0.6, 0.1, 0.7, 0.0))
@@ -100,30 +100,55 @@ class FlexiblePpdTests(unittest.TestCase):
         decisions = plan_bound_decisions({
             "planned_buy_kwh": 0.75,
             "planned_sell_kwh": 0.50,
+            "planned_pv_export_kwh": 0.40,
+            "price_sell_pln_kwh": 0.25,
+            "sell_bat_policy_allowed": 1,
+            "sell_pv_policy_allowed": 1,
             "grid_policy_planned": "BUY_ALLOWED",
             "export_policy_planned": "SELL_BAT",
             "heat_pump_window": 1,
         }, 0.02)
         by_name = {decision[0]: decision for decision in decisions}
         self.assertEqual(by_name["BATTERY_IMPORT"][1:3], (True, "BUY_ALLOWED"))
-        self.assertEqual(by_name["BATTERY_EXPORT"][1:3], (True, "SELL_BAT"))
+        self.assertEqual(by_name["SELL_BAT"][1:3], (True, "ALLOWED"))
+        self.assertEqual(by_name["SELL_PV"][1:3], (True, "ALLOWED"))
         self.assertEqual(by_name["HP_HEAT_DHW"][1:3], (True, "ON"))
 
     def test_ppd_does_not_recalculate_planner_owned_battery_economics(self):
         decisions = plan_bound_decisions({
             "planned_buy_kwh": 0.0,
             "planned_sell_kwh": 0.0,
+            "planned_pv_export_kwh": 0.0,
+            "price_sell_pln_kwh": -0.01,
             "grid_policy_planned": "NEUTRAL",
             "export_policy_planned": "NEUTRAL",
             "heat_pump_window": 0,
         }, 0.02)
         self.assertTrue(all(not decision[1] for decision in decisions))
+        by_name = {decision[0]: decision for decision in decisions}
+        self.assertEqual(by_name["SELL_PV"][2], "BLOCKED")
+
+    def test_nonpositive_price_blocks_only_sell_pv_process(self):
+        decisions = plan_bound_decisions({
+            "planned_buy_kwh": 0.0,
+            "planned_sell_kwh": 0.0,
+            "planned_pv_export_kwh": 0.75,
+            "price_sell_pln_kwh": 0.0,
+            "grid_policy_planned": "NEUTRAL",
+            "export_policy_planned": "NO_SELL_PV",
+            "heat_pump_window": 0,
+        }, 0.02)
+        by_name = {decision[0]: decision for decision in decisions}
+        self.assertEqual(by_name["SELL_BAT"][1:3], (False, "BLOCKED"))
+        self.assertEqual(by_name["SELL_PV"][1:3], (False, "BLOCKED"))
 
     def test_database_encoded_zero_never_enables_hp(self):
         for stored_zero in (0, False, "0", "false", b"0", b"\x00"):
             decisions = plan_bound_decisions({
                 "planned_buy_kwh": 0.0,
                 "planned_sell_kwh": 0.0,
+                "planned_pv_export_kwh": 0.0,
+                "price_sell_pln_kwh": 0.0,
                 "grid_policy_planned": "NEUTRAL",
                 "export_policy_planned": "NEUTRAL",
                 "heat_pump_window": stored_zero,

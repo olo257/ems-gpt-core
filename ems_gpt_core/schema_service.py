@@ -319,6 +319,8 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
                 "planned_pv_to_cwu_kwh DOUBLE NOT NULL DEFAULT 0",
                 "planned_pv_to_ev_kwh DOUBLE NOT NULL DEFAULT 0",
                 "planned_pv_curtail_kwh DOUBLE NOT NULL DEFAULT 0",
+                "sell_bat_policy_allowed TINYINT(1) NOT NULL DEFAULT 0",
+                "sell_pv_policy_allowed TINYINT(1) NOT NULL DEFAULT 0",
             ):
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column}")
         cur.execute("""UPDATE ems_gpt_slots SET market_window=CASE
@@ -432,6 +434,13 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
         for table in ("ems_gpt_core_process_decisions", "ems_gpt_core_process_overrides",
                       "ems_gpt_core_commands", "ems_gpt_core_process_execution"):
             cur.execute(f"DELETE FROM {table} WHERE process_name IN ('MANUAL_CIRCULATION','HP_DHW')")
+            cur.execute(f"UPDATE {table} SET process_name='SELL_BAT' "
+                        "WHERE process_name='BATTERY_EXPORT'")
+        cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
+                    ("core_schema_0_39_6", json.dumps({
+                        "version": app_version,
+                        "scope": "canonical_sell_bat_and_independent_sell_pv_ppd",
+                    })))
         cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
                     ("core_schema_0_7_0", json.dumps({"version": app_version})))
         cur.execute("INSERT IGNORE INTO ems_gpt_core_migrations VALUES (%s,NOW(6),%s)",
@@ -474,4 +483,3 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
             cur.execute(f"""UPDATE {table} SET {column}='NEUTRAL'
               WHERE UPPER(REPLACE({column},' ','')) IN ('NEURAL','NEUTRAL')
                 AND {column}<>'NEUTRAL'""")
-

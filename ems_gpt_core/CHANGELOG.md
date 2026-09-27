@@ -2,6 +2,20 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.6 — niezależne procesy sprzedaży baterii i PV
+
+- Zastąpiono niejednoznaczną nazwę procesu PPD `BATTERY_EXPORT` nazwą
+  `SELL_BAT`; istniejące rekordy procesów są migrowane przy starcie.
+- Dodano niezależny proces informacyjny `SELL_PV`. Każdy z procesów sprzedaży
+  ma dwie osobne osie: politykę `ALLOWED/BLOCKED` oraz wykonanie `ON/OFF`.
+  Dodatnia cena pozwala na `SELL_PV=ALLOWED`, a cena mniejsza lub równa zero
+  daje `SELL_PV=BLOCKED`; obecność nadwyżki niezależnie ustala ON/OFF.
+- `SELL_PV` nie uruchamia skryptów baterii. Dotychczasowe skrypty eksportu
+  baterii są przypisane wyłącznie do `SELL_BAT`.
+- Sprzedaż baterii nie przecina już okna `PV_CWU/PV_EV`; odbiory elastyczne
+  korzystają z niezależnej nadwyżki PV i zachowują priorytet przed sprzedażą PV.
+- Nie zmieniono targetu, required, floor ani trajektorii SOC.
+
 ## 0.39.5 — przywrócenie priorytetu nadwyżki PV
 
 - Przywrócono stałą kolejność wykorzystania PV: odbiory domu wraz z HP,

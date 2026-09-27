@@ -217,7 +217,8 @@ def build_handler(a: ApiAdapters):
                          WHEN d.eligible=1 THEN 'ON' ELSE 'OFF' END effective_state,
                     CASE d.process_name
                       WHEN 'BATTERY_IMPORT' THEN s.planned_buy_kwh
-                      WHEN 'BATTERY_EXPORT' THEN s.planned_sell_kwh
+                      WHEN 'SELL_BAT' THEN s.planned_sell_kwh
+                      WHEN 'SELL_PV' THEN s.planned_pv_export_kwh
                       WHEN 'PV_CWU' THEN s.planned_pv_to_cwu_kwh
                       WHEN 'PV_EV' THEN s.planned_pv_to_ev_kwh
                       WHEN 'HP_HEAT_DHW' THEN CASE WHEN s.heat_pump_window=1

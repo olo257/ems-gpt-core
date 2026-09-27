@@ -143,7 +143,7 @@ def build_executor(a: ExecutorAdapters):
 
     process_script_keys = {
         "BATTERY_IMPORT": {"ON": "executor_battery_import_on_script", "OFF": "executor_battery_import_off_script"},
-        "BATTERY_EXPORT": {"ON": "executor_battery_export_on_script", "OFF": "executor_battery_export_off_script"},
+        "SELL_BAT": {"ON": "executor_battery_export_on_script", "OFF": "executor_battery_export_off_script"},
         "PV_CWU": {"ON": "executor_pv_cwu_on_script", "OFF": "executor_pv_cwu_off_script"},
         "PV_EV": {"ON": "executor_pv_ev_on_script", "OFF": "executor_pv_ev_off_script"},
         "HP_HEAT_DHW": {"ON": "executor_hp_heat_dhw_on_script", "OFF": "executor_hp_heat_dhw_off_script"},
@@ -160,7 +160,10 @@ def build_executor(a: ExecutorAdapters):
             service_map[process] = {}
             for state, key in states.items():
                 explicit = str(OPTIONS.get(key) or "").strip()
-                service_map[process][state] = explicit or legacy.get(process, {}).get(state)
+                legacy_process = "BATTERY_EXPORT" if process == "SELL_BAT" else process
+                service_map[process][state] = (explicit
+                    or legacy.get(process, {}).get(state)
+                    or legacy.get(legacy_process, {}).get(state))
         return service_map
     RUNTIME_SETTINGS_PATH, LOCK, STATE = a.runtime_settings_path, a.lock, a.state
     record_event, local_now, db, slot_start = a.record_event, a.local_now, a.db, a.slot_start
@@ -460,7 +463,7 @@ def build_executor(a: ExecutorAdapters):
         return {"mode": state}
     
     
-    PROCESS_NAMES = ("BATTERY_IMPORT", "BATTERY_EXPORT", "PV_CWU", "PV_EV", "HP_HEAT_DHW")
+    PROCESS_NAMES = ("BATTERY_IMPORT", "SELL_BAT", "PV_CWU", "PV_EV", "HP_HEAT_DHW")
     # Reserved management contract.  It is deliberately excluded from
     # PROCESS_NAMES until the summer control policy and safe scripts exist.
     FUTURE_PROCESS_NAMES = ("COOL_DHW",)
@@ -638,6 +641,10 @@ def build_executor(a: ExecutorAdapters):
                 hysteresis_ratio=float(OPTIONS.get("pv_flexible_hysteresis_ratio", 0.80)),
             )
             for row in decision_rows:
+                if row["process_name"] == "SELL_PV":
+                    # Informational PPD decision. Surplus PV follows the
+                    # inverter's native export path and has no HA script.
+                    continue
                 planned_on = database_bool(row["eligible"], "eligible")
                 if row["process_name"] == "HP_HEAT_DHW":
                     planner_window = database_bool(
@@ -666,7 +673,7 @@ def build_executor(a: ExecutorAdapters):
                     plan_version = flexible_command_plan_version(
                         row["plan_run_id"], row.get("ppd_run_id"),
                         OPTIONS.get("_process_control_revision"), decision)
-                battery_flow = row["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"}
+                battery_flow = row["process_name"] in {"BATTERY_IMPORT", "SELL_BAT"}
                 safety = {"executor_enabled": True, "dry_run": dry_run, "connector_required": True,
                           "soc_programs_1_6_write_allowed": battery_flow,
                           "soc_restore_required": battery_flow,
@@ -727,7 +734,7 @@ def build_executor(a: ExecutorAdapters):
                     cur.execute("UPDATE ems_gpt_core_commands SET status='REJECTED',acknowledgement_json=%s WHERE command_id=%s",
                                 (json.dumps({"reason": "PROTECTED_SOC_PROGRAM_MAPPING"}), command["command_id"]))
                     continue
-                if command["process_name"] == "BATTERY_EXPORT" and command["decision"] == "ON":
+                if command["process_name"] == "SELL_BAT" and command["decision"] == "ON":
                     live_soc = number(ha_state("sensor.inverter_battery"))
                     cur.execute("""SELECT soc_floor_pct FROM ems_gpt_slots
                       WHERE slot_start=%s LIMIT 1""", (current_slot,))
@@ -793,7 +800,7 @@ def build_executor(a: ExecutorAdapters):
                             "reason": str(exc), "slot_start": current_slot,
                         }, "ERROR")
                         continue
-                if command["process_name"] == "BATTERY_EXPORT" and command["decision"] == "ON":
+                if command["process_name"] == "SELL_BAT" and command["decision"] == "ON":
                     cur.execute("""SELECT soc_floor_pct FROM ems_gpt_slots
                       WHERE slot_start=%s LIMIT 1""", (current_slot,))
                     export_plan = cur.fetchone() or {}
@@ -818,7 +825,7 @@ def build_executor(a: ExecutorAdapters):
                             ha_service_response("script", "turn_on", {"entity_id": off_entity})
                         restore_program_targets_if_idle()
                     continue
-                if command["process_name"] in {"BATTERY_IMPORT", "BATTERY_EXPORT"} and command["decision"] == "OFF":
+                if command["process_name"] in {"BATTERY_IMPORT", "SELL_BAT"} and command["decision"] == "OFF":
                     try:
                         set_active_program_charging(now, "Disabled")
                     except RuntimeError as exc:
@@ -867,7 +874,7 @@ def build_executor(a: ExecutorAdapters):
                         if restored:
                             guard_actions.append("TOU_SOC_RESTORED")
             if stop_export:
-                entity_id = service_map.get("BATTERY_EXPORT", {}).get("OFF")
+                entity_id = service_map.get("SELL_BAT", {}).get("OFF")
                 if isinstance(entity_id, str) and entity_id.startswith("script."):
                     response = ha_service_response("script", "turn_on", {"entity_id": entity_id})
                     if response is not None:
