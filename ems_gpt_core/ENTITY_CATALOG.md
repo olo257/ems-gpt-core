@@ -1,6 +1,6 @@
 # EMS-GPT Core — katalog helperów i encji Home Assistant
 
-Status: zaktualizowano dla kodu wersji 0.39.0. Ten katalog
+Status: zaktualizowano dla kodu wersji 0.39.5. Ten katalog
 opisuje faktyczne odczyty i zapisy. Core nie tworzy żadnej z wymienionych encji.
 
 ## 1. Helpery wymagane przez Core
@@ -105,8 +105,8 @@ chroniony flagami `executor_enabled`, `executor_dry_run` i potwierdzeniem
 
 ## 6. Skrypty wykonawcze — konfigurowalne
 
-Nazwy skryptów nie są zaszyte w kodzie. Użytkownik podaje je w
-`connector_service_map_json` dla decyzji `ON` i `OFF` procesów:
+Nazwy skryptów nie są zaszyte w kodzie. Podstawową konfiguracją są osobne
+opcje `executor_*_on_script` i `executor_*_off_script` dla procesów:
 
 - `BATTERY_IMPORT`;
 - `BATTERY_EXPORT`;
@@ -116,8 +116,17 @@ Nazwy skryptów nie są zaszyte w kodzie. Użytkownik podaje je w
 - `HP_HEAT_DHW`.
 
 Każda wartość musi zaczynać się od `script.`. Core wywołuje wyłącznie
-`script.turn_on`. Mapowanie zawierające nazwę programu falownika lub `soc` jest
-odrzucane jako próba obejścia ochrony programów TOU.
+`script.turn_on`. `connector_service_map_json` pozostaje wyłącznie ścieżką
+zgodnościową dla starszej konfiguracji i jest używane dopiero przy braku
+odpowiedniej osobnej opcji. Mapowanie zawierające nazwę programu falownika lub
+`soc` jest odrzucane jako próba obejścia ochrony programów TOU.
+
+W 0.39.5 executor korzysta dodatkowo z rzeczywistych odczytów
+`sensor.inverter_pv_power`, `sensor.inverter_load_power`,
+`sensor.inverter_battery_power` i SOC do bramkowania `PV_CWU`/`PV_EV`.
+Progi `pv_cwu_min_surplus_kw`, `pv_ev_min_surplus_kw` oraz
+`pv_flexible_hysteresis_ratio` są ustawieniami runtime aplikacji, a nie
+helperami Home Assistant.
 
 ## 7. Liczniki urządzeń — konfigurowalne, tylko odczyt
 

@@ -1,6 +1,6 @@
 # EMS-GPT Core
 
-Wersja produkcyjna: **0.38.9**.
+Wersja produkcyjna: **0.39.5**.
 
 Dokumenty obowiązujące:
 
@@ -11,3 +11,13 @@ Dokumenty obowiązujące:
 
 Materiały dawnych wydań zostały przeniesione do [`docs/archive/`](docs/archive/)
 i nie są bieżącą specyfikacją.
+
+Najważniejsze reguły wykonawcze 0.39.5:
+
+- energia PV jest przydzielana kolejno do: load domu wraz z HP, ładowania
+  baterii, `PV_CWU`, `PV_EV`, a dopiero potem do eksportu;
+- `PV_CWU` i `PV_EV` są poza load i poza targetem SOC; w trybie `AUTO`
+  wymagają świeżej telemetrii, osiągniętego targetu i rzeczywistej nadwyżki PV;
+- sprzedaż baterii wymaga dodatniej ceny sprzedaży oraz dodatniego wyniku
+  ekonomicznego pełnego wariantu planu;
+- brak danych wykonawczych działa fail-safe i wyłącza odbiory elastyczne.
