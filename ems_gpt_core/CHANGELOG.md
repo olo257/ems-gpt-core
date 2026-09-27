@@ -2,6 +2,16 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.9 — prognoza nie blokuje odbioru rzeczywistej nadwyżki
+
+- Wspólne okno `PV_CWU` i `PV_EV` otwiera się po osiągnięciu targetu,
+  gdy plan wykazuje istotną dodatnią nadwyżkę PV. Nie wymaga już, aby
+  prognoza slotu przekraczała próg startowy CWU lub EV.
+- Progi 2,0/1,5 kW, pierwszeństwo CWU, histereza, świeża telemetria
+  i kontrola bieżącego SOC pozostają w wykonawcy. Słaba prognoza nie
+  zablokuje odbiorników przy rzeczywistej nadwyżce i niedodatniej cenie
+  sprzedaży.
+
 ## 0.39.8 — wspólne okno PV_CWU/PV_EV i priorytet runtime
 
 - PPD publikuje wspólne okno dopuszczenia odbiorów elastycznych po osiągnięciu

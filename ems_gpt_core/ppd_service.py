@@ -96,7 +96,8 @@ def _best_window(indices: list[int], anchors: list[bool], rows: list[dict]) -> t
 
 
 def build_flexible_ppd(
-    rows: list[dict], *, cwu_threshold_kwh: float, ev_threshold_kwh: float
+    rows: list[dict], *, cwu_threshold_kwh: float, ev_threshold_kwh: float,
+    corridor_threshold_kwh: float = 0.02,
 ) -> list[FlexiblePpdDecision]:
     """Build one continuous PV_CWU and PV_EV permission window per local day.
 
@@ -117,10 +118,11 @@ def build_flexible_ppd(
         day_indices.setdefault(_day_key(row), []).append(index)
 
     flexible_bounds: dict[date, tuple[int, int] | None] = {}
-    shared_anchors = [
-        _anchor(row, min(cwu_threshold_kwh, ev_threshold_kwh))
-        for row in rows
-    ]
+    # The forecast only opens a candidate corridor. The live surplus guard
+    # applies the actual appliance thresholds at execution time. Requiring a
+    # forecast above the EV/CWU start threshold here can block both loads
+    # while measured PV is being exported at a nonpositive price.
+    shared_anchors = [_anchor(row, max(0.0, corridor_threshold_kwh)) for row in rows]
     for day, indices in day_indices.items():
         flexible_bounds[day] = _best_window(indices, shared_anchors, rows)
 
@@ -258,7 +260,8 @@ def build_ppd_runner(a: PpdAdapters):
                 })
             flexible = build_flexible_ppd(
                 flexible_rows, cwu_threshold_kwh=cwu_threshold,
-                ev_threshold_kwh=ev_threshold)
+                ev_threshold_kwh=ev_threshold,
+                corridor_threshold_kwh=threshold)
             decision_count = 0
             for index, (row, flex) in enumerate(zip(rows, flexible)):
                 buy = float(row.get("planned_buy_kwh") or 0.0)

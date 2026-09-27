@@ -31,7 +31,7 @@ class FlexiblePpdTests(unittest.TestCase):
     def test_target_is_read_only_and_not_returned_as_a_planner_input(self):
         source = rows(target=75)
         result = build_flexible_ppd(source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
-        self.assertEqual([x.pv_cwu_allowed for x in result], [False, False, False, True, False])
+        self.assertEqual([x.pv_cwu_allowed for x in result], [False, False, True, True, False])
         self.assertFalse(hasattr(result[0], "soc_target_pct"))
         self.assertEqual([row["soc_target_pct"] for row in source], [75] * 5)
 
@@ -41,9 +41,19 @@ class FlexiblePpdTests(unittest.TestCase):
         self.assertFalse(low[1].pv_cwu_allowed)
         self.assertTrue(high[1].pv_cwu_allowed)
 
-    def test_no_anchor_means_no_window(self):
-        result = build_flexible_ppd(rows(pv=(0.1, 0.1, 0.1, 0.1, 0.0)), cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
+    def test_no_candidate_pv_means_no_window(self):
+        result = build_flexible_ppd(rows(pv=(0.0, 0.01, 0.01, 0.01, 0.0)), cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
         self.assertFalse(any(x.pv_cwu_allowed or x.pv_ev_allowed for x in result))
+
+    def test_weak_forecast_keeps_live_surplus_option_open_after_target(self):
+        result = build_flexible_ppd(
+            rows(soc=(99, 99, 99, 99, 99), pv=(0.0, 0.245, 0.20, 0.0, 0.0), target=95),
+            cwu_threshold_kwh=0.5, ev_threshold_kwh=0.375)
+        self.assertTrue(result[1].pv_cwu_allowed)
+        self.assertTrue(result[1].pv_ev_allowed)
+        self.assertFalse(result[1].cwu_anchor)
+        self.assertFalse(result[1].ev_anchor)
+        self.assertFalse(result[3].pv_cwu_allowed)
 
     def test_shared_window_allows_runtime_to_reapply_cwu_priority(self):
         result = build_flexible_ppd(
@@ -67,7 +77,7 @@ class FlexiblePpdTests(unittest.TestCase):
         source[3]["local_day"] = datetime(2026, 9, 17).date()
         source[4]["local_day"] = datetime(2026, 9, 17).date()
         result = build_flexible_ppd(source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
-        self.assertEqual([x.pv_cwu_allowed for x in result], [False, True, False, True, False])
+        self.assertEqual([x.pv_cwu_allowed for x in result], [False, True, True, True, False])
 
     def test_battery_sale_does_not_block_independent_flexible_pv_window(self):
         source = rows(pv=(0.1, 0.6, 0.6, 0.7, 0.0))
