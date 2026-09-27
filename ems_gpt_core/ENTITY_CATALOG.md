@@ -1,6 +1,6 @@
 # EMS-GPT Core — katalog helperów i encji Home Assistant
 
-Status: zaktualizowano dla kodu wersji 0.39.7. Ten katalog
+Status: zaktualizowano dla kodu wersji 0.39.8. Ten katalog
 opisuje faktyczne odczyty i zapisy. Core nie tworzy żadnej z wymienionych encji.
 
 ## 1. Helpery wymagane przez Core
@@ -122,7 +122,7 @@ zgodnościową dla starszej konfiguracji i jest używane dopiero przy braku
 odpowiedniej osobnej opcji. Mapowanie zawierające nazwę programu falownika lub
 `soc` jest odrzucane jako próba obejścia ochrony programów TOU.
 
-W 0.39.7 executor korzysta dodatkowo z rzeczywistych odczytów
+W 0.39.8 executor korzysta dodatkowo z rzeczywistych odczytów
 `sensor.inverter_pv_power`, `sensor.inverter_load_power`,
 `sensor.inverter_battery_power` i SOC do bramkowania `PV_CWU`/`PV_EV`.
 Progi `pv_cwu_min_surplus_kw`, `pv_ev_min_surplus_kw` oraz

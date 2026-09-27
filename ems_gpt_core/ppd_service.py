@@ -116,23 +116,28 @@ def build_flexible_ppd(
     for index, row in enumerate(rows):
         day_indices.setdefault(_day_key(row), []).append(index)
 
-    cwu_bounds: dict[date, tuple[int, int] | None] = {}
-    ev_bounds: dict[date, tuple[int, int] | None] = {}
+    flexible_bounds: dict[date, tuple[int, int] | None] = {}
+    shared_anchors = [
+        _anchor(row, min(cwu_threshold_kwh, ev_threshold_kwh))
+        for row in rows
+    ]
     for day, indices in day_indices.items():
-        cwu_bounds[day] = _best_window(indices, cwu_anchors, rows)
-        ev_bounds[day] = _best_window(indices, ev_anchors, rows)
+        flexible_bounds[day] = _best_window(indices, shared_anchors, rows)
 
     decisions: list[FlexiblePpdDecision] = []
     for index, row in enumerate(rows):
         day = _day_key(row)
-        cwu_bound = cwu_bounds[day]
-        ev_bound = ev_bounds[day]
-        cwu_allowed = cwu_bound is not None and cwu_bound[0] <= index <= cwu_bound[1]
-        ev_allowed = ev_bound is not None and ev_bound[0] <= index <= ev_bound[1]
-        cwu_start = rows[cwu_bound[0]]["slot_start"] if cwu_bound else None
-        cwu_end = rows[cwu_bound[1]]["slot_start"] if cwu_bound else None
-        ev_start = rows[ev_bound[0]]["slot_start"] if ev_bound else None
-        ev_end = rows[ev_bound[1]]["slot_start"] if ev_bound else None
+        flexible_bound = flexible_bounds[day]
+        flexible_allowed = (
+            flexible_bound is not None
+            and flexible_bound[0] <= index <= flexible_bound[1]
+        )
+        cwu_allowed = flexible_allowed
+        ev_allowed = flexible_allowed
+        cwu_start = rows[flexible_bound[0]]["slot_start"] if flexible_bound else None
+        cwu_end = rows[flexible_bound[1]]["slot_start"] if flexible_bound else None
+        ev_start = cwu_start
+        ev_end = cwu_end
         decisions.append(FlexiblePpdDecision(
             pv_cwu_allowed=cwu_allowed,
             pv_ev_allowed=ev_allowed,
