@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 
-from ppd_service import build_flexible_ppd, plan_bound_decisions
+from ppd_service import build_flexible_ppd, current_live_flexible_row, plan_bound_decisions
 
 
 def rows(soc=(60, 70, 80, 80, 80), pv=(0.1, 0.6, 0.1, 0.7, 0.0), target=70):
@@ -21,6 +21,25 @@ def rows(soc=(60, 70, 80, 80, 80), pv=(0.1, 0.6, 0.1, 0.7, 0.0), target=70):
 
 
 class FlexiblePpdTests(unittest.TestCase):
+    def test_live_surplus_opens_current_slot_despite_underforecast(self):
+        source = rows(soc=(49, 53, 60, 60, 60), pv=(0, 0, 0.4, 0, 0), target=53)
+        sample = {"captured_at": source[0]["slot_start"] + timedelta(seconds=30),
+                  "soc_pct": 56, "pv_power_w": 4172, "load_power_w": 1228}
+        source[0] = current_live_flexible_row(
+            source[0], sample, now=sample["captured_at"], stale_seconds=120)
+        result = build_flexible_ppd(source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.375)
+        self.assertTrue(result[0].pv_cwu_allowed)
+        self.assertTrue(result[0].pv_ev_allowed)
+
+    def test_stale_telemetry_cannot_open_flexible_corridor(self):
+        source = rows(soc=(49, 49, 49, 49, 49), pv=(0, 0, 0, 0, 0), target=53)
+        sample = {"captured_at": source[0]["slot_start"], "soc_pct": 99,
+                  "pv_power_w": 4000, "load_power_w": 1000}
+        result = current_live_flexible_row(
+            source[0], sample, now=sample["captured_at"] + timedelta(minutes=3),
+            stale_seconds=120)
+        self.assertIs(result, source[0])
+
     def test_windows_are_continuous_between_first_and_last_anchor(self):
         result = build_flexible_ppd(rows(), cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
         self.assertEqual([x.pv_cwu_allowed for x in result], [False, True, True, True, False])

@@ -2,6 +2,17 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.10 — rzeczywista nadwyżka przy niedoszacowaniu PV
+
+- PPD uwzględnia świeży pomiar PV, zużycia i SOC przy otwieraniu najbliższego
+  okna CWU/EV, gdy prognoza zaniża produkcję. Prognoza nadal wyznacza dalszy plan.
+- Executor może uruchomić CWU/EV w bieżącym slocie przy rzeczywistej nadwyżce
+  i osiągniętym target SOC, nawet gdy wcześniejsza prognoza oznaczyła slot
+  jako `BLOCK`. Zachowuje progi mocy, histerezę, ręczne `OFF` i wymóg świeżych
+  danych.
+- Skrypt Home Assistant kończący import nie zapisuje już sztywnych wartości
+  SOC 20/20/40/40/40/30. Przywracanie korzysta z konfiguracji executora.
+
 ## 0.39.9 — prognoza nie blokuje odbioru rzeczywistej nadwyżki
 
 - Wspólne okno `PV_CWU` i `PV_EV` otwiera się po osiągnięciu targetu,
