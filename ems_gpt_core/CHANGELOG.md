@@ -2,10 +2,11 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
-## 0.39.10 — rzeczywista nadwyżka przy niedoszacowaniu PV
+## 0.39.10 — rzeczywista nadwyżka mimo rozbieżności planu SOC
 
 - PPD uwzględnia świeży pomiar PV, zużycia i SOC przy otwieraniu najbliższego
-  okna CWU/EV, gdy prognoza zaniża produkcję. Prognoza nadal wyznacza dalszy plan.
+  okna CWU/EV, gdy planowany SOC lub przydział nadwyżki odbiega od pomiaru.
+  Prognoza nadal wyznacza dalszy plan.
 - Executor może uruchomić CWU/EV w bieżącym slocie przy rzeczywistej nadwyżce
   i osiągniętym target SOC, nawet gdy wcześniejsza prognoza oznaczyła slot
   jako `BLOCK`. Zachowuje progi mocy, histerezę, ręczne `OFF` i wymóg świeżych
