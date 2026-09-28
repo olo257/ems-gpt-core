@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,28 @@ def _anchor(row: dict, threshold_kwh: float) -> bool:
         and float(row.get("soc_end_pct") or 0.0) + 0.01
         >= float(row.get("soc_target_pct") or 0.0)
     )
+
+
+def current_live_flexible_row(row: dict, telemetry: dict, *, now: datetime,
+                              stale_seconds: int) -> dict:
+    """Use a fresh measured PV surplus to open the current slot's corridor."""
+    captured = telemetry.get("captured_at")
+    if not isinstance(captured, datetime) or not 0 <= (now - captured).total_seconds() <= stale_seconds:
+        return row
+    try:
+        soc = float(telemetry["soc_pct"])
+        pv = float(telemetry["pv_power_w"])
+        load = float(telemetry["load_power_w"])
+        target = float(row["soc_target_pct"])
+    except (KeyError, TypeError, ValueError):
+        return row
+    if soc + 0.01 < target or pv <= load:
+        return row
+    # Forecast allocations may be zero while actual PV is already exceeding
+    # household load. Execution still applies the full live power thresholds.
+    return {**row, "soc_end_pct": soc,
+            "pv_flex_kwh": max(float(row.get("pv_flex_kwh") or 0.0),
+                               (pv - load) / 4000.0)}
 
 
 def _corridor_open(row: dict) -> bool:
@@ -258,8 +281,20 @@ def build_ppd_runner(a: PpdAdapters):
                                        else row.get("soc_target_pct")),
                     "pv_flex_kwh": raw_flexible, "sell_battery": sell_battery,
                 })
+            window_rows = list(flexible_rows)
+            if cutoff <= rows[0]["slot_start"] <= cutoff + timedelta(minutes=15):
+                local_now = datetime.now(ZoneInfo(str(options.get("timezone", "Europe/Warsaw")))).replace(tzinfo=None)
+                cur.execute("""SELECT captured_at,soc_pct,pv_power_w,load_power_w
+                  FROM ems_gpt_telemetry_snapshots WHERE captured_at>=%s
+                  ORDER BY captured_at DESC LIMIT 1""",
+                  (local_now - timedelta(seconds=max(
+                      30, int(options.get("telemetry_degraded_seconds", 120)))),))
+                window_rows[0] = current_live_flexible_row(
+                    flexible_rows[0], cur.fetchone() or {},
+                    now=local_now,
+                    stale_seconds=max(30, int(options.get("telemetry_degraded_seconds", 120))))
             flexible = build_flexible_ppd(
-                flexible_rows, cwu_threshold_kwh=cwu_threshold,
+                window_rows, cwu_threshold_kwh=cwu_threshold,
                 ev_threshold_kwh=ev_threshold,
                 corridor_threshold_kwh=threshold)
             decision_count = 0

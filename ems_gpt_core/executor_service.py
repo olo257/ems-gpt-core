@@ -639,8 +639,12 @@ def build_executor(a: ExecutorAdapters):
                 target_soc_pct=next((row.get("runtime_soc_target_pct")
                                      for row in decision_rows
                                      if row.get("runtime_soc_target_pct") is not None), None),
-                cwu_allowed=planned.get("PV_CWU", False),
-                ev_allowed=planned.get("PV_EV", False),
+                # The published corridor is forecast based. A fresh measured
+                # surplus above the live SOC target may open the current slot
+                # even when PV was significantly under-forecast. The runtime
+                # guard still checks SOC, telemetry age and each load threshold.
+                cwu_allowed="PV_CWU" in planned,
+                ev_allowed="PV_EV" in planned,
                 cwu_threshold_kw=float(OPTIONS.get("pv_cwu_min_surplus_kw", 2.0)),
                 ev_threshold_kw=float(OPTIONS.get("pv_ev_min_surplus_kw", 1.5)),
                 hysteresis_ratio=float(OPTIONS.get("pv_flexible_hysteresis_ratio", 0.80)),
