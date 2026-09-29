@@ -1,6 +1,27 @@
+Warning: truncated output (original token count: 23345)
+Total output lines: 1585
+
 # EMS-GPT Core — historia zmian
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
+
+## 0.39.12 — rozszerzony audyt AI Observera
+
+- Observer uruchamiany po analizie okresowej przegląda do 28 dni zamkniętych
+  slotów oraz do 96 przyszłych slotów planu.
+- Dodano audyt eksportu przy cenie <= 0, importu poza BUY, powtarzalnego
+  niedoszacowania PV1/PV2/PV łącznie i zużycia, okien HP oraz SOC na zamknięciu
+  doby i zgodności planu z wymaganym SOC.
+- TODO zawiera zakres sprawdzonych danych, wykryty błąd, próg, sloty/pomiary,
+  wniosek i rekomendację; alarm krytyczny trafia od razu do statusu OPEN.
+- Dodano osobny worker LLM uruchamiany poza Core. Po nowym przebiegu analityki
+  zapisuje analizę do AI Observer/TODO; obsługa skrzynki pytań pozostaje
+  odrębną funkcją.
+- Worker i Core Observer pozostają `SHADOW_READ_ONLY`: nie zapisują planu, PPD,
+  ustawień ani poleceń. Wymagają osobnej konfiguracji i nie uruchamiają się
+  automatycznie po ustawieniu tokenu API.
+- Testy obejmują wykrywanie naruszeń, próg szumu technicznego i wymóg
+  powtarzalności dla niedoszacowania prognozy.
 
 ## 0.39.11 — kanał komunikacji z agentem AI
 
@@ -686,236 +707,7 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
 
 ## 0.34.0
 
-- Okno `BUY` jest wyłącznie zezwoleniem. Target nie jest już zerowany na każdym
-  kolejnym oknie, lecz na faktycznie wybranym ekonomicznie uzupełnieniu.
-- Dodano wieloprzebiegowe planowanie: pełnohoryzontowy dispatch, wsteczny
-  kontrakt SOC z wybranej ścieżki oraz ponowną optymalizację do zbieżności.
-- Wcześniejszy tani BUY może zasilić baterię ponad późniejszym drogim oknem,
-  z zachowaniem pojemności, sprawności, limitu 5 kW i końcowego SOC.
-- `soc_target` pozostaje sufitem ładowania, a w slocie sprzedaży jest co
-  najmniej równy podłodze sprzedaży `soc_floor`.
-- Zablokowano niejawne zasilanie domu z sieci przy technicznym minimum SOC;
-  wyjątek pozostaje wyłącznie dla potwierdzonej ekonomicznej ochrony SOC przed
-  późniejszą sprzedażą.
-- Dodano regresje dla taniego wieczornego BUY, drogiego porannego BUY oraz
-  częściowej odbudowy przez PV. Wykonawca pozostaje domyślnie wyłączony.
-
-## 0.33.6
-
-- Zarchiwizowano historyczne flagi slotów w `ems_gpt_slot_legacy_flags_0335`, a następnie usunięto 16 nieużywanych kolumn dublujących polityki i ilościowe przepływy.
-- Migracja jest idempotentna, oznaczona w `ems_gpt_core_migrations` i nie usuwa żadnego rekordu slotu ani wartości bez wcześniejszej kopii.
-- Bez zmian w algorytmie SOC i wykonawcy; produkcja pozostaje wyłączona podczas porządkowania.
-
-## 0.33.5
-
-- Wprowadzono pojedyncze kanoniczne pole `market_window` o wartościach `BUY`, `SELL` albo `NEUTRAL`; wykres RCE i walidacja planu korzystają wyłącznie z niego.
-- Planer przestał zapisywać i publikować dublujące flagi polityk oraz przepływów. Decyzje zachowują enumy, a źródłem prawdy dla energii są pola `planned_*_kwh`.
-- Panel Planer nie pokazuje dublujących flag. Historyczne kolumny pozostają czasowo w tabeli jako nieużywana warstwa zgodności przed fizyczną migracją.
-- Walidacja odrzuca niepoprawne okno rynku, ujemne przepływy oraz jednoczesne ładowanie i rozładowanie baterii. Wykonawca pozostaje domyślnie wyłączony.
-
-## 0.33.4
-
-- Rozszerzono bezpieczny, tylko-do-odczytu audyt `ems_gpt_slots` o osobne wyniki dla całej historii, wszystkich niezamkniętych slotów oraz niezamkniętych slotów bieżącego kontraktu `CORE_0_33_0`.
-- Log startowy zawiera teraz pełny słownik 128 kolumn wraz z typem, pozycją, kluczem, wartością domyślną i liczbą wypełnionych rekordów oraz grupy potencjalnie dublujących się pól.
-- Nie wykonuje migracji ani zapisu do tabeli slotów; dane audytu są podstawą kolejnego, jawnego etapu porządkowania schematu.
-
-## 0.33.3
-
-- Audyt kolumn `ems_gpt_slots` uruchamia się jednorazowo po starcie i zapisuje
-  podsumowanie do logu dodatku, dzięki czemu wynik jest dostępny przez
-  konektor Home Assistant bez tworzenia bocznego dostępu SQL.
-- Audyt pozostaje wyłącznie odczytowy; schemat, dane, planer i wykonawca nie są
-  modyfikowane.
-- Ujednolicono także wewnętrzny numer aplikacji z metadanymi dodatku; 0.33.2
-  raportowała w endpointach wcześniejszy numer wykonawczy mimo poprawnie
-  zainstalowanego pakietu.
-
-## 0.33.2
-
-- Dodano wyłącznie odczytowy audyt kolumn kanonicznej tabeli
-  `ems_gpt_slots` pod endpointem `/api/slot-column-audit`.
-- Audyt zwraca pełny kontrakt `information_schema`, liczbę wypełnionych
-  rekordów, grupy pól potencjalnie dublujących się oraz liczniki rozbieżności
-  enumów, flag PPD i ilościowych przepływów PV.
-- Ta wersja jest obowiązkowym etapem przed migracją kompaktującą: nie usuwa,
-  nie przemianowuje i nie nadpisuje żadnej kolumny ani danych historycznych.
-- Algorytm planera oraz wykonawca pozostają bez zmian; wykonawca nadal jest
-  domyślnie wyłączony.
-
-## 0.33.1
-
-- Ograniczono diagnostykę `ppd_reason` do trwałego kontraktu kolumny, aby
-  rozszerzone dane audytowe 0.33 nie blokowały atomowej publikacji planu.
-
-## 0.33.0
-
-- Planer wykonuje jawne przebiegi po wspólnej tabeli slotów 15-minutowych:
-  `WINDOWS`, `LOAD`, `PV`, `SLOT_BALANCE`, `TARGET_COMMITMENT`, `DISPATCH`,
-  `FLEX_SURPLUS`, `VALIDATE`. Każdy przebieg odpowiada wyłącznie za własne pola.
-- `soc_target` powstaje w przebiegu wstecznym z prognozowanego deficytu zużycia,
-  sprawności i zarezerwowanej przyszłej nadwyżki PV. Jest twardym warunkiem
-  wykonalności oraz sufitem ładowania; posiada termin, źródło i ilość
-  zarezerwowanego PV.
-- `soc_floor` pozostaje wyłącznie podłogą celowej sprzedaży baterii. Zwykłe
-  zużycie może zejść poniżej floor, ale nie może naruszyć przyszłego kontraktu
-  targetu ani technicznego minimum SOC.
-- Okno BUY jest zezwoleniem na ładowanie baterii, a nie samodzielnym zakupem
-  dla odbiorników. Kolejne dostępne okno BUY jest granicą bilansu i zmienną
-  pełnohoryzontowego wyboru ekonomicznego.
-- Podstawowy bilans baterii i domu nie zawiera sprzedaży nadwyżki PV. Nadwyżka
-  jest rozdzielana osobnym przebiegiem pomiędzy ekonomiczną sprzedaż, CWU, EV i
-  redukcję; curtailment pozostaje ostatnią możliwością.
-- Przekroczenie 120 sekund albo niespójność dowolnego slotu przerywa transakcję;
-  częściowy plan nigdy nie zastępuje ostatniego zaakceptowanego planu.
-- Panel Planer pokazuje wszystkie niezamknięte sloty. Wykres RCE obejmuje tylko
-  48 godzin, oznacza bieżący slot i nie zawiera już widoku 365 dni.
-- Wykonawca pozostaje domyślnie i trwale wyłączony po instalacji aktualizacji.
-
-## 0.32.12
-
-- Każda wyraźna dolina BUY jest poszerzana do minimalnej liczby slotów
-  wynikającej z pojemności, mocy, sprawności, SOC minimalnego i bazowego SOC TOU.
-- Końcowe okno BUY nie może już być cenowo poprawne, lecz fizycznie za krótkie
-  do osiągnięcia wymaganego terminalnego SOC.
-
-## 0.32.11
-
-- Częściowe okno PV ładuje baterię w stronę targetu, lecz nie musi osiągnąć
-  pełnego targetu, jeżeli prognozowana nadwyżka jest fizycznie za mała.
-- Twarde osiągnięcie targetu obowiązuje na końcu okna BUY; niewykorzystany
-  niedobór po PV przechodzi do następnego wykonalnego PV/BUY.
-
-## 0.32.10
-
-- Okna BUY wymagają wyraźnego minimum w czterogodzinnym otoczeniu; drobne
-  lokalne wahania nie mogą już rozszerzyć BUY na prawie cały horyzont.
-- Flagi BUY i SELL są wzajemnie wykluczające.
-- Restart respektuje zapisane executor_enabled=false i nie przełącza
-  samoczynnie wykonawcy z OFF na LIVE tylko dlatego, że mapowania istnieją.
-
-## 0.32.9
-
-- Target obliczony z energii jest zaokrąglany w górę do wykonawczego kroku
-  SOC 0,25% przed optymalizacją, walidacją i publikacją.
-- Usunięto fałszywe odrzucenie planu, gdy dyskretny SOC końcowy był nieznacznie
-  wyższy od niezaokrąglonego targetu.
-
-## 0.32.8
-
-- Ostatni target dostępnego horyzontu uwzględnia wymagany terminalny SOC,
-  gdy nie istnieje już następne okno PV/BUY.
-- Usunięto niewykonalność planu 0.32.7, w której sufit ostatniego BUY wynosił
-  15%, a warunek końcowy wymagał wyższego SOC programu TOU.
-
-## 0.32.7
-
-- `sale_window` jest twardą zgodą na sprzedaż z baterii; poza oknem SELL
-  bateria może zasilać dom, lecz nie może eksportować energii.
-- `soc_floor` ogranicza wyłącznie sprzedaż z baterii i nie blokuje zwykłej
-  autokonsumpcji aż do technicznego minimum SOC.
-- `soc_target` jest niezależny od floor, obejmuje zapotrzebowanie tylko do
-  następnego okna PV/BUY i stanowi twardy sufit ładowania.
-- PV ładuje baterię do targetu przed eksportem nadwyżki.
-- Okna BUY/SELL są ponownie wyznaczane dla całego otwartego horyzontu;
-  opadające ramię ceny nie jest już błędnie oznaczane jako BUY.
-- Publikacja sprawdza zgodę SELL, floor sprzedaży, sufit/osiągnięcie targetu
-  oraz fizyczne domknięcie bilansu każdego slotu.
-
-## 0.32.6
-
-- Niezrealizowany `soc_target` jest egzekwowany dopiero w najbliższym
-  wykonalnym slocie PV/BUY; poza oknem uzupełnienia nie blokuje zasilania domu.
-- Usunięto błąd `No feasible SOC state at horizon slot 0` przy późnym replanie.
-
-## 0.32.5
-
-- Naprawiono normalizację flagi `buy_window` zwracanej przez MariaDB jako
-  `TINYINT`/`Decimal`: wartość `0` bezwarunkowo blokuje ładowanie sieciowe.
-- Wszystkie bieżące i historyczne flagi okien są na granicy bazy zamieniane na
-  jawne `True/False`; wartości inne niż `0/1/true/false` zatrzymują publikację.
-- Dodano test regresyjny potwierdzający zakup wyłącznie dla wartości `True`.
-
-## 0.32.4
-
-- `soc_target` jest teraz twardym ograniczeniem optymalizatora, a nie opisem przepływu wyliczanym po fakcie.
-- Target powstaje ponad granicą sprzedaży aktywnego programu i obejmuje zapotrzebowanie do kolejnego wykonalnego PV/BUY.
-- PV odbudowuje baterię do targetu przed dopuszczeniem eksportu; wcześniejsze tańsze BUY zabezpiecza poranny deficyt.
-- Publikacja planu jest blokowana, gdy wynikowy SOC znajduje się poniżej targetu.
-
-## 0.32.3
-
-- Naprawiono wykonawcze odczytanie `soc_floor_pct` z MariaDB. Wartość SQL jest
-  teraz parsowana jako skalar, a nie jak obiekt stanu Home Assistant; poprawny
-  plan sprzedaży nie jest już odrzucany jako `PLAN_FLOOR_UNAVAILABLE`.
-- Dodano test regresyjny dla wartości liczbowej i tekstowej zwracanej przez
-  sterownik MariaDB.
-
-## 0.32.2
-
-- Planer używa żywych czasów programów TOU Deye, ale ich ograniczenia SOC zawsze
-  bierze z konfigurowalnego baseline. Tymczasowy `soc_target` lub `soc_floor`
-  ustawiony przez wykonawcę nie może już przesunąć sprzedaży do późniejszego,
-  tańszego slotu po zmianie programu.
-- `BATTERY_IMPORT` przed włączeniem Grid sprawdza rzeczywisty SOC, wynikowy target
-  oraz zaplanowaną energię zakupu. Jeżeli target jest już osiągnięty albo przepływ
-  nie przekracza progu planu, wykonawca pozostawia import wyłączony, ustawia aktywny
-  program na `Charging=Disabled` i bezpiecznie przywraca bazowy SOC.
-- Dodano testy regresji izolacji baseline planera oraz brakującego baseline.
-- Rozdzielono kontrakty SOC: `soc_floor` ogranicza wyłącznie celową sprzedaż,
-  natomiast `soc_target` jest liczonym wstecz zapotrzebowaniem po slocie,
-  koniecznym do wykonania przyszłego zużycia i zaakceptowanych przepływów do
-  następnego uzupełnienia. Target nie jest kopiowany z floor ani z bieżącego SOC.
-- Sprzedaż nie tworzy automatycznego obowiązku odkupienia całej sprzedanej energii.
-  Planer bilansuje most energetyczny do następnego realnego uzupełnienia: najpierw
-  prognozowane PV, a BUY do baterii pokrywa wyłącznie pozostały niedobór.
-- Zwykłe zasilanie odbiorników z sieci nie jest decyzją zakupową EMS. Jest
-  dopuszczalne ponad techniczną resztę kwantyzacji wyłącznie jako ekonomicznie
-  uzasadniona ochrona SOC przed późniejszą sprzedażą i jest tak jawnie opisane.
-- Plan sprzedaży nie może zostać opublikowany, jeżeli końcowy SOC slotu narusza
-  `soc_floor`; przypadek taki kończy przebieg błędem `SALE_FLOOR_VIOLATION`.
-
-## 0.32.1
-
-- Wykonawca przed włączeniem `BATTERY_IMPORT` zapisuje pierwotny SOC aktywnego
-  programu Deye i ustawia jego SOC zgodnie z wynikowym `soc_target` slotu.
-- Po zakończeniu importu, osiągnięciu planowanego SOC albo nieudanym uruchomieniu
-  skryptu wykonawca przywraca dokładnie zapisaną wartość programu.
-- Migawka przywracania jest trwała i nie jest nadpisywana w kolejnych slotach,
-  dzięki czemu zachowuje poprawną wartość także po restarcie dodatku.
-- Przywracanie korzysta z konfigurowalnych wartości bazowych programów Deye
-  (`20/20/40/40/40/30`), więc ręczne 100% nie stanie się nowym baseline.
-- Przed `BATTERY_EXPORT` aktywny program otrzymuje wynikowy `soc_floor`, aby
-  wyższy bazowy SOC programu nie zatrzymał sprzedaży przed limitem planera;
-  guard `SOC po` nadal kończy eksport ilościowo i przywraca baseline.
-- Bazowy SOC jest przywracany dopiero po potwierdzeniu jednocześnie wyłączonego
-  ładowania sieciowego i trybu eksportu, aby nie uruchomić nieplanowanego zakupu
-  ani nie zatrzymać drugiego aktywnego kierunku przepływu.
-- Zakończenie sprzedaży ma wymuszoną kolejność: `Zero Export To Load`, aktywny
-  program `Charging=Disabled`, przywrócenie bazowego SOC. Planowany zakup wykonuje
-  kolejność odwrotną: `Charging=Grid`, `soc_target`, włączenie importu.
-- Zakończenie zakupu ma niezależną kolejność bezpieczeństwa: wyłączenie
-  `Battery Grid Charging`, ustawienie aktywnego programu na `Charging=Disabled`,
-  a dopiero potem przywrócenie jego bazowego SOC.
-- Ustawienie targetu działa fail-closed: import nie zostanie uruchomiony, jeżeli
-  aktywny program lub jego encja SOC są niedostępne.
-
-## 0.32.0
-
-- Planer optymalizuje cały dostępny ciągły horyzont RCE z krokiem SOC 0,25%.
-- Kolejne przebiegi obejmują okna, zużycie, PV, ekonomikę, uzupełnienie energii,
-  wynikowe SOC, walidację i PPD.
-- Tani zakup zabezpiecza przyszłe zużycie przy malejącej produkcji PV, odległą
-  sprzedaż albo wymagany SOC końca horyzontu; obsługuje też odkup po sprzedaży.
-- `soc_floor` i `soc_target` są wynikami zaakceptowanych przepływów, a PPD
-  powstaje dopiero po zakończeniu planowania.
-- Dodano testy odległego zakupu, sprzedaży i zużycia bez sprzedaży.
-
-## 0.31.3
-
-- `soc_floor` ogranicza wyłącznie celową sprzedaż energii z baterii; zwykłe
-  zużycie domu może korzystać z baterii aż do technicznego `battery_min_soc_pct`.
-- `soc_target` jest wyliczany z bilansu prognozowanego zużycia domu, pompy
-  ciepła, sprawności baterii, nadwyżek PV i skończonej mocy kolejnych slotów
+- Okno `BUY` jest wyłącznie ze…3345 tokens truncated…nych slotów
   zakupu.
 - Usunięto archiwalne wymuszenie `evening_soc_target_pct=60%` o 19:45 oraz
   sztuczny końcowy target zależny od `historical_soc_drop_p80_pct` i

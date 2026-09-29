@@ -3,6 +3,193 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import defaultdict
+from datetime import date, datetime
+
+from observer_details import format_observer_todo, metric_label
+
+
+def _number(value, default=None):
+    try:
+        number = float(value)
+        return number if number == number and abs(number) != float("inf") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _day(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+    return None
+
+
+def audit_operational_rows(history_rows, future_rows, *, options):
+    """Build evidence-based, read-only checks from plans and slot execution."""
+    suggestions = []
+
+    def add(metric, value, threshold, severity, suggestion, evidence):
+        suggestions.append({"metric": metric, "value": value, "threshold": threshold,
+                            "severity": severity, "suggestion": suggestion,
+                            "evidence": evidence})
+
+    zero_price = []
+    immediate_zero_price = False
+    for row in [*history_rows, *future_rows]:
+        price = _number(row.get("price_sell_pln_kwh"))
+        if price is None or price > 0:
+            continue
+        planned = (_number(row.get("planned_sell_kwh"), 0) or 0) + \
+                  (_number(row.get("planned_pv_export_kwh"), 0) or 0)
+        executed = (_number(row.get("actual_sell_kwh"), 0) or 0) + \
+                   (_number(row.get("actual_pv_export_kwh"), 0) or 0)
+        if planned > 0.001 or executed > 0.001:
+            zero_price.append({"slot_start": row.get("slot_start"), "price_sell_pln_kwh": price,
+                               "planned_export_kwh": round(planned, 4),
+                               "actual_export_kwh": round(executed, 4),
+                               "market_window": row.get("market_window")})
+            if row in future_rows and planned > 0.001:
+                immediate_zero_price = True
+    if zero_price:
+        completed = any(item["actual_export_kwh"] > 0.001 for item in zero_price)
+        add("export_at_nonpositive_price", len(zero_price), 0,
+            "CRITICAL" if completed or immediate_zero_price else "WARNING",
+            "Zablokuj sprzedaż przy cenie <= 0 PLN/kWh i sprawdź decyzję SELL_PV/SELL_BAT. Observer nie zmienia sterowania.",
+            zero_price[:12])
+
+    threshold_kwh = max(0.0, float(options.get("technical_flow_threshold_kwh", 0.05)))
+    off_window_buys = [row for row in history_rows
+                       if str(row.get("market_window") or "").upper() != "BUY"
+                       and (_number(row.get("actual_buy_kwh"), 0) or 0) > threshold_kwh]
+    if off_window_buys:
+        add("import_outside_buy_window", len(off_window_buys), threshold_kwh, "CRITICAL",
+            "Zweryfikuj import energii z sieci poza oknem BUY; wartości poniżej progu technicznego są pomijane.",
+            [{"slot_start": row.get("slot_start"), "market_window": row.get("market_window"),
+              "actual_buy_kwh": row.get("actual_buy_kwh"), "planned_buy_kwh": row.get("planned_buy_kwh")}
+             for row in off_window_buys[:12]])
+
+    # PV bias is evaluated by local day, not by an isolated noisy slot.
+    by_day = defaultdict(lambda: {"forecast": 0.0, "actual": 0.0, "slots": 0})
+    for row in history_rows:
+        day = _day(row.get("slot_start"))
+        forecast = _number(row.get("forecast_pv_total_kwh"))
+        actual = _number(row.get("actual_pv_total_kwh"))
+        if day is None or forecast is None or actual is None:
+            continue
+        by_day[day]["forecast"] += max(0.0, forecast)
+        by_day[day]["actual"] += max(0.0, actual)
+        by_day[day]["slots"] += 1
+    recent_days = sorted(by_day)[-7:]
+    sample = [by_day[day] for day in recent_days]
+    forecast_sum = sum(day["forecast"] for day in sample)
+    actual_sum = sum(day["actual"] for day in sample)
+    under_days = [day.isoformat() for day in recent_days
+                  if by_day[day]["slots"] >= 8
+                  and by_day[day]["actual"] - by_day[day]["forecast"] >= 0.5
+                  and by_day[day]["actual"] > by_day[day]["forecast"] * 1.2]
+    pv_under_pct = (100 * (actual_sum - forecast_sum) / forecast_sum
+                    if forecast_sum > 1.0 else None)
+    if len(under_days) >= 3 and pv_under_pct is not None and pv_under_pct >= 20:
+        add("pv_forecast_underestimation_7d", round(pv_under_pct, 2), 20, "WARNING",
+            "Prognoza PV jest systematycznie zaniżana. Sprawdź osobno PV1 i PV2 oraz korektę prognozy; nie zmieniaj planera na podstawie pojedynczego dnia.",
+            {"days": [day.isoformat() for day in recent_days], "underestimated_days": under_days,
+             "forecast_pv_kwh": round(forecast_sum, 3), "actual_pv_kwh": round(actual_sum, 3),
+             "daily": [{"day": day.isoformat(), **{key: round(value, 3) if isinstance(value, float) else value
+                                                    for key, value in by_day[day].items()}}
+                       for day in recent_days]})
+
+    for series_name, forecast_key, actual_key, label in (
+        ("pv1", "forecast_pv1_kwh", "actual_pv1_kwh", "PV1"),
+        ("pv2", "forecast_pv2_kwh", "actual_pv2_kwh", "PV2"),
+        ("load", "forecast_load_kwh", "actual_load_kwh", "zużycia"),
+    ):
+        daily_series = defaultdict(lambda: {"forecast": 0.0, "actual": 0.0, "slots": 0})
+        for row in history_rows:
+            day = _day(row.get("slot_start"))
+            forecast = _number(row.get(forecast_key))
+            actual = _number(row.get(actual_key))
+            if day is not None and forecast is not None and actual is not None:
+                daily_series[day]["forecast"] += max(0.0, forecast)
+                daily_series[day]["actual"] += max(0.0, actual)
+                daily_series[day]["slots"] += 1
+        days = sorted(daily_series)[-7:]
+        forecasts = sum(daily_series[day]["forecast"] for day in days)
+        actuals = sum(daily_series[day]["actual"] for day in days)
+        repeat_days = [day.isoformat() for day in days
+                       if daily_series[day]["slots"] >= 8
+                       and daily_series[day]["actual"] - daily_series[day]["forecast"] >= 0.5
+                       and daily_series[day]["actual"] > daily_series[day]["forecast"] * 1.2]
+        bias = 100 * (actuals - forecasts) / forecasts if forecasts > 1.0 else None
+        if len(repeat_days) >= 3 and bias is not None and bias >= 20:
+            add(f"{series_name}_forecast_underestimation_7d", round(bias, 2), 20, "WARNING",
+                f"Prognoza {label} jest systematycznie zaniżana. Sprawdź jej źródło i korektę; nie zmieniaj automatycznie planera.",
+                {"days": [day.isoformat() for day in days], "underestimated_days": repeat_days,
+                 "forecast_kwh": round(forecasts, 3), "actual_kwh": round(actuals, 3)})
+
+    hp_outside = []
+    for row in [*history_rows, *future_rows]:
+        hp = _number(row.get("forecast_heat_pump_load_kwh"), 0) or 0
+        slot = row.get("slot_start")
+        if hp <= 0.02 or not isinstance(slot, datetime):
+            continue
+        if (str(row.get("market_window") or "").upper() == "SELL"
+                or slot.hour < 7 or slot.hour >= 19):
+            hp_outside.append({"slot_start": slot, "market_window": row.get("market_window"),
+                               "forecast_heat_pump_load_kwh": hp})
+    if hp_outside:
+        add("heat_pump_outside_window", len(hp_outside), 0, "WARNING",
+            "Plan HP_HEAT_DHW zawiera energię poza dozwolonym oknem 07:00–19:00 lub w SELL.",
+            hp_outside[:12])
+
+    completed_days = defaultdict(list)
+    for row in history_rows:
+        day = _day(row.get("slot_start"))
+        if day:
+            completed_days[day].append(row)
+    for day in sorted(completed_days)[-1:]:
+        rows = sorted(completed_days[day], key=lambda row: row.get("slot_start"))
+        close = rows[-1]
+        slot = close.get("slot_start")
+        soc_start = _number(close.get("soc_start_pct"))
+        soc_delta = _number(close.get("soc_delta_pct"))
+        actual_close = soc_start + soc_delta if soc_start is not None and soc_delta is not None else None
+        if isinstance(slot, datetime) and slot.hour >= 23 and slot.minute >= 30 and actual_close is not None and actual_close < 35:
+            add("end_of_day_soc_below_target_range", round(actual_close, 2), 35, "WARNING",
+                "Rzeczywisty SOC na koniec doby jest ponad 5 pp poniżej oczekiwanego poziomu około 40%. Sprawdź target i zabezpieczenie porannego okna.",
+                {"day": day.isoformat(), "slot_start": slot,
+                 "soc_start_pct": soc_start, "soc_delta_pct": soc_delta,
+                 "actual_soc_close_pct": round(actual_close, 2), "expected_soc_pct": 40})
+
+    future_days = defaultdict(list)
+    for row in future_rows:
+        slot = row.get("slot_start")
+        if isinstance(slot, datetime):
+            future_days[slot.date()].append(row)
+    for day, rows in future_days.items():
+        closing_rows = [row for row in rows
+                        if isinstance(row.get("slot_start"), datetime)
+                        and row["slot_start"].hour >= 23 and row["slot_start"].minute >= 30]
+        if not closing_rows:
+            continue
+        close = max(closing_rows, key=lambda row: row["slot_start"])
+        planned_close = _number(close.get("soc_end_plan_pct"))
+        required = _number(close.get("soc_required_pct"))
+        if planned_close is not None and required is not None and planned_close + 0.5 < required:
+            add("planned_end_soc_below_required", round(required - planned_close, 2), 0.5, "WARNING",
+                "Planowany SOC na zamknięciu doby jest niższy od wymaganego. Sprawdź plan zakupu i ciągłość do porannego okna.",
+                {"day": day.isoformat(), "slot_start": close["slot_start"],
+                 "soc_end_plan_pct": planned_close, "soc_required_pct": required})
+
+    return suggestions, {"pv_forecast_7d_bias_pct": None if pv_under_pct is None else round(pv_under_pct, 2),
+                         "pv_underestimated_days_7d": len(under_days),
+                         "audited_history_slots": len(history_rows),
+                         "audited_future_slots": len(future_rows)}
 
 
 def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, reconcile_observer_todos, record_event) -> dict:
@@ -22,8 +209,30 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
         existing = cur.fetchone()
         if existing:
             return {"status": existing["status"], "run_id": existing["run_id"], "source_ref": source_ref, "deduplicated": True}
-        prompt = {"contract": "EMS_AI_OBSERVER_0_25_0", "mode": "SHADOW_READ_ONLY",
+        cur.execute("""SELECT s.slot_start,s.market_window,s.price_sell_pln_kwh,
+          s.forecast_pv1_kwh,s.forecast_pv2_kwh,s.forecast_pv_total_kwh,s.actual_pv1_kwh,
+          s.actual_pv2_kwh,s.actual_pv_total_kwh,s.forecast_load_kwh,s.actual_load_kwh,
+          s.planned_buy_kwh,s.actual_buy_kwh,s.planned_sell_kwh,s.actual_sell_kwh,
+          s.planned_pv_export_kwh,s.actual_pv_export_kwh,s.forecast_heat_pump_load_kwh,
+          s.heat_pump_window,s.soc_end_plan_pct,s.soc_required_pct,
+          d.actual_grid_export_kwh,d.soc_start_pct,d.soc_delta_pct,d.soc_min_pct,d.coverage_pct
+          FROM ems_gpt_slots s LEFT JOIN ems_gpt_core_execution_details d ON d.slot_start=s.slot_start
+          WHERE s.actual_recorded_at IS NOT NULL AND s.slot_start>=DATE_SUB(NOW(6),INTERVAL 28 DAY)
+          ORDER BY s.slot_start""")
+        history_rows = list(cur.fetchall())
+        cur.execute("""SELECT slot_start,market_window,price_sell_pln_kwh,planned_sell_kwh,
+          planned_pv_export_kwh,forecast_heat_pump_load_kwh,heat_pump_window,
+          soc_end_plan_pct,soc_required_pct
+          FROM ems_gpt_slots WHERE actual_recorded_at IS NULL AND slot_start>=NOW(6)
+          ORDER BY slot_start LIMIT 96""")
+        future_rows = list(cur.fetchall())
+        prompt = {"contract": "EMS_AI_OBSERVER_0_39_12", "mode": "SHADOW_READ_ONLY",
                   "forbidden": ["PLAN_WRITE", "PPD_WRITE", "COMMAND_WRITE", "HA_SERVICE_CALL"],
+                  "analysis_scope": {"history_days": 28, "history_slots": len(history_rows),
+                                     "future_slots": len(future_rows),
+                                     "checks": ["plan_vs_execution", "PV_forecast_bias_by_series",
+                                                "export_price_floor", "import_window", "HP_window",
+                                                "end_of_day_SOC"]},
                   "analytics": {k: analytics.get(k) for k in (
                       "slots_scanned", "complete_slots", "quality_score", "pv1_wape_pct", "pv2_wape_pct",
                       "pv_wape_pct", "load_wape_pct", "import_wape_pct", "export_wape_pct",
@@ -47,10 +256,15 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
             suggestions.append({"metric": "quality_score", "value": float(analytics.get("quality_score") or 0),
                                 "threshold": quality_threshold, "severity": "WARNING",
                                 "suggestion": "Nie używaj tego przebiegu do uczenia; popraw kompletność telemetrii."})
+        operational_suggestions, operational_summary = audit_operational_rows(
+            history_rows, future_rows, options=options)
+        prompt["operational_audit_summary"] = operational_summary
+        suggestions.extend(operational_suggestions)
         decision = "WATCH" if suggestions else "ACCEPT"
         auto_score = max(0.0, min(100.0, float(analytics.get("quality_score") or 0)))
-        result = {"contract": "EMS_AI_OBSERVER_0_25_0", "mode": "SHADOW_READ_ONLY",
+        result = {"contract": "EMS_AI_OBSERVER_0_39_12", "mode": "SHADOW_READ_ONLY",
                   "decision": decision, "auto_score": auto_score, "suggestions": suggestions,
+                  "operational_audit": operational_summary,
                   "external_model_called": False}
         run_id = str(uuid.uuid4())
         cur.execute("""INSERT INTO ems_gpt_core_ai_runs
@@ -59,11 +273,27 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
           (run_id, source_ref, json.dumps(prompt, ensure_ascii=False, default=str),
            json.dumps(result, ensure_ascii=False, default=str), str(round(auto_score, 2)), decision))
     active_titles = []
+    todo_scope = {
+        "source_analytics_run_id": source_ref,
+        "history_days": 28,
+        "completed_slots_analyzed": operational_summary["audited_history_slots"],
+        "future_slots_analyzed": operational_summary["audited_future_slots"],
+        "areas": ["plan i wykonanie", "prognoza PV1/PV2 i zużycia",
+                  "ceny i eksport", "okna importu", "okno HP", "SOC końcowy"],
+    }
     for item in suggestions:
-        title = f"Obserwator: {item['metric']}"
+        title = f"Obserwator: {metric_label(item['metric'])}"
         active_titles.append(title)
-        create_todo("ai_observer", title, json.dumps(item, ensure_ascii=False),
-                    item["severity"], run_id, require_consecutive_days=True)
+        error = (f"Zaobserwowano {item.get('value')}; próg ostrzeżenia: "
+                 f"{item.get('threshold')}." if item.get("value") is not None else
+                 "Sprawdź dowody i metryki z podanego przebiegu analityki.")
+        details = format_observer_todo(
+            scope=todo_scope, metric=item["metric"], severity=item["severity"],
+            error=error, conclusion=item["suggestion"], recommendation=item["suggestion"],
+            evidence=item.get("evidence"), run_id=run_id, source_ref=source_ref)
+        create_todo("ai_observer", title, details,
+                    item["severity"], run_id,
+                    require_consecutive_days=item["severity"] != "CRITICAL")
     reconcile_observer_todos(active_titles)
     record_event("ai_observer_completed", "ai_observer",
                  {"run_id": run_id, "source_ref": source_ref, "decision": decision, "suggestions": len(suggestions)})

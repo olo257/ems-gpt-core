@@ -21,8 +21,16 @@ must be configured separately.
 
 ## Worker flow
 
-Use the Core ingress base URL and send `Authorization: Bearer <agent_api_token>`
-plus `X-EMS-Agent-ID: <stable-worker-name>` on worker requests.
+The worker can run both as a mailbox responder and as a scheduled Observer
+analysis process. Scheduled findings are persisted to the `AI Observer` run
+history and TODO list; they are not posted as unsolicited chat messages. See
+[`../../ems_gpt_ai_observer_worker/README.md`](../../ems_gpt_ai_observer_worker/README.md) for add-on setup,
+LLM configuration, and the separate model-provider key.
+
+Use the Core API address reachable from the worker add-on's private Supervisor
+network and send `Authorization: Bearer <agent_api_token>` plus
+`X-EMS-Agent-ID: <stable-worker-name>` on worker requests. The API address is
+not the browser ingress URL.
 
 1. `GET /api/agent/inbox?limit=5` claims pending operator messages. Claims
    expire after ten minutes so a worker restart does not strand a question.
@@ -34,7 +42,12 @@ plus `X-EMS-Agent-ID: <stable-worker-name>` on worker requests.
    support a conclusion.
 4. `POST /api/agent/reply` with JSON `{"message_id":"...","message":"..."}`
    writes the answer. The claimed message ID and worker ID must match.
-5. `GET /api/agent/messages?thread_id=...` can be used by the operator UI to
+5. For scheduled analysis, the worker reviews a new completed analytics run
+   only once and submits structured findings to the authenticated
+   `POST /api/agent/observer-result` endpoint. Core validates the source run and
+   findings, then stores an Observer run and detailed TODOs. This endpoint
+   cannot change plans or controls.
+6. `GET /api/agent/messages?thread_id=...` can be used by the operator UI to
    display the complete exchange; it does not require the worker token because
    the UI is served through Home Assistant ingress.
 

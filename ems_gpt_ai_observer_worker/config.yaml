@@ -1,0 +1,32 @@
+name: EMS-GPT AI Observer Worker
+version: "0.1.0"
+slug: ems_gpt_ai_observer_worker
+description: Worker LLM do okresowej analizy EMS i odpowiedzi w skrzynce agenta
+url: https://github.com/olo257/ems-gpt-core
+arch:
+  - aarch64
+startup: application
+boot: manual
+init: false
+options:
+  enabled: false
+  core_api_url: http://9a3d0112_ems_gpt_core:8099
+  agent_api_token: ""
+  agent_id: ems-analysis-agent
+  llm_base_url: ""
+  llm_model: ""
+  llm_api_key: ""
+  poll_seconds: 30
+  supervision_interval_seconds: 900
+  llm_timeout_seconds: 120
+schema:
+  enabled: bool
+  core_api_url: str
+  agent_api_token: password
+  agent_id: str
+  llm_base_url: str
+  llm_model: str
+  llm_api_key: password
+  poll_seconds: int(5,300)
+  supervision_interval_seconds: int(0,86400)
+  llm_timeout_seconds: int(10,600)

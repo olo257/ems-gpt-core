@@ -50,18 +50,19 @@ class TodoService:
                source_ref, today, today))
         return todo_id
 
-    def reconcile_observer(self, active_titles: list[str]) -> int:
+    def reconcile_observer(self, active_titles: list[str], module_name: str = "ai_observer") -> int:
         today = self.local_now().date()
         with self.db() as conn, conn.cursor() as cur:
             if active_titles:
                 placeholders = ",".join(["%s"] * len(active_titles))
                 cur.execute(f"""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
-                  WHERE module_name='ai_observer' AND status IN ('WATCHING','OPEN','SUGGESTED')
-                    AND last_seen_day<%s AND title NOT IN ({placeholders})""", (today, *active_titles))
+                  WHERE module_name=%s AND status IN ('WATCHING','OPEN','SUGGESTED')
+                    AND last_seen_day<%s AND title NOT IN ({placeholders})""",
+                            (module_name, today, *active_titles))
             else:
                 cur.execute("""UPDATE ems_gpt_core_todo SET status='ARCHIVED',archived_at=NOW(6)
-                  WHERE module_name='ai_observer' AND status IN ('WATCHING','OPEN','SUGGESTED')
-                    AND last_seen_day<%s""", (today,))
+                  WHERE module_name=%s AND status IN ('WATCHING','OPEN','SUGGESTED')
+                    AND last_seen_day<%s""", (module_name, today))
             return cur.rowcount
 
     def reconcile_diagnostics(self, active_titles: list[str]) -> int:

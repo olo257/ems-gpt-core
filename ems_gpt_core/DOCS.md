@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja przygotowana: **0.39.0**.
+Status: obowiązująca. Wersja przygotowana: **0.39.12**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -34,6 +34,7 @@ dokumentu źródłowego.
   override'ów;
 - `ha_gateway_service.py` — dostęp do API Home Assistant;
 - `schema_service.py` i `database_service.py` — MariaDB i migracje;
+- `observer_service.py` — okresowy audyt planu, wykonania i jakości danych w trybie `SHADOW_READ_ONLY`;
 - `api_service.py` oraz `webui.html` — API i panel Ingress.
 
 Usługi otrzymują zależności przez jawne adaptery. Aplikacja korzysta z osobnej
@@ -146,6 +147,33 @@ próbką. Krótszy zakres odbudowy agregatów nie może ograniczać horyzontu 14
 Ważona prognoza jest minimalnym SOC na końcu każdej doby objętej planem, nie
 tylko ostatniego dnia całego horyzontu. Wartość jest zaokrąglana w górę do
 kroku SOC; planer może zakończyć dobę wyżej, jeżeli wymaga tego dalszy bilans.
+
+### AI Observer — audyt w tle
+
+- Observer uruchamia się po przebiegu analityki, nie częściej niż co 50 minut.
+- Core Observer wykonuje regułowe kontrole po analityce. Dodatkowy worker LLM
+  może pogłębić analizę po pojawieniu się nowego przebiegu analityki; czyta
+  ostatnie 28 dni zamkniętych slotów i do 96 przyszłych slotów planu.
+- Wynik workera zapisuje się jako osobny przebieg AI Observera oraz TODO,
+  zawierające zakres analizy, dowody i wnioski. Nie trafia do skrzynki czatu.
+- Worker jest osobnym procesem i nie uruchamia się od samego `agent_api_token`.
+  Wymaga prywatnego adresu API Core, tego tokenu, adresu usługi LLM oraz
+  ewentualnego osobnego klucza dostawcy modelu. Instrukcja jest w
+  [`EMS-GPT AI Observer Worker`](../ems_gpt_ai_observer_worker/README.md).
+- Kontrole obejmują plan względem wykonania i jakości telemetrii, eksport przy
+  cenie sprzedaży <= 0, import poza BUY (z pominięciem szumu < 0,050 kWh),
+  powtarzalne błędy prognozy PV1/PV2/łącznej PV i zużycia, sloty HP poza oknem,
+  SOC zamknięcia doby oraz zgodność planowanego SOC z wymaganym.
+- Wzorzec prognozy PV/zużycia jest oceniany na zagregowanych dobach; pojedynczy
+  nietypowy slot nie uruchamia wniosku o systematycznym niedoszacowaniu.
+- Każdy TODO przechowuje zakres i liczbę przeanalizowanych slotów, wykrytą
+  metrykę, wartość i próg, przykłady z `slot_start`, wniosek oraz zalecaną
+  weryfikację. Krytyczne naruszenia są otwierane od razu; pozostałe zachowują
+  dotychczasowy cykl obserwacji przez kolejne dni.
+- Observer ma wyłącznie tryb `SHADOW_READ_ONLY`; wynik nigdy sam nie zmienia
+  planu, PPD, wykonawcy, ustawień ani usług Home Assistant.
+- Skrzynka operatora pozostaje odrębnym kanałem do zadawania pytań o błąd;
+  odpowiedzi czatu nie są raportami okresowego nadzoru.
 
 ## 6. RCE i bieżące ceny
 

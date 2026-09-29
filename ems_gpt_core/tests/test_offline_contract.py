@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.11"', APP_SOURCE)
-        self.assertIn('version: "0.39.11"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.12"', APP_SOURCE)
+        self.assertIn('version: "0.39.12"', CONFIG)
 
     def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -340,6 +340,17 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("INSERT INTO ems_gpt_core_ai_runs", SOURCE)
         self.assertIn("run_ai_observer(analytics_result.get(\"run_id\"))", SOURCE)
 
+    def test_external_observer_worker_cannot_touch_planner_or_controls(self):
+        worker = MODULE_SOURCES["observer_worker_service.py"]
+        for forbidden in ("planner_service", "executor_service", "ppd_service",
+                          "ha_gateway_service"):
+            self.assertNotIn(forbidden, worker)
+        self.assertIn("HA_SERVICE_CALL", worker)
+        self.assertIn("COMMAND_WRITE", worker)
+        self.assertIn("INSERT INTO ems_gpt_core_ai_runs", worker)
+        self.assertIn("create_todo(\"ai_agent\"", worker)
+        self.assertNotIn("UPDATE ems_gpt_slots", worker)
+
     def test_command_expiry_covers_dispatched_and_accepted(self):
         self.assertIn("def expire_stale_commands", SOURCE)
         self.assertIn("'READY_FOR_CONNECTOR','DISPATCHED','ACCEPTED'", SOURCE)
@@ -347,7 +358,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("expire_stale_commands()", loop)
 
     def test_observer_todo_lifecycle(self):
-        self.assertIn("require_consecutive_days=True", SOURCE)
+        self.assertIn('require_consecutive_days=item["severity"] != "CRITICAL"', SOURCE)
         self.assertIn("consecutive >= 3", SOURCE)
         self.assertIn("def maintain_todo_archive", SOURCE)
         self.assertIn("def reconcile_diagnostic_todos", SOURCE)
