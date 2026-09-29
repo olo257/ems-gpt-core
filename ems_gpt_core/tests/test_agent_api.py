@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import pathlib
 import sys
@@ -20,6 +21,7 @@ from api_service import ApiAdapters, build_handler
 class AgentApiAuthTests(unittest.TestCase):
     def setUp(self):
         self.claimed = []
+        self.observer_results = []
         adapters = ApiAdapters(
             app_name="EMS-GPT Core", app_version="test", state={}, lock=RLock(),
             log=logging.getLogger("agent-api-test"), db=lambda: None,
@@ -38,6 +40,8 @@ class AgentApiAuthTests(unittest.TestCase):
             agent_claim_messages=lambda agent_id, limit: self.claimed.append(agent_id) or [],
             agent_read_context=lambda *_: {"mode": "READ_ONLY_ANALYSIS"},
             agent_submit_reply=lambda *_: {}, agent_submit_message=lambda *_: {},
+            agent_submit_observer_result=lambda agent_id, payload: self.observer_results.append(
+                (agent_id, payload)) or {"status": "COMPLETED", "run_id": "observer-run-1"},
         )
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), build_handler(adapters))
         self.thread = Thread(target=self.server.serve_forever, daemon=True)
@@ -73,6 +77,24 @@ class AgentApiAuthTests(unittest.TestCase):
         with urlopen(req, timeout=2) as response:
             self.assertEqual(response.status, 200)
         self.assertEqual(self.claimed, ["worker-test"])
+
+    def test_observer_result_endpoint_requires_worker_token_and_saves_run(self):
+        payload = {"source_ref": "analytics-1", "summary": "OK", "findings": [],
+                   "analysis_scope": {"history_days": 28}}
+        try:
+            urlopen(Request(self.base + "/api/agent/observer-result", data=b"{}",
+                            headers={"Content-Type": "application/json"}, method="POST"), timeout=2)
+            self.fail("unauthenticated observer result unexpectedly succeeded")
+        except HTTPError as exc:
+            self.assertEqual(exc.code, 401)
+        req = Request(self.base + "/api/agent/observer-result",
+                      data=json.dumps(payload).encode(),
+                      headers={"Authorization": "Bearer secret-test-token",
+                               "X-EMS-Agent-ID": "observer-worker",
+                               "Content-Type": "application/json"}, method="POST")
+        with urlopen(req, timeout=2) as response:
+            self.assertEqual(response.status, 201)
+        self.assertEqual(self.observer_results, [("observer-worker", payload)])
 
 
 if __name__ == "__main__":

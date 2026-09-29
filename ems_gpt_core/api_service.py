@@ -50,6 +50,7 @@ class ApiAdapters:
     agent_claim_messages: Callable | None = None
     agent_submit_reply: Callable | None = None
     agent_read_context: Callable | None = None
+    agent_submit_observer_result: Callable | None = None
 
 
 def build_handler(a: ApiAdapters):
@@ -73,6 +74,7 @@ def build_handler(a: ApiAdapters):
     agent_submit_message, agent_list_messages = a.agent_submit_message, a.agent_list_messages
     agent_claim_messages, agent_submit_reply = a.agent_claim_messages, a.agent_submit_reply
     agent_read_context = a.agent_read_context
+    agent_submit_observer_result = a.agent_submit_observer_result
 
     class Handler(BaseHTTPRequestHandler):
         def json(self, payload: dict, status=HTTPStatus.OK):
@@ -306,6 +308,16 @@ def build_handler(a: ApiAdapters):
                     return self.json(result, HTTPStatus.CREATED)
                 except PermissionError as exc:
                     return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.CONFLICT)
+                except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                    return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.BAD_REQUEST)
+            if path.endswith("/api/agent/observer-result") or path == "/api/agent/observer-result":
+                if not self.agent_authorized():
+                    return self.json({"error": "agent_auth_required"}, HTTPStatus.UNAUTHORIZED)
+                try:
+                    payload = self.read_json(100000)
+                    agent_id = self.headers.get("X-EMS-Agent-ID", "ems-analysis-agent")
+                    result = agent_submit_observer_result(agent_id, payload)
+                    return self.json(result, HTTPStatus.CREATED if result.get("status") == "COMPLETED" else HTTPStatus.OK)
                 except (ValueError, TypeError, json.JSONDecodeError) as exc:
                     return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.BAD_REQUEST)
             if path.endswith("/api/settings") or path=="/api/settings":

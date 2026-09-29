@@ -29,6 +29,7 @@ from scheduler_service import SchedulerAdapters, publish_current_slot_prices, ru
 from schema_service import ensure_runtime_schema as ensure_runtime_schema_service
 from slot_calendar_service import SlotCalendarAdapters, build_slot_calendar
 from observer_service import run_ai_observer as run_observer_service
+from observer_worker_service import submit_observer_result as submit_observer_worker_result_service
 from agent_service import (claim_messages as claim_agent_messages_service,
                            list_messages as list_agent_messages_service,
                            read_context as read_agent_context_service,
@@ -41,7 +42,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.39.11"
+APP_VERSION = "0.39.12"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -236,8 +237,15 @@ def create_todo(module: str, title: str, details: str, severity: str = "INFO",
     return _todo_service().create(module, title, details, severity, source_ref, require_consecutive_days)
 
 
-def reconcile_observer_todos(active_titles: list[str]) -> int:
-    return _todo_service().reconcile_observer(active_titles)
+def reconcile_observer_todos(active_titles: list[str], module_name: str = "ai_observer") -> int:
+    return _todo_service().reconcile_observer(active_titles, module_name)
+
+
+def submit_observer_worker_result(agent_id: str, payload: dict) -> dict:
+    return submit_observer_worker_result_service(
+        agent_id, payload, db=db, now=local_now(), create_todo=create_todo,
+        reconcile_todos=reconcile_observer_todos, record_event=record_event,
+    )
 
 
 def reconcile_diagnostic_todos(active_titles: list[str]) -> int:
@@ -428,6 +436,7 @@ Handler = build_handler(ApiAdapters(
     agent_claim_messages=agent_claim_messages,
     agent_submit_reply=agent_submit_reply,
     agent_read_context=agent_read_context,
+    agent_submit_observer_result=submit_observer_worker_result,
 ))
 
 
