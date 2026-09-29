@@ -19,6 +19,7 @@ class ConfigServiceTests(unittest.TestCase):
         self.assertEqual(result["timezone"], "Europe/Warsaw")
         self.assertEqual(result["slot_minutes"], 15)
         self.assertFalse(result["executor_enabled"])
+        self.assertEqual(result["agent_api_token"], "")
         self.assertEqual(result["soc_target_history_weight_7d_pct"], 50.0)
         self.assertEqual(result["soc_target_history_weight_14d_pct"], 25.0)
         self.assertEqual(result["soc_target_history_weight_28d_pct"], 25.0)
@@ -50,15 +51,18 @@ class ConfigServiceTests(unittest.TestCase):
             options_path.write_text(json.dumps({
                 "deye_program_1_soc_pct": 10,
                 "garden_temperature_entity": "sensor.garden_actual",
+                "agent_api_token": "supervisor-managed-secret",
             }))
             runtime_path.write_text(json.dumps({
                 "deye_program_1_soc_pct": 20,
                 "deye_program_soc_baseline_json": '{"1":20}',
                 "garden_temperature_entity": "sensor.stale_garden",
+                "agent_api_token": "attacker-runtime-override",
             }))
             result = load_options(options_path, runtime_path)
         self.assertEqual(result["deye_program_1_soc_pct"], 10)
         self.assertEqual(result["garden_temperature_entity"], "sensor.garden_actual")
+        self.assertEqual(result["agent_api_token"], "supervisor-managed-secret")
         self.assertNotIn("deye_program_soc_baseline_json", result)
 
     def test_program_soc_defaults_are_individual_and_validated(self):

@@ -2,6 +2,19 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.11 — kanał komunikacji z agentem AI
+
+- Dodano trwałą skrzynkę pytań i odpowiedzi operatora z osobnym uwierzytelnieniem
+  tokenem agenta. Agent może pobierać wiadomości, odczytywać ograniczony
+  kontekst przyszłych slotów, wykonania, analityki i Observera oraz zapisywać
+  wyłącznie odpowiedź na przejęte pytanie.
+- Agent nie otrzymuje adapterów planera, PPD, wykonawcy, usług Home Assistant,
+  poleceń ani konfiguracji sterowania. Kontekst ma jawny tryb tylko do odczytu.
+- Dodano zakładkę `Agent AI` do panelu operatora oraz testy cyklu wiadomości
+  i izolacji uprawnień.
+- Sam token włącza API agenta, ale nie uruchamia modelu ani procesu worker.
+  Kontrakt integracji opisano w `docs/AI_AGENT.md`.
+
 ## 0.39.10 — rzeczywista nadwyżka mimo rozbieżności planu SOC
 
 - PPD uwzględnia świeży pomiar PV, zużycia i SOC przy otwieraniu najbliższego

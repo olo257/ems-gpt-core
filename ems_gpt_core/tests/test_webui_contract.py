@@ -91,6 +91,12 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("e.key==='Escape'", HTML)
         self.assertIn("if(e.target===todoModal)closeTodo()", HTML)
 
+    def test_agent_panel_uses_mailbox_and_escapes_messages(self):
+        self.assertIn("data-view='agent'", HTML)
+        self.assertIn("api/agent/message", HTML)
+        self.assertIn("api/agent/messages", HTML)
+        self.assertIn("escapeHtml(m.message_text)", HTML)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,11 @@ from scheduler_service import SchedulerAdapters, publish_current_slot_prices, ru
 from schema_service import ensure_runtime_schema as ensure_runtime_schema_service
 from slot_calendar_service import SlotCalendarAdapters, build_slot_calendar
 from observer_service import run_ai_observer as run_observer_service
+from agent_service import (claim_messages as claim_agent_messages_service,
+                           list_messages as list_agent_messages_service,
+                           read_context as read_agent_context_service,
+                           submit_message as submit_agent_message_service,
+                           submit_reply as submit_agent_reply_service)
 from recovery_service import RecoveryAdapters, build_recovery
 from runtime_service import build_runtime
 from todo_service import TodoService
@@ -36,7 +41,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.39.10"
+APP_VERSION = "0.39.11"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -191,6 +196,27 @@ def run_ai_observer(source_ref: str | None = None) -> dict:
         source_ref, options=OPTIONS, db=db, create_todo=create_todo,
         reconcile_observer_todos=reconcile_observer_todos, record_event=record_event,
     )
+
+
+def agent_submit_message(text: str, actor: str) -> dict:
+    return submit_agent_message_service(text, actor, db=db, now=local_now())
+
+
+def agent_list_messages(limit: int = 100, thread_id: str | None = None) -> list[dict]:
+    return list_agent_messages_service(db=db, limit=limit, thread_id=thread_id)
+
+
+def agent_claim_messages(agent_id: str, limit: int = 5) -> list[dict]:
+    return claim_agent_messages_service(agent_id, db=db, limit=limit)
+
+
+def agent_submit_reply(message_id: str, agent_id: str, text: str) -> dict:
+    return submit_agent_reply_service(message_id, agent_id, text, db=db, now=local_now())
+
+
+def agent_read_context(limit: int = 96) -> dict:
+    return read_agent_context_service(db=db, now=local_now(), state=STATE,
+                                      state_lock=LOCK, limit=limit)
 
 
 def generate_diagnostic_report(trigger_name: str = "scheduled") -> dict:
@@ -396,6 +422,12 @@ Handler = build_handler(ApiAdapters(
     database_audit=database_audit,
     database_catalog=database_catalog,
     slot_column_audit=slot_column_audit,
+    agent_api_token=str(OPTIONS.get("agent_api_token") or ""),
+    agent_submit_message=agent_submit_message,
+    agent_list_messages=agent_list_messages,
+    agent_claim_messages=agent_claim_messages,
+    agent_submit_reply=agent_submit_reply,
+    agent_read_context=agent_read_context,
 ))
 
 
