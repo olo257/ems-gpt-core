@@ -18,6 +18,7 @@ DEYE_PROGRAM_SOC_DEFAULTS = {
 ADDON_ONLY_SETTINGS = {
     *DEYE_PROGRAM_SOC_DEFAULTS,
     "garden_temperature_entity",
+    "agent_api_token",
 }
 
 
@@ -210,6 +211,7 @@ DEFAULT_OPTIONS = {
     "executor_activation_ack": "",
     "connector_service_map_json": "{}",
     "ai_observer_enabled": True,
+    "agent_api_token": "",
     "backup_enabled": False,
     "backup_time": "02:20",
     "backup_local_directory": "/backup/ems-gpt",

@@ -1,18 +1,19 @@
 # EMS-GPT Core
 
-Wersja produkcyjna: **0.39.10**.
+Wersja produkcyjna: **0.39.11**.
 
 Dokumenty obowiązujące:
 
 - [`DOCS.md`](DOCS.md) — architektura, integracje, encje i procedura wydania;
 - [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md) — kanoniczny kontrakt planera;
 - [`ENTITY_CATALOG.md`](ENTITY_CATALOG.md) — helpery i wszystkie encje HA używane przez kod;
-- [`CHANGELOG.md`](CHANGELOG.md) — chronologiczna historia zmian.
+- [`CHANGELOG.md`](CHANGELOG.md) — chronologiczna historia zmian;
+- [`docs/AI_AGENT.md`](docs/AI_AGENT.md) — bezpieczny kontrakt skrzynki agenta AI.
 
 Materiały dawnych wydań zostały przeniesione do [`docs/archive/`](docs/archive/)
 i nie są bieżącą specyfikacją.
 
-Najważniejsze reguły wykonawcze 0.39.10:
+Najważniejsze reguły wykonawcze (obowiązujące w 0.39.11):
 
 - energia PV jest przydzielana kolejno do: load domu wraz z HP, ładowania
   baterii, `PV_CWU`, `PV_EV`, a dopiero potem do eksportu;

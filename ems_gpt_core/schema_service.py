@@ -214,6 +214,15 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
           auto_score VARCHAR(24) NULL, decision VARCHAR(24) NULL,
           UNIQUE KEY uq_ai_role_source(role_name,source_ref),
           INDEX ix_ai_runs_time(started_at)) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS ems_gpt_core_agent_messages (
+          message_id VARCHAR(36) PRIMARY KEY, thread_id VARCHAR(36) NOT NULL,
+          role_name VARCHAR(16) NOT NULL, actor_name VARCHAR(100) NOT NULL,
+          message_text TEXT NOT NULL, status VARCHAR(16) NOT NULL,
+          claimed_by VARCHAR(80) NULL, claimed_at DATETIME(6) NULL,
+          created_at DATETIME(6) NOT NULL,
+          completed_at DATETIME(6) NULL,
+          INDEX ix_agent_inbox(role_name,status,created_at),
+          INDEX ix_agent_thread(thread_id,created_at)) ENGINE=InnoDB""",
         """CREATE TABLE IF NOT EXISTS ems_gpt_core_execution_details (
           slot_start DATETIME(6) PRIMARY KEY, sample_count INT NOT NULL,
           coverage_pct DOUBLE NOT NULL, first_sample_at DATETIME(6) NULL,
