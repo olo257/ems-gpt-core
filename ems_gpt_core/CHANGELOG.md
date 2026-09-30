@@ -5,6 +5,17 @@ Total output lines: 1585
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.13 — ochrona przed sprzedażą energii kupionej ze stratą
+
+- Końcowa kontrola sprzedaży prowadzi kosztowy ślad energii ładowanej z sieci.
+  Jeżeli energia z zakupu zostaje później wyeksportowana poniżej kosztu
+  zakupu po uwzględnieniu sprawności, degradacji i minimalnej marży, wariant
+  `SELL_BAT` jest odrzucany, a plan przeliczany bez sprzedaży baterii.
+- Zdarzenie `battery_sale_counterfactual` zapisuje ilość takiej energii, jej
+  koszt, przychód i stratę.
+- Dodano regresję dla zakupu po 1,10 PLN/kWh i sprzedaży po 0,70 PLN/kWh.
+  Weryfikacja: 283 testy, kompilacja Python i `git diff --check` — PASS.
+
 ## 0.39.12 — rozszerzony audyt AI Observera
 
 - Observer uruchamiany po analizie okresowej przegląda do 28 dni zamkniętych
