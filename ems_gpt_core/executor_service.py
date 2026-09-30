@@ -45,14 +45,16 @@ def database_bool(value, field: str) -> bool:
 
 
 def battery_soc_guard_actions(live_soc: float | None, planned_end_soc: float | None,
-                              import_active: bool, export_active: bool) -> tuple[bool, bool]:
-    """Return (stop_import, stop_export) at the quantitative slot SOC boundary."""
-    if live_soc is None or planned_end_soc is None:
-        return bool(import_active), bool(export_active)
-    return (
-        bool(import_active and live_soc >= planned_end_soc),
-        bool(export_active and live_soc <= planned_end_soc),
-    )
+                              import_active: bool, export_active: bool,
+                              import_target_soc=...) -> tuple[bool, bool]:
+    """Return stop actions using the charge target for imports and slot endpoint for exports."""
+    import_target = (planned_end_soc if import_target_soc is ...
+                     else import_target_soc)
+    stop_import = (bool(import_active) if live_soc is None or import_target is None
+                   else bool(import_active and live_soc >= import_target - 0.01))
+    stop_export = (bool(export_active) if live_soc is None or planned_end_soc is None
+                   else bool(export_active and live_soc <= planned_end_soc))
+    return stop_import, stop_export
 
 
 def battery_import_guard_reason(live_soc, target, planned_buy, flow_threshold: float) -> str | None:
@@ -772,8 +774,6 @@ def build_executor(a: ExecutorAdapters):
                     target = (plan_target.get("soc_charge_target_pct")
                               if plan_target.get("soc_charge_target_pct") is not None
                               else plan_target.get("soc_target_pct"))
-                    if target is None:
-                        target = plan_target.get("soc_end_plan_pct")
                     live_soc = number(ha_state("sensor.inverter_battery"))
                     planned_buy = scalar_number(plan_target.get("planned_buy_kwh"))
                     flow_threshold = float(OPTIONS.get("planned_flow_threshold_kwh", 0.02))
@@ -852,7 +852,8 @@ def build_executor(a: ExecutorAdapters):
             # Scripts are binary for the duration of a slot. Re-check the live
             # SOC every scheduler minute so a partial final slot stops at the
             # quantitative SOC endpoint produced by PPD.
-            cur.execute("""SELECT soc_end_plan_pct FROM ems_gpt_slots
+            cur.execute("""SELECT soc_end_plan_pct,soc_charge_target_pct,soc_target_pct
+              FROM ems_gpt_slots
               WHERE slot_start=%s LIMIT 1""", (current_slot,))
             plan = cur.fetchone() or {}
             live_soc = number(ha_state("sensor.inverter_battery"))
@@ -860,12 +861,16 @@ def build_executor(a: ExecutorAdapters):
                 planned_end_soc = float(plan["soc_end_plan_pct"])
             except (KeyError, TypeError, ValueError):
                 planned_end_soc = None
+            import_target_soc = scalar_number(plan.get("soc_charge_target_pct"))
+            if import_target_soc is None:
+                import_target_soc = scalar_number(plan.get("soc_target_pct"))
             grid_state = ha_state("switch.inverter_battery_grid_charging") or {}
             mode_state = ha_state("select.inverter_work_mode") or {}
             stop_import, stop_export = battery_soc_guard_actions(
                 live_soc, planned_end_soc,
                 str(grid_state.get("state") or "").lower() == "on",
                 str(mode_state.get("state") or "") == "Export First",
+                import_target_soc=import_target_soc,
             )
             guard_actions = []
             if stop_import:
