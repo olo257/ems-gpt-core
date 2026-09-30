@@ -113,6 +113,38 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertAlmostEqual(result["gross_gain_pln"], 0.8)
         self.assertAlmostEqual(result["ending_energy_replacement_cost_pln"], 2.0)
 
+    def test_sale_counterfactual_rejects_grid_charged_energy_sold_at_a_loss(self):
+        rows = [
+            {"price_buy_pln_kwh": 1.10, "price_sell_pln_kwh": 0.0,
+             "buy_window": True},
+            {"price_buy_pln_kwh": 1.30, "price_sell_pln_kwh": 0.70,
+             "buy_window": True},
+        ]
+        sale = {"objective_pln": -1.0, "flows": [
+            {"grid_charge_kwh": 1.0, "battery_to_load_kwh": 0.0,
+             "battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "soc_end_pct": 50.0},
+            {"grid_charge_kwh": 0.0, "battery_to_load_kwh": 0.0,
+             "battery_sell_kwh": 0.50, "grid_load_kwh": 0.0,
+             "soc_end_pct": 50.0},
+        ]}
+        keep = {"objective_pln": 0.0, "flows": [
+            {"grid_charge_kwh": 0.0, "battery_to_load_kwh": 0.0,
+             "battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "soc_end_pct": 50.0},
+            {"grid_charge_kwh": 0.0, "battery_to_load_kwh": 0.0,
+             "battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "soc_end_pct": 50.0},
+        ]}
+
+        result = assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90,
+            eta_d=0.95, degradation=0.08)
+
+        self.assertFalse(result["eligible"])
+        self.assertGreater(result["grid_origin_sale_loss_pln"], 0.0)
+        self.assertAlmostEqual(result["grid_origin_sale_kwh"], 0.50 / 0.95, places=5)
+
     def test_hp_power_uses_weighted_history_and_falls_back_to_1_5_kw(self):
         planning_day = date(2026, 9, 24)
         rows = [
