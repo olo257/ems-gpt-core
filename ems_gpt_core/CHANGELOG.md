@@ -5,16 +5,16 @@ Total output lines: 1585
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
-## 0.39.13 — ochrona przed sprzedażą energii kupionej ze stratą
+## 0.39.14 — limit importu według wymaganego SOC
 
-- Końcowa kontrola sprzedaży prowadzi kosztowy ślad energii ładowanej z sieci.
-  Jeżeli energia z zakupu zostaje później wyeksportowana poniżej kosztu
-  zakupu po uwzględnieniu sprawności, degradacji i minimalnej marży, wariant
-  `SELL_BAT` jest odrzucany, a plan przeliczany bez sprzedaży baterii.
-- Zdarzenie `battery_sale_counterfactual` zapisuje ilość takiej energii, jej
-  koszt, przychód i stratę.
-- Dodano regresję dla zakupu po 1,10 PLN/kWh i sprzedaży po 0,70 PLN/kWh.
-  Weryfikacja: 283 testy, kompilacja Python i `git diff --check` — PASS.
+- Egzekutor podczas aktywnego ładowania sprawdza `soc_charge_target_pct`
+  (z aliasem zgodnościowym `soc_target_pct`) i zatrzymuje import natychmiast
+  po osiągnięciu wymaganego celu, niezależnie od wyższego `soc_end_plan_pct`.
+- Brak targetu w opublikowanym planie bezpiecznie zatrzymuje import. Kontrola
+  eksportu nadal używa osobnego końcowego SOC slotu.
+- Zachowano kontrolę ekonomii `SELL_BAT` z 0.39.13. Testy używają
+  przykładowych danych bez stawek przedstawianych jako reguły produkcyjne.
+- Dodano regresję dla rozbieżności między targetem ładowania a SOC końcowym.
 
 ## 0.39.12 — rozszerzony audyt AI Observera
 

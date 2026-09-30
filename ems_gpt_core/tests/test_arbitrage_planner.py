@@ -115,9 +115,9 @@ class PairedArbitrageTests(unittest.TestCase):
 
     def test_sale_counterfactual_rejects_grid_charged_energy_sold_at_a_loss(self):
         rows = [
-            {"price_buy_pln_kwh": 1.10, "price_sell_pln_kwh": 0.0,
+            {"price_buy_pln_kwh": 2.40, "price_sell_pln_kwh": 0.0,
              "buy_window": True},
-            {"price_buy_pln_kwh": 1.30, "price_sell_pln_kwh": 0.70,
+            {"price_buy_pln_kwh": 2.60, "price_sell_pln_kwh": 1.20,
              "buy_window": True},
         ]
         sale = {"objective_pln": -1.0, "flows": [
@@ -394,7 +394,7 @@ class PairedArbitrageTests(unittest.TestCase):
                 "forecast_load_kwh": 0.10,
                 "forecast_heat_pump_load_kwh": 0.0,
                 "forecast_pv_total_kwh": 1.0 if index >= 5 else 0.0,
-                "price_buy_pln_kwh": 1.10,
+                "price_buy_pln_kwh": 1.35,
                 "price_sell_pln_kwh": 0.12,
             })
             flows.append({
