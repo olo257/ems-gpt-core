@@ -284,7 +284,9 @@ def battery_sale_economics(rows: list[dict], index: int, eta_c: float, eta_d: fl
 def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
                                      rows: list[dict], min_margin: float,
                                      capacity_kwh: float, eta_c: float,
-                                     tolerance_kwh: float = 0.05) -> dict:
+                                     tolerance_kwh: float = 0.05,
+                                     eta_d: float = 0.95,
+                                     degradation: float = 0.08) -> dict:
     """Check the full cost of export against keeping the energy for native load.
 
     The counterfactual has the same forecast and required terminal SOC. Both
@@ -308,6 +310,49 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             - float(b.get("grid_charge_kwh") or 0.0))
         * float(row.get("price_buy_pln_kwh") or 0.0)
         for a, b, row in zip(sales, baseline, rows))
+
+    # Keep a FIFO cost basis for battery energy charged from the grid. Without
+    # this, SOC above the terminal target can look free: a plan can buy energy,
+    # later export it below cost, and still meet the terminal SOC contract.
+    grid_inventory: list[list[float]] = []  # internal kWh, cost PLN/internal kWh
+    grid_origin_sale_kwh = 0.0
+    grid_origin_sale_revenue = 0.0
+    grid_origin_sale_cost = 0.0
+    grid_origin_sale_loss = 0.0
+    charge_efficiency = max(0.01, float(eta_c))
+    discharge_efficiency = max(0.01, float(eta_d))
+    for flow, row in zip(sales, rows):
+        grid_charge = max(0.0, float(flow.get("grid_charge_kwh") or 0.0))
+        if grid_charge > 1e-9:
+            grid_inventory.append([
+                grid_charge * charge_efficiency,
+                float(row.get("price_buy_pln_kwh") or 0.0) / charge_efficiency,
+            ])
+        native_discharge = (max(0.0, float(flow.get("battery_to_load_kwh") or 0.0))
+                            / discharge_efficiency)
+        while native_discharge > 1e-9 and grid_inventory:
+            used = min(native_discharge, grid_inventory[0][0])
+            grid_inventory[0][0] -= used
+            native_discharge -= used
+            if grid_inventory[0][0] <= 1e-9:
+                grid_inventory.pop(0)
+        battery_sale = max(0.0, float(flow.get("battery_sell_kwh") or 0.0))
+        sale_internal = battery_sale / discharge_efficiency
+        sale_price = float(row.get("price_sell_pln_kwh") or 0.0)
+        while sale_internal > 1e-9 and grid_inventory:
+            used = min(sale_internal, grid_inventory[0][0])
+            revenue = used * sale_price * discharge_efficiency
+            cost = used * grid_inventory[0][1]
+            grid_origin_sale_kwh += used
+            grid_origin_sale_revenue += revenue
+            grid_origin_sale_cost += cost
+            grid_origin_sale_loss += max(
+                0.0, cost + used * discharge_efficiency
+                * (float(degradation) + float(min_margin)) - revenue)
+            grid_inventory[0][0] -= used
+            sale_internal -= used
+            if grid_inventory[0][0] <= 1e-9:
+                grid_inventory.pop(0)
     gross_gain = float(no_sale_plan["objective_pln"]) - float(sale_plan["objective_pln"])
     ending_energy_shortfall = max(0.0,
         (float(baseline[-1].get("soc_end_pct") or 0.0)
@@ -338,7 +383,8 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
     # export. The positive counterfactual gain is an independent final check.
     eligible = (sold <= 1e-9 or
                 (gain is not None and gain > 1e-6
-                 and extra_native_import <= tolerance_kwh + 1e-9))
+                 and extra_native_import <= tolerance_kwh + 1e-9
+                 and grid_origin_sale_loss <= 1e-6))
     return {"eligible": eligible, "sold_kwh": round(sold, 6),
             "gross_gain_pln": round(gross_gain, 6),
             "net_gain_pln": round(gain, 6) if gain is not None else None,
@@ -348,6 +394,10 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             "extra_native_import_kwh": round(extra_native_import, 6),
             "extra_grid_charge_kwh": round(extra_grid_charge, 6),
             "extra_grid_charge_cost_pln": round(extra_grid_charge_cost, 6),
+            "grid_origin_sale_kwh": round(grid_origin_sale_kwh, 6),
+            "grid_origin_sale_revenue_pln": round(grid_origin_sale_revenue, 6),
+            "grid_origin_sale_cost_pln": round(grid_origin_sale_cost, 6),
+            "grid_origin_sale_loss_pln": round(grid_origin_sale_loss, 6),
             "minimum_margin_pln_kwh": min_margin}
 
 
@@ -1751,7 +1801,8 @@ def build_planner(a: PlannerAdapters):
                         allow_terminal_shortfall=terminal_shortfall_allowed)
                     sale_assessment = assess_sale_plan_against_no_sale(
                         optimization, no_sale_optimization, horizon_rows,
-                        min_margin, capacity, eta_c, technical_threshold)
+                        min_margin, capacity, eta_c, technical_threshold,
+                        eta_d=eta_d, degradation=degradation)
                 except RuntimeError as exc:
                     sale_assessment = {"eligible": False, "reason": str(exc)}
                 record_event("battery_sale_counterfactual", "planner", {
