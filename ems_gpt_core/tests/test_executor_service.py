@@ -96,6 +96,25 @@ class ExecutorServiceTests(unittest.TestCase):
         self.assertEqual(battery_soc_guard_actions(45.0, 60.0, True, False), (False, False))
         self.assertEqual(battery_soc_guard_actions(None, 60.0, True, True), (True, True))
 
+    def test_battery_import_guard_uses_charge_target_instead_of_slot_close_soc(self):
+        # A slot may plan to end above its required charging target. Import
+        # must stop at the target while export keeps its separate endpoint.
+        self.assertEqual(
+            battery_soc_guard_actions(61.0, 80.0, True, False,
+                                      import_target_soc=60.0),
+            (True, False),
+        )
+        self.assertEqual(
+            battery_soc_guard_actions(59.0, 80.0, True, False,
+                                      import_target_soc=60.0),
+            (False, False),
+        )
+        self.assertEqual(
+            battery_soc_guard_actions(50.0, 80.0, True, False,
+                                      import_target_soc=None),
+            (True, False),
+        )
+
     def build_service(self, directory, db=lambda: None):
         self.options = {
             "executor_enabled": False,
