@@ -5,6 +5,19 @@ Total output lines: 1585
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.15 — odblokowanie planera przy brakach historii HP
+
+- Usunięto krytyczną blokadę `INVALID_BOOLEAN:heat_pump_window:None`
+  podczas odczytu minionych slotów ogrzewania.
+- Do wykonanego ogrzewania zaliczane są wyłącznie znane okna opublikowanego
+  planu. Slot nieopublikowany lub z brakującą flagą HP nie daje zaliczenia
+  ogrzewania i nie przerywa kolejnego planowania.
+- Braki są jawnie rejestrowane w `hp_elapsed_plan_history_missing`; odczyt
+  nie zmienia historii i nie osłabia walidacji flag bieżącego planu.
+- Dodano test regresyjny odczytu SQL i dalszej optymalizacji ogrzewania,
+  granic dnia/slotu, nieopublikowanych okien i odrzucania błędnych flag.
+- Zachowano ekonomię sprzedaży baterii i limit importu według wymaganego SOC.
+
 ## 0.39.14 — limit importu według wymaganego SOC
 
 - Egzekutor podczas aktywnego ładowania sprawdza `soc_charge_target_pct`
