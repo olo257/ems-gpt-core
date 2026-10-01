@@ -17,6 +17,13 @@ może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
   prognozy nie oznacza zera: materializacja uzupełnia zużycie profilem slotu,
   a przy krótkiej historii konserwatywną średnią z ostatnich trzech dób.
   Pozostały `NULL` odrzuca cały przebieg.
+- Przejście miesiąca nie może wyzerować prognozy PV. Przy braku kompletnego
+  profilu danego miesiąca używany jest najbliższy kompletny profil historyczny,
+  z cyklicznym dystansem miesięcy (grudzień sąsiaduje ze styczniem).
+- Chwilowy brak źródła PV zachowuje kompletne wartości SQL dla tych samych
+  slotów. Braki można odtworzyć z ostatniej poprawnej migawki opublikowanego,
+  zaakceptowanego planu; nie wolno kopiować prognoz innej doby ani wykonania.
+  Wykorzystanie zapisu SQL i miesiąc wybranego profilu są jawne w audycie.
 - Każdy przebieg pracuje na jednej migawce danych wejściowych i publikuje cały
   zaakceptowany plan atomowo. Plan częściowy nie może zastąpić ostatniego
   poprawnego planu.

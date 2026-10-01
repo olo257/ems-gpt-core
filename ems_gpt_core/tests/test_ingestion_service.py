@@ -13,6 +13,13 @@ from ingestion_service import IngestionAdapters, build_ingestion
 
 
 class EmptyConnection:
+    def execute(self, sql, params=None):
+        if not sql.lstrip().startswith("SELECT"):
+            raise AssertionError("Missing sources must not overwrite forecasts")
+
+    def fetchall(self):
+        return []
+
     def cursor(self):
         return self
 

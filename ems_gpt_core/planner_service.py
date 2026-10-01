@@ -97,6 +97,19 @@ def strict_database_bool(value, field: str) -> bool:
     raise RuntimeError(f"INVALID_BOOLEAN:{field}:{value!r}")
 
 
+def validate_pv_forecasts(rows: list[dict]) -> None:
+    """Unknown PV is never a zero-production scenario for dispatch or SOC."""
+    for row in rows:
+        values = [row.get(key) for key in (
+            "forecast_pv1_kwh", "forecast_pv2_kwh", "forecast_pv_total_kwh")]
+        if any(value is None for value in values):
+            raise RuntimeError(f"MISSING_PV_FORECAST:{row['slot_start']}")
+        if any(not math.isfinite(float(value)) or float(value) < 0 for value in values):
+            raise RuntimeError(f"INVALID_PV_FORECAST:{row['slot_start']}")
+        if abs(float(values[0]) + float(values[1]) - float(values[2])) > 0.000002:
+            raise RuntimeError(f"INCONSISTENT_PV_FORECAST:{row['slot_start']}")
+
+
 def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[list[bool], list[dict]]:
     """Count only known published HP windows; unknown history grants no heat credit."""
     cur.execute("""SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots
@@ -1365,6 +1378,7 @@ def build_planner(a: PlannerAdapters):
             source = list(cur.fetchall())
             if not source:
                 raise RuntimeError("No open forecast rows for planner horizon")
+            validate_pv_forecasts(source)
             missing_load = [str(row["slot_start"]) for row in source
                             if row.get("forecast_load_kwh") is None]
             if missing_load:

@@ -5,6 +5,24 @@ Total output lines: 1585
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.16 — ciągłość prognozy PV przy zmianie miesiąca i awarii źródła
+
+- Prognoza slotowa używa kompletnego profilu bieżącego miesiąca lub,
+  przy jego braku, najbliższego kompletnego miesiąca z historii. Wybór
+  uwzględnia cykliczny kalendarz grudzień–styczeń i jest zapisywany w audycie.
+- Zachowano osobne prognozy i korekty PV1/PV2 oraz ich sumy energii.
+- Przy chwilowym braku źródła PV lub profilu zachowywana jest kompletna
+  prognoza zapisana w SQL. Brakujące sloty mogą zostać odtworzone z ostatniej
+  poprawnej migawki zaakceptowanego, opublikowanego planu dla tych samych
+  znaczników czasu. Dane wykonania i kompletne prognozy nie są nadpisywane.
+- Planer odrzuca brakujące, ujemne, nienumeryczne lub niespójne prognozy PV
+  przed obliczeniami i publikacją. Rzeczywiste zero źródła jest dozwolone;
+  brak danych nie jest zamieniany na zero.
+- Testy obejmują wszystkie zmiany miesiąca, sumy PV1/PV2, zachowanie SQL,
+  odzyskanie właściwej migawki oraz walidację danych wejściowych.
+- Nie zmieniono algorytmu SOC, ekonomiki ani zasad BUY/SELL; zachowano
+  poprawkę odczytu minionych okien HP z 0.39.15.
+
 ## 0.39.15 — odblokowanie planera przy brakach historii HP
 
 - Usunięto krytyczną blokadę `INVALID_BOOLEAN:heat_pump_window:None`

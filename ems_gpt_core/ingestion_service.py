@@ -13,6 +13,64 @@ from urllib.parse import urlencode
 from config_service import deye_program_soc_baselines
 
 
+def select_pv_profile(slots: list[dict], profiles: list[dict], month: int) -> tuple[list[float], int | None]:
+    """Use one complete learned month, nearest on the circular calendar."""
+    by_month = {}
+    for row in profiles:
+        value = row.get("mean_share")
+        if value is None or not math.isfinite(float(value)) or float(value) < 0:
+            continue
+        by_month.setdefault(int(row["month_no"]), {})[
+            (int(row["hour_no"]), int(row["minute_no"]))] = float(value)
+    # Prefer the preceding month in a tie; December is next to January.
+    candidates = sorted(by_month, key=lambda m: (
+        min((month-m) % 12, (m-month) % 12), (month-m) % 12, m))
+    for candidate in candidates:
+        profile = by_month[candidate]
+        keys = [(row["slot_start"].hour, row["slot_start"].minute) for row in slots]
+        if all(key in profile for key in keys):
+            weights = [profile[key] for key in keys]
+            if sum(weights) > 0:
+                return weights, candidate
+    return [], None
+
+
+def complete_pv_forecast(row: dict) -> bool:
+    values = [row.get(key) for key in (
+        "forecast_pv1_kwh", "forecast_pv2_kwh", "forecast_pv_total_kwh")]
+    return (all(value is not None and math.isfinite(float(value)) and float(value) >= 0
+                for value in values)
+            and abs(float(values[0]) + float(values[1]) - float(values[2])) <= 0.000002)
+
+
+def preserve_stored_pv_forecasts(cur, lower: datetime, upper: datetime) -> dict:
+    """Recover only the same slot from accepted published SQL snapshots."""
+    cur.execute("""SELECT slot_start,forecast_pv1_kwh,forecast_pv2_kwh,forecast_pv_total_kwh
+      FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s
+      AND actual_recorded_at IS NULL ORDER BY slot_start""", (lower, upper))
+    slots = list(cur.fetchall())
+    missing = {row["slot_start"] for row in slots if not complete_pv_forecast(row)}
+    recovered = 0
+    if missing:
+        cur.execute("""SELECT s.slot_start,s.forecast_pv1_kwh,s.forecast_pv2_kwh,
+          s.forecast_pv_total_kwh,s.forecast_pv_source,s.pv_correction
+          FROM ems_gpt_plan_stage_rows s JOIN ems_gpt_plan_runs r ON r.run_id=s.run_id
+          WHERE s.slot_start>=%s AND s.slot_start<%s AND r.status='PUBLISHED'
+          AND r.validation_status='ACCEPTED' ORDER BY r.published_at DESC""", (lower, upper))
+        for row in cur.fetchall():
+            if row["slot_start"] not in missing or not complete_pv_forecast(row):
+                continue
+            cur.execute("""UPDATE ems_gpt_slots SET forecast_pv1_kwh=%s,forecast_pv2_kwh=%s,
+              forecast_pv_total_kwh=%s,forecast_pv_source=%s,pv_correction=%s
+              WHERE slot_start=%s AND actual_recorded_at IS NULL""",
+              (row["forecast_pv1_kwh"], row["forecast_pv2_kwh"], row["forecast_pv_total_kwh"],
+               row.get("forecast_pv_source"), row.get("pv_correction"), row["slot_start"]))
+            missing.remove(row["slot_start"])
+            recovered += 1
+    return {"status": "STORED_FORECAST" if slots and not missing else "WAITING_STORED_FORECAST",
+            "slots": len(slots), "missing_slots": len(missing), "recovered_slots": recovered}
+
+
 def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
                          degradation: float, min_margin: float,
                          buy_tolerance: float,
@@ -112,10 +170,15 @@ def build_ingestion(a: IngestionAdapters):
             correction_source = "DISABLED"
             correction_loaded = False
             for label, target in (("today", today), ("tomorrow", today+timedelta(days=1))):
+                lower = max(slot_start().replace(tzinfo=None), datetime.combine(target, datetime.min.time())) if label == "today" else datetime.combine(target, datetime.min.time())
+                upper = datetime.combine(target+timedelta(days=1), datetime.min.time())
                 pv1 = number(ha_state(PV_FORECAST_ENTITIES[label][0]))
                 pv2 = number(ha_state(PV_FORECAST_ENTITIES[label][1]))
-                if pv1 is None or pv2 is None:
-                    results[label] = {"status": "WAITING_SOURCE"}
+                if (pv1 is None or pv2 is None or not math.isfinite(pv1)
+                        or not math.isfinite(pv2) or pv1 < 0 or pv2 < 0):
+                    stored = preserve_stored_pv_forecasts(cur, lower, upper)
+                    results[label] = {**stored, "status": stored["status"] if stored["status"] == "STORED_FORECAST" else "WAITING_SOURCE",
+                                      "reason": "SOURCE_UNAVAILABLE"}
                     continue
                 if not correction_loaded:
                     correction_loaded = True
@@ -128,20 +191,32 @@ def build_ingestion(a: IngestionAdapters):
                             pv1_scale = min(1.5, max(0.5, float(correction.get("suggested_pv1_scale") or 1.0)))
                             pv2_scale = min(1.5, max(0.5, float(correction.get("suggested_pv2_scale") or 1.0)))
                             correction_source = "ANALYTICS_LATEST"
-                lower = max(slot_start().replace(tzinfo=None), datetime.combine(target, datetime.min.time())) if label == "today" else datetime.combine(target, datetime.min.time())
-                upper = datetime.combine(target+timedelta(days=1), datetime.min.time())
-                cur.execute("""SELECT s.slot_start,p.mean_share FROM ems_gpt_slots s
-                  LEFT JOIN ems_gpt_core_pv_profiles p ON p.month_no=MONTH(s.slot_start)
-                   AND p.hour_no=HOUR(s.slot_start) AND p.minute_no=MINUTE(s.slot_start)
+                cur.execute("""SELECT s.slot_start FROM ems_gpt_slots s
                   WHERE s.slot_start>=%s AND s.slot_start<%s AND s.actual_recorded_at IS NULL
                   ORDER BY s.slot_start""", (lower, upper))
                 slots = list(cur.fetchall())
-                weight_sum = sum(float(r.get("mean_share") or 0) for r in slots)
-                if not slots or weight_sum <= 0:
-                    results[label] = {"status": "WAITING_PROFILE", "slots": len(slots)}
+                if not slots:
+                    results[label] = {"status": "NO_OPEN_SLOTS", "slots": 0}
                     continue
-                for row in slots:
-                    share = float(row.get("mean_share") or 0)/weight_sum
+                profile_month = None
+                if pv1 + pv2 == 0:
+                    # An explicit zero from both sources is valid even without
+                    # learned daytime weights (e.g. remaining energy at night).
+                    weights = [0.0] * len(slots)
+                else:
+                    cur.execute("""SELECT month_no,hour_no,minute_no,mean_share
+                      FROM ems_gpt_core_pv_profiles WHERE sample_days>0""")
+                    weights, profile_month = select_pv_profile(slots, list(cur.fetchall()), target.month)
+                weight_sum = sum(weights)
+                if not weights:
+                    stored = preserve_stored_pv_forecasts(cur, lower, upper)
+                    results[label] = {**stored, "status": stored["status"] if stored["status"] == "STORED_FORECAST" else "WAITING_PROFILE",
+                                      "reason": "PROFILE_UNAVAILABLE"}
+                    continue
+                profile_source = ("SOURCE_ZERO" if profile_month is None else
+                                  "CURRENT_MONTH" if profile_month == target.month else "NEAREST_LEARNED_MONTH")
+                for row, weight in zip(slots, weights):
+                    share = weight/weight_sum if weight_sum > 0 else 0.0
                     a, b = pv1*pv1_scale*share, pv2*pv2_scale*share
                     cur.execute("""UPDATE ems_gpt_slots SET forecast_pv1_kwh=%s,forecast_pv2_kwh=%s,
                       forecast_pv_total_kwh=%s,forecast_pv_source='OPEN_METEO_PROFILE_V1',
@@ -150,7 +225,8 @@ def build_ingestion(a: IngestionAdapters):
                        round((pv1*pv1_scale+pv2*pv2_scale)/max(0.001,pv1+pv2), 4), row["slot_start"]))
                 results[label] = {"status": "OK", "slots": len(slots), "pv1_kwh": pv1,
                                   "pv2_kwh": pv2, "pv1_scale": pv1_scale,
-                                  "pv2_scale": pv2_scale, "correction_source": correction_source}
+                                  "pv2_scale": pv2_scale, "correction_source": correction_source,
+                                  "profile_source": profile_source, "profile_month": profile_month}
         record_event("pv_forecast_refreshed", "analytics", results)
         return results
     
