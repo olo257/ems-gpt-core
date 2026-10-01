@@ -97,6 +97,28 @@ def strict_database_bool(value, field: str) -> bool:
     raise RuntimeError(f"INVALID_BOOLEAN:{field}:{value!r}")
 
 
+def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[list[bool], list[dict]]:
+    """Count only known published HP windows; unknown history grants no heat credit."""
+    cur.execute("""SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots
+      WHERE slot_start>=%s AND slot_start<%s ORDER BY slot_start""",
+      (day_start, cutoff))
+    states, unknown = [], []
+    for row in cur.fetchall():
+        # Missing publication metadata is also legacy/unknown history. Never
+        # use an unpublished window (even a stored 1) as completed heating.
+        published = row["plan_published"]
+        value = row["heat_pump_window"]
+        if published is None or not strict_database_bool(published, "plan_published"):
+            states.append(False)
+            unknown.append({"slot_start": str(row["slot_start"]), "reason": "UNPUBLISHED"})
+        elif value is None:
+            states.append(False)
+            unknown.append({"slot_start": str(row["slot_start"]), "reason": "MISSING_HP_WINDOW"})
+        else:
+            states.append(strict_database_bool(value, "heat_pump_window"))
+    return states, unknown
+
+
 def next_replenishment_prices(rows: list[dict]) -> list[float | None]:
     """Cheapest price in the nearest later contiguous battery BUY window."""
     result: list[float | None] = [None] * len(rows)
@@ -1506,13 +1528,15 @@ def build_planner(a: PlannerAdapters):
                 # For elapsed slots the planner assumes its own published plan
                 # was executed.  Differences belong to execution analytics and
                 # must never feed a PPD decision back into the next plan.
-                cur.execute("""SELECT heat_pump_window FROM ems_gpt_slots
-                  WHERE slot_start>=%s AND slot_start<%s
-                  ORDER BY slot_start""",
-                  (day_start, min(cutoff, day_start + timedelta(days=1))))
-                past_states = [strict_database_bool(value.get("heat_pump_window"),
-                                                    "heat_pump_window")
-                               for value in cur.fetchall()]
+                past_states, unknown_hp_history = elapsed_hp_plan_states(
+                    cur, day_start, min(cutoff, day_start + timedelta(days=1)))
+                if unknown_hp_history:
+                    record_event("hp_elapsed_plan_history_missing", "planner", {
+                        "planning_day": day_key, "run_id": run_id,
+                        "unknown_slots": len(unknown_hp_history),
+                        "slots": unknown_hp_history,
+                        "action": "NO_HEATING_CREDIT_CONTINUE_PLANNING",
+                    }, "WARNING")
                 day_rows = [row for _, row in indexed_rows]
                 allowed_local = hp_heating_window_indices(day_rows, day_value)
                 allowed_rows = [row for index, row in enumerate(day_rows)

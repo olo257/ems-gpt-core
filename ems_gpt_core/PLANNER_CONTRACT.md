@@ -296,6 +296,10 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
   decyzję efektywną, ale nie przepisują rekomendacji planera.
 - Dla minionych slotów dnia planer zakłada wykonanie własnego opublikowanego
   `heat_pump_window`; rzeczywiste odstępstwo pozostaje w analityce wykonania.
+- Miniony slot bez opublikowanego planu lub z `NULL` w `heat_pump_window`
+  nie daje zaliczenia ogrzewania. Planowanie trwa dalej, a brak jest zapisany
+  w audycie `hp_elapsed_plan_history_missing`. Nie zmienia to historii w bazie
+  ani ścisłej walidacji bieżących flag BUY/SELL/HP.
 - Energia HP jest dodawana do bilansu i targetu wyłącznie dla zakwalifikowanego
   profilu. HP może zwiększyć potrzebne ładowanie baterii, ale samo nie tworzy
   okna BUY.

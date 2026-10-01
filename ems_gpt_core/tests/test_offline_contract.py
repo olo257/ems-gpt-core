@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.14"', APP_SOURCE)
-        self.assertIn('version: "0.39.14"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.15"', APP_SOURCE)
+        self.assertIn('version: "0.39.15"', CONFIG)
 
     def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -549,8 +549,8 @@ class OfflineContractTests(unittest.TestCase):
         planner = MODULE_SOURCES["planner_service.py"]
         self.assertNotIn("ems_gpt_core_process_decisions", planner)
         self.assertNotIn("ems_gpt_core_process_overrides", planner)
-        self.assertIn("SELECT heat_pump_window FROM ems_gpt_slots", planner)
-        hp_history = planner[planner.index("SELECT heat_pump_window FROM ems_gpt_slots"):]
+        self.assertIn("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots", planner)
+        hp_history = planner[planner.index("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots"):]
         hp_history = hp_history[:hp_history.index("ORDER BY slot_start")]
         self.assertNotIn("actual_recorded_at", hp_history)
 
