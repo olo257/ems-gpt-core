@@ -18,8 +18,8 @@ class FakeModel:
         self.response = response
         self.calls = []
 
-    def complete(self, messages, max_tokens=1200):
-        self.calls.append((messages, max_tokens))
+    def complete(self, messages, max_tokens=1200, json_mode=False):
+        self.calls.append((messages, max_tokens, json_mode))
         return self.response
 
 
@@ -74,12 +74,32 @@ class AgentWorkerTests(unittest.TestCase):
         self.assertEqual(url, "http://llm/v1/chat/completions")
         self.assertEqual(kwargs["token"], "provider-key")
 
+    def test_chat_completions_client_requests_json_object_when_needed(self):
+        http = FakeHttp({"choices": [{"message": {"content": '{"summary":"ok","findings":[]}'} }]})
+        model = ChatCompletionsClient("http://llm/v1", "model", "key", http=http)
+        model.complete([{"role": "user", "content": "json"}], json_mode=True)
+        self.assertEqual(http.requests[0][2]["payload"]["response_format"], {"type": "json_object"})
+
     def test_supervisory_response_requires_structured_findings(self):
-        model = FakeModel(json.dumps({"summary": "Wszystko zgodne.", "findings": []}))
+        model = FakeModel("```json\n" + json.dumps({"summary": "Wszystko zgodne.", "findings": []}) + "\n```")
         context = {"completed_slots": [], "future_slots": [], "analytics_runs": []}
         result = supervisory_review(model, context)
         self.assertEqual(result, {"summary": "Wszystko zgodne.", "findings": []})
         self.assertIn("SHADOW_READ_ONLY", model.calls[0][0][0]["content"])
+        self.assertTrue(model.calls[0][2])
+
+    def test_supervisory_review_falls_back_when_provider_rejects_json_mode(self):
+        class JsonModeUnsupportedModel(FakeModel):
+            def complete(self, messages, max_tokens=1200, json_mode=False):
+                self.calls.append((messages, max_tokens, json_mode))
+                if json_mode:
+                    raise RuntimeError("HTTP_400")
+                return json.dumps({"summary": "Przegląd gotowy.", "findings": []})
+
+        model = JsonModeUnsupportedModel("")
+        result = supervisory_review(model, {"completed_slots": [], "future_slots": [], "analytics_runs": []})
+        self.assertEqual(result, {"summary": "Przegląd gotowy.", "findings": []})
+        self.assertEqual([call[2] for call in model.calls], [True, False])
 
     def test_periodic_analysis_is_saved_to_observer_once_per_analytics_run(self):
         context = {"history_days": 28, "completed_slots": [{"slot_start": "2026-09-29T12:00:00"}],
@@ -102,6 +122,7 @@ class AgentWorkerTests(unittest.TestCase):
         self.assertEqual(core.saved[0]["analysis_scope"]["completed_slots"], 1)
         self.assertEqual(core.saved[0]["findings"][0]["severity"], "CRITICAL")
         self.assertEqual(len(model.calls), 1)
+        self.assertTrue(model.calls[0][2])
 
 
 if __name__ == "__main__":

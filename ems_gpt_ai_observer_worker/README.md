@@ -19,8 +19,9 @@ repository. Configure and start it only after setting these values:
    `llm_api_key` only if that model endpoint requires a provider key. This is a
    separate credential from `agent_api_token`.
 4. Confirm `core_api_url` is the Core add-on's private network address and
-   enable the worker. The default is `http://9a3d0112_ems_gpt_core:8099`; the
-   hostname must resolve from the Supervisor add-on network.
+   enable the worker. The default is `http://9a3d0112-ems-gpt-core:8099`; the
+   hostname is the repository and add-on slug with underscores replaced by
+   hyphens, as required for Supervisor DNS.
 5. Start the worker add-on. It is manual-start by default and does not run
    merely because a token was saved.
 
