@@ -1,5 +1,5 @@
 name: EMS-GPT AI Observer Worker
-version: "0.1.0"
+version: "0.1.1"
 slug: ems_gpt_ai_observer_worker
 description: Worker LLM do okresowej analizy EMS i odpowiedzi w skrzynce agenta
 url: https://github.com/olo257/ems-gpt-core
@@ -10,7 +10,7 @@ boot: manual
 init: false
 options:
   enabled: false
-  core_api_url: http://9a3d0112_ems_gpt_core:8099
+  core_api_url: http://9a3d0112-ems-gpt-core:8099
   agent_api_token: ""
   agent_id: ems-analysis-agent
   llm_base_url: ""
