@@ -173,9 +173,12 @@ class ChatCompletionsClient:
         self.model, self.api_key, self.timeout = model, api_key, timeout
         self.http = http or JsonHttpClient(timeout=timeout)
 
-    def complete(self, messages: list[dict], max_tokens: int = 1200) -> str:
+    def complete(self, messages: list[dict], max_tokens: int = 1200,
+                 json_mode: bool = False) -> str:
         payload = {"model": self.model, "messages": messages, "max_tokens": max_tokens,
                    "temperature": 0.2}
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         # Use the same bounded HTTP helper; provider errors do not reveal response bodies.
         result = self.http.request("POST", self.url, token=self.api_key or None, payload=payload)
         choices = result.get("choices") or []
@@ -215,8 +218,22 @@ def supervisory_review(model: ChatCompletionsClient, context: dict) -> dict | No
               "pojedynczy slot nie uzasadnia stwierdzenia o trwałym błędzie. Nie wymyślaj danych ani encji. "
               "Gdy brak telemetrii, opisz brak danych jako finding WARNING. Nie dodawaj poleceń sterujących.\n\n"
               "Dane EMS (JSON):\n" + evidence)
-    raw = model.complete([{"role": "system", "content": SYSTEM_PROMPT},
-                          {"role": "user", "content": prompt}], max_tokens=1000)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}]
+    try:
+        raw = model.complete(messages, max_tokens=1000, json_mode=True)
+    except RuntimeError as exc:
+        # Keep compatibility with OpenAI-style providers that do not implement JSON mode.
+        if str(exc) != "HTTP_400":
+            raise
+        LOG.warning("model provider rejected JSON mode; retrying with the JSON-only prompt")
+        raw = model.complete(messages, max_tokens=1000)
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.removeprefix("```json").removeprefix("```JSON").removeprefix("```")
+        if raw.rstrip().endswith("```"):
+            raw = raw.rstrip()[:-3]
+        raw = raw.strip()
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
