@@ -98,6 +98,9 @@ def compact_context(context: dict) -> dict:
         "latest_completed_day_detail": recent_detail[-96:],
         "analytics_runs": context.get("analytics_runs", [])[:14],
         "observer_runs": context.get("observer_runs", [])[:14],
+        "todo_items": context.get("todo_items", [])[:25],
+        "todo_count": context.get("todo_count", 0),
+        "todo_source_of_truth": context.get("todo_source_of_truth", "ems_gpt_core_todo"),
     }
 
 
@@ -215,6 +218,8 @@ def supervisory_review(model: ChatCompletionsClient, context: dict) -> dict | No
               "Sprawdź przede wszystkim eksport/sprzedaż przy cenie <= 0, znaczące odchylenia "
               "PV i obciążenia, SOC końcowe wobec celu około 40%, oraz naruszenia polityk HP/CWU/EV. "
               "Oceń wszystkie podane dane historyczne, analitykę i Observera. Grupuj odchylenia po dniach; "
+              "analizuj także TODO ze statusem ACCEPTED jako zgłoszenia do oceny i ewentualnej propozycji "
+              "zmiany projektu; nie wdrażaj zmian. "
               "pojedynczy slot nie uzasadnia stwierdzenia o trwałym błędzie. Nie wymyślaj danych ani encji. "
               "Gdy brak telemetrii, opisz brak danych jako finding WARNING. Nie dodawaj poleceń sterujących.\n\n"
               "Dane EMS (JSON):\n" + evidence)

@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.16"', APP_SOURCE)
-        self.assertIn('version: "0.39.16"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.17"', APP_SOURCE)
+        self.assertIn('version: "0.39.17"', CONFIG)
 
     def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
         planner = MODULE_SOURCES["planner_service.py"]

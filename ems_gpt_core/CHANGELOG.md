@@ -5,6 +5,21 @@ Total output lines: 1585
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.17 — TODO dostępne w kontekście projektu
+
+- Konektor Core udostępnia filtrowanie listy TODO po statusie, w tym
+  `ACCEPTED`, aby czaty projektu mogły pobrać sugestie skierowane do analizy.
+- Read-only kontekst agenta zawiera do 25 TODO z opisem, dowodami, statusem
+  oraz notatką operatora. Szczegóły są ograniczone, aby utrzymać odpowiedź
+  w rozsądnym rozmiarze. Worker przekazuje je dalej do analizy.
+- `ems_gpt_core_todo` pozostaje jedynym źródłem prawdy; nie powstaje druga lista.
+  Akceptacja kieruje sugestię do analizy i ewentualnej propozycji zmiany
+  projektu. Nie uruchamia zmian Core, planera ani urządzeń.
+- Dokumentacja wskazuje ścieżkę konektora
+  `api/todo?status=ACCEPTED&limit=10` dla kolejnych czatów EMS-GPT.
+- Wersja Core: 0.39.17; Worker: 0.1.2. Dodano test filtra API oraz testy
+  obecności TODO w kontekście Core i workera.
+
 ## 0.39.16 — ciągłość prognozy PV przy zmianie miesiąca i awarii źródła
 
 - Prognoza slotowa używa kompletnego profilu bieżącego miesiąca lub,
