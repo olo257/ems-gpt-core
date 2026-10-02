@@ -11,7 +11,7 @@ METRIC_LABELS = {
     "pv1_forecast_underestimation_7d": "niedoszacowanie prognozy PV1 przez 7 dni",
     "pv2_forecast_underestimation_7d": "niedoszacowanie prognozy PV2 przez 7 dni",
     "load_forecast_underestimation_7d": "niedoszacowanie prognozy zużycia przez 7 dni",
-    "heat_pump_outside_window": "plan HP poza dozwolonym oknem",
+    "hp_heat_dhw_plan_outside_window": "zaplanowany tryb HP_HEAT_DHW poza oknem",
     "end_of_day_soc_below_target_range": "SOC na koniec doby poniżej oczekiwanego zakresu",
     "planned_end_soc_below_required": "planowany SOC poniżej wymaganego",
     "pv_wape_pct": "błąd prognozy PV (WAPE)",
