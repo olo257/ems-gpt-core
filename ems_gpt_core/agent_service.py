@@ -15,6 +15,8 @@ MAX_MESSAGE_CHARS = 4000
 MAX_REPLY_CHARS = 12000
 MAX_CONTEXT_ROWS = 96
 MAX_HISTORY_ROWS = 28 * 96
+MAX_TODO_CONTEXT_ROWS = 25
+MAX_TODO_DETAIL_CHARS = 1500
 _SLOT_CONTEXT_FIELDS = {
     "slot_start", "plan_run_id", "recommendation", "market_window",
     "price_buy_pln_kwh", "price_sell_pln_kwh", "forecast_pv1_kwh",
@@ -144,7 +146,7 @@ def submit_reply(message_id: str, agent_id: str, text: str, *, db, now: datetime
 
 def read_context(*, db, now: datetime, state: dict, state_lock=None,
                  limit: int = MAX_CONTEXT_ROWS) -> dict:
-    """Expose only planner, execution and analytics facts needed for review."""
+    """Expose bounded read-only project context, including the canonical Core TODO."""
     limit = max(1, min(MAX_CONTEXT_ROWS, int(limit)))
     current = now.replace(tzinfo=None)
     history_start = current - timedelta(days=28)
@@ -179,12 +181,24 @@ def read_context(*, db, now: datetime, state: dict, state_lock=None,
                FROM ems_gpt_core_ai_runs ORDER BY started_at DESC LIMIT 14"""
         )
         ai_runs = list(cur.fetchall())
+        cur.execute(
+            """SELECT todo_id,created_at,local_day,severity,module_name,title,details,
+                      status,source_ref,occurrence_count,consecutive_days,
+                      reviewed_at,reviewed_by,review_note
+               FROM ems_gpt_core_todo
+               WHERE status IN ('WATCHING','OPEN','SUGGESTED','ACCEPTED','REJECTED','RESOLVED')
+               ORDER BY CASE WHEN status='ACCEPTED' THEN 0
+                             WHEN status IN ('WATCHING','OPEN','SUGGESTED') THEN 1 ELSE 2 END,
+                        created_at DESC LIMIT %s""",
+            (MAX_TODO_CONTEXT_ROWS,),
+        )
+        todo_rows = list(cur.fetchall())
     with (state_lock or _NullLock()):
         modules = dict(state.get("modules") or {})
         module_details = dict(state.get("module_details") or {})
     return {
         "mode": "READ_ONLY_ANALYSIS",
-        "permissions": ["READ_PLAN", "READ_EXECUTION", "READ_ANALYTICS", "WRITE_AGENT_REPLY"],
+        "permissions": ["READ_PLAN", "READ_EXECUTION", "READ_ANALYTICS", "READ_TODO", "WRITE_AGENT_REPLY"],
         "forbidden": ["PLAN_WRITE", "PPD_WRITE", "COMMAND_WRITE", "HA_SERVICE_CALL", "SETTINGS_WRITE"],
         "current_state": {"modules": modules, "module_details": module_details},
         "future_slots": [{k: v for k, v in row.items() if k in _SLOT_CONTEXT_FIELDS}
@@ -194,6 +208,10 @@ def read_context(*, db, now: datetime, state: dict, state_lock=None,
         "history_days": 28,
         "analytics_runs": analytics,
         "observer_runs": ai_runs,
+        "todo_items": [{**row, "details": str(row.get("details") or "")[:MAX_TODO_DETAIL_CHARS]}
+                       for row in todo_rows],
+        "todo_count": len(todo_rows),
+        "todo_source_of_truth": "ems_gpt_core_todo",
     }
 
 
