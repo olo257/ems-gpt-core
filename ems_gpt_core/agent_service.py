@@ -14,7 +14,7 @@ from typing import Any
 MAX_MESSAGE_CHARS = 4000
 MAX_REPLY_CHARS = 12000
 MAX_CONTEXT_ROWS = 96
-MAX_HISTORY_ROWS = 28 * 96
+MAX_HISTORY_DAYS = 28
 MAX_TODO_CONTEXT_ROWS = 25
 MAX_TODO_DETAIL_CHARS = 1500
 _SLOT_CONTEXT_FIELDS = {
@@ -145,11 +145,13 @@ def submit_reply(message_id: str, agent_id: str, text: str, *, db, now: datetime
 
 
 def read_context(*, db, now: datetime, state: dict, state_lock=None,
-                 limit: int = MAX_CONTEXT_ROWS) -> dict:
+                 limit: int = MAX_CONTEXT_ROWS, history_days: int = MAX_HISTORY_DAYS) -> dict:
     """Expose bounded read-only project context, including the canonical Core TODO."""
     limit = max(1, min(MAX_CONTEXT_ROWS, int(limit)))
+    history_days = max(1, min(MAX_HISTORY_DAYS, int(history_days)))
+    history_limit = history_days * 96
     current = now.replace(tzinfo=None)
-    history_start = current - timedelta(days=28)
+    history_start = current - timedelta(days=history_days)
     with db() as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT * FROM ems_gpt_slots WHERE actual_recorded_at IS NULL
@@ -165,7 +167,7 @@ def read_context(*, db, now: datetime, state: dict, state_lock=None,
                LEFT JOIN ems_gpt_core_execution_details d ON d.slot_start=s.slot_start
                WHERE s.actual_recorded_at IS NOT NULL AND s.slot_start >= %s
                ORDER BY s.slot_start DESC LIMIT %s""",
-            (history_start, MAX_HISTORY_ROWS),
+            (history_start, history_limit),
         )
         history = list(cur.fetchall())
         cur.execute(
@@ -205,7 +207,7 @@ def read_context(*, db, now: datetime, state: dict, state_lock=None,
                          for row in future],
         "completed_slots": [{k: v for k, v in row.items() if k in _SLOT_CONTEXT_FIELDS}
                             for row in history],
-        "history_days": 28,
+        "history_days": history_days,
         "analytics_runs": analytics,
         "observer_runs": ai_runs,
         "todo_items": [{**row, "details": str(row.get("details") or "")[:MAX_TODO_DETAIL_CHARS]}

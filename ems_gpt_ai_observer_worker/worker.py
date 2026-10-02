@@ -37,9 +37,53 @@ def _iso_day(value: Any) -> str | None:
         return None
 
 
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _watermark_key(row: dict) -> tuple[datetime, datetime] | None:
+    slot = _parse_datetime(row.get("slot_start"))
+    recorded = _parse_datetime(row.get("actual_recorded_at")) or slot
+    return (recorded, slot) if recorded is not None and slot is not None else None
+
+
+def _watermark_payload(rows: list[dict]) -> dict | None:
+    candidates = [(key, row) for row in rows if (key := _watermark_key(row)) is not None]
+    if not candidates:
+        return None
+    key, row = max(candidates, key=lambda item: item[0])
+    recorded = _parse_datetime(row.get("actual_recorded_at")) or key[0]
+    slot = _parse_datetime(row.get("slot_start")) or key[1]
+    return {"actual_recorded_at": recorded.isoformat(), "slot_start": slot.isoformat()}
+
+
+def _new_completed_slots(rows: list[dict], watermark: dict | None) -> list[dict]:
+    if not watermark:
+        return rows
+    cutoff = _watermark_key(watermark)
+    if cutoff is None:
+        return rows
+    return [row for row in rows
+            if (key := _watermark_key(row)) is not None and key > cutoff]
+
+
 def compact_context(context: dict) -> dict:
-    """Keep all 28-day evidence as daily aggregates plus the latest 96 slots."""
+    """Keep bounded history as daily aggregates and expose new slots separately."""
     completed = context.get("completed_slots") or []
+    new_completed = context.get("new_completed_slots")
+    fresh_slot_starts = ({str(row.get("slot_start")) for row in new_completed}
+                         if new_completed is not None else None)
     buckets: dict[str, dict] = defaultdict(lambda: {"slots": 0, "sums": defaultdict(float), "counts": defaultdict(int), "flags": []})
     sum_fields = (
         "forecast_pv1_kwh", "actual_pv1_kwh", "forecast_pv2_kwh", "actual_pv2_kwh",
@@ -70,7 +114,9 @@ def compact_context(context: dict) -> dict:
         sell_price = row.get("price_sell_pln_kwh")
         exported = row.get("actual_grid_export_kwh") or 0
         planned_sell = row.get("planned_sell_kwh") or 0
-        if isinstance(sell_price, (int, float)) and sell_price <= 0 and (exported > 0 or planned_sell > 0):
+        is_new = fresh_slot_starts is None or str(row.get("slot_start")) in fresh_slot_starts
+        if (is_new and isinstance(sell_price, (int, float)) and sell_price <= 0
+                and (exported > 0 or planned_sell > 0)):
             bucket["flags"].append({"slot_start": row.get("slot_start"), "sell_price_pln_kwh": sell_price,
                                     "planned_sell_kwh": planned_sell, "actual_grid_export_kwh": exported})
         latest_by_day[day] = row
@@ -85,8 +131,11 @@ def compact_context(context: dict) -> dict:
             "soc_end_pct": bucket.get("soc_end_pct"),
             "nonpositive_price_export_slots": bucket["flags"],
         })
-    recent_days = sorted(latest_by_day)[-1:]
-    recent_detail = [row for row in completed if _iso_day(row.get("slot_start")) in recent_days]
+    if new_completed is not None:
+        recent_detail = new_completed
+    else:
+        recent_days = sorted(latest_by_day)[-1:]
+        recent_detail = [row for row in completed if _iso_day(row.get("slot_start")) in recent_days]
     return {
         "mode": context.get("mode"),
         "permissions": context.get("permissions", []),
@@ -96,6 +145,7 @@ def compact_context(context: dict) -> dict:
         "history_days": context.get("history_days", 28),
         "history_daily_aggregates": daily,
         "latest_completed_day_detail": recent_detail[-96:],
+        "new_completed_slots": (new_completed or [])[-96:] if new_completed is not None else None,
         "analytics_runs": context.get("analytics_runs", [])[:14],
         "observer_runs": context.get("observer_runs", [])[:14],
         "todo_items": context.get("todo_items", [])[:25],
@@ -155,8 +205,9 @@ class CoreClient:
     def inbox(self) -> list[dict]:
         return self._request("GET", "/api/agent/inbox?limit=1").get("rows", [])
 
-    def context(self) -> dict:
-        return self._request("GET", "/api/agent/context")
+    def context(self, history_days: int = 28) -> dict:
+        days = max(1, min(28, int(history_days)))
+        return self._request("GET", f"/api/agent/context?history_days={days}")
 
     def reply(self, message_id: str, text: str) -> dict:
         return self._request("POST", "/api/agent/reply", {"message_id": message_id, "message": text})
@@ -209,7 +260,11 @@ def answer_question(model: ChatCompletionsClient, question: str, context: dict) 
 
 def supervisory_review(model: ChatCompletionsClient, context: dict) -> dict | None:
     evidence = _context_json(context)
-    prompt = ("Wykonaj okresowy przegląd nadzorczy danych EMS. Zwróć wyłącznie obiekt JSON: "
+    prompt = ("Wykonaj okresowy przegląd nadzorczy danych EMS. Historia szczegółowa obejmuje maksymalnie 7 dni. "
+              "Twórz nowe ustalenia dla zdarzeń historycznych tylko na podstawie `new_completed_slots`; "
+              "agregaty 7-dniowe służą do oceny trendu, a nie do ponownego zgłaszania tych samych zdarzeń. "
+              "Uwzględnij wcześniejsze przebiegi Observera i nie powtarzaj zamkniętych ustaleń bez nowego dowodu. "
+              "Zwróć wyłącznie obiekt JSON: "
               '{"summary":"krótki wynik analizy","findings":[]} gdy nie ma problemów albo '
               '{"summary":"...","findings":[{"metric":"...","title":"...",'
               '"severity":"INFO|WARNING|CRITICAL","error":"co jest nie tak i jaki próg przekroczono",'
@@ -298,7 +353,7 @@ class AgentWorker:
         if not self.supervision_interval or now - self.last_supervision < self.supervision_interval:
             return False
         self.last_supervision = now
-        context = self.core.context()
+        context = self.core.context(history_days=7)
         analytics = context.get("analytics_runs") or []
         latest = next((row for row in analytics
                        if row.get("status") == "COMPLETED" and row.get("run_id")), None)
@@ -308,6 +363,10 @@ class AgentWorker:
         source_ref = latest["run_id"]
         if self.state.get("last_supervision_source_ref") == source_ref:
             return False
+        context["new_completed_slots"] = _new_completed_slots(
+            context.get("completed_slots") or [],
+            self.state.get("last_supervision_history_watermark"),
+        )
         result = supervisory_review(self.model, context)
         if result is None:
             return False
@@ -316,8 +375,9 @@ class AgentWorker:
             "summary": result["summary"],
             "findings": result["findings"],
             "analysis_scope": {
-                "history_days": context.get("history_days", 28),
+                "history_days": context.get("history_days", 7),
                 "completed_slots": len(context.get("completed_slots") or []),
+                "new_completed_slots": len(context.get("new_completed_slots") or []),
                 "future_slots": len(context.get("future_slots") or []),
                 "analytics_run_id": source_ref,
                 "checks": ["plan_vs_execution", "PV1/PV2/load_forecast", "export_economics",
@@ -330,6 +390,9 @@ class AgentWorker:
             raise RuntimeError("OBSERVER_RESULT_NOT_ACCEPTED")
         self.state["last_supervision_source_ref"] = source_ref
         self.state["last_supervision_result"] = submitted.get("run_id")
+        watermark = _watermark_payload(context.get("completed_slots") or [])
+        if watermark:
+            self.state["last_supervision_history_watermark"] = watermark
         self._save_state()
         LOG.info("saved background analysis to AI Observer run %s", submitted.get("run_id"))
         return True

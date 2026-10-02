@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ems_gpt_ai_observer_worker"))
 
-from worker import AgentWorker, ChatCompletionsClient, compact_context, supervisory_review
+from worker import (AgentWorker, ChatCompletionsClient, compact_context,
+                    supervisory_review, _new_completed_slots)
 
 
 class FakeModel:
@@ -27,8 +28,10 @@ class FakeCore:
     def __init__(self, context):
         self._context = context
         self.saved = []
+        self.context_days = []
 
-    def context(self):
+    def context(self, history_days=28):
+        self.context_days.append(history_days)
         return self._context
 
     def submit_observer_result(self, payload):
@@ -49,7 +52,7 @@ class FakeHttp:
 class AgentWorkerTests(unittest.TestCase):
     def test_context_compaction_preserves_daily_and_current_slot_evidence(self):
         context = {
-            "mode": "READ_ONLY_ANALYSIS", "history_days": 28,
+            "mode": "READ_ONLY_ANALYSIS", "history_days": 7,
             "completed_slots": [
                 {"slot_start": datetime(2026, 9, 28, 12), "forecast_pv_total_kwh": 1.0,
                  "actual_pv_total_kwh": 2.0, "price_sell_pln_kwh": 0.0, "planned_sell_kwh": .1},
@@ -106,7 +109,7 @@ class AgentWorkerTests(unittest.TestCase):
         self.assertEqual([call[2] for call in model.calls], [True, False])
 
     def test_periodic_analysis_is_saved_to_observer_once_per_analytics_run(self):
-        context = {"history_days": 28, "completed_slots": [{"slot_start": "2026-09-29T12:00:00"}],
+        context = {"history_days": 7, "completed_slots": [{"slot_start": "2026-09-29T12:00:00"}],
                    "future_slots": [{}], "analytics_runs": [{"run_id": "analytics-1", "status": "COMPLETED"}]}
         core = FakeCore(context)
         model = FakeModel(json.dumps({"summary": "Wykryto błąd eksportu.", "findings": [
@@ -127,6 +130,18 @@ class AgentWorkerTests(unittest.TestCase):
         self.assertEqual(core.saved[0]["findings"][0]["severity"], "CRITICAL")
         self.assertEqual(len(model.calls), 1)
         self.assertTrue(model.calls[0][2])
+        self.assertEqual(core.context_days, [7, 7])
+        self.assertEqual(core.saved[0]["analysis_scope"]["history_days"], 7)
+        self.assertEqual(core.saved[0]["analysis_scope"]["new_completed_slots"], 1)
+
+    def test_history_watermark_excludes_previously_reviewed_slots(self):
+        watermark = {"actual_recorded_at": "2026-10-01T12:05:00",
+                     "slot_start": "2026-10-01T12:00:00"}
+        rows = [
+            {"slot_start": "2026-10-01T12:00:00", "actual_recorded_at": "2026-10-01T12:05:00"},
+            {"slot_start": "2026-10-01T12:15:00", "actual_recorded_at": "2026-10-01T12:20:00"},
+        ]
+        self.assertEqual(_new_completed_slots(rows, watermark), [rows[1]])
 
 
 if __name__ == "__main__":

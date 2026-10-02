@@ -198,7 +198,14 @@ def build_handler(a: ApiAdapters):
             if path.endswith("/api/agent/context") or path == "/api/agent/context":
                 if not self.agent_authorized():
                     return self.json({"error": "agent_auth_required"}, HTTPStatus.UNAUTHORIZED)
-                return self.json(agent_read_context(96))
+                params = parse_qs(urlparse(self.path).query)
+                try:
+                    history_days = int(params.get("history_days", ["28"])[0])
+                except (TypeError, ValueError):
+                    return self.json({"error": "invalid_history_days"}, HTTPStatus.BAD_REQUEST)
+                if not 1 <= history_days <= 28:
+                    return self.json({"error": "invalid_history_days"}, HTTPStatus.BAD_REQUEST)
+                return self.json(agent_read_context(96, history_days))
             if path.endswith("/api/database-audit") or path == "/api/database-audit":
                 try:
                     return self.json(database_audit())

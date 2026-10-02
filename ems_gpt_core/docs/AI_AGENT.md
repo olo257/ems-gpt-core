@@ -48,16 +48,18 @@ not the browser ingress URL.
 
 1. `GET /api/agent/inbox?limit=5` claims pending operator messages. Claims
    expire after ten minutes so a worker restart does not strand a question.
-2. `GET /api/agent/context` reads up to 96 future slots and the last 28 days of
-   completed slots (up to 2,688), plus recent analytics and Observer runs. The payload includes the explicit
+2. `GET /api/agent/context` reads up to 96 future slots and, by default, the
+   last 28 days of completed slots (up to 2,688), plus recent analytics and
+   Observer runs. An authenticated caller may request `?history_days=7` for a
+   shorter window; accepted values are 1–28. The payload includes the explicit
    forbidden-operation list.
 3. Analyze the question against this evidence. Cite slot timestamps and run
    identifiers in the reply; state when the available measurements do not
    support a conclusion.
 4. `POST /api/agent/reply` with JSON `{"message_id":"...","message":"..."}`
    writes the answer. The claimed message ID and worker ID must match.
-5. For scheduled analysis, the worker reviews a new completed analytics run
-   only once and submits structured findings to the authenticated
+5. For scheduled analysis, the worker requests a seven-day context, reviews a
+   new completed analytics run only once, and submits structured findings to the authenticated
    `POST /api/agent/observer-result` endpoint. Core validates the source run and
    findings, then stores an Observer run and detailed TODOs. This endpoint
    cannot change plans or controls.
