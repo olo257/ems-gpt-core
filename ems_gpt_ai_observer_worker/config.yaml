@@ -1,5 +1,5 @@
 name: EMS-GPT AI Observer Worker
-version: "0.1.4"
+version: "0.1.5"
 slug: ems_gpt_ai_observer_worker
 description: Worker LLM do okresowej analizy EMS i odpowiedzi w skrzynce agenta
 url: https://github.com/olo257/ems-gpt-core
