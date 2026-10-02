@@ -9,6 +9,10 @@ must be configured separately.
 ## Safety boundary
 
 - The agent context endpoint is read-only and caps each slot list at 96 rows.
+- The same endpoint includes up to 25 recent Core TODO items, including
+  accepted/rejected status and operator notes. TODO remains in
+  `ems_gpt_core_todo`, the single source of truth; chats and workers read it
+  without copying it into a second list.
 - The only agent write endpoint creates an answer to an operator message that
   the same agent previously claimed.
 - Agent code has no adapter to the planner, PPD, executor, Home Assistant
@@ -18,6 +22,16 @@ must be configured separately.
   all worker endpoints.
 - Operator messages are available only through the authenticated Home
   Assistant ingress UI.
+
+## EMS-GPT project chats
+
+At the start of a TODO review, a project chat can read the current list through
+the EMS-HASS connector using the Core app API path
+`api/todo?status=ACCEPTED&limit=10` (GET) to find suggestions the operator has
+directed to project analysis. Read the full `details`, evidence, and review
+note before proposing a change. Acceptance requests analysis; it
+does not authorize automatic planner, device, or Core changes. The chat should
+report the analysis and prepare any code change for review separately.
 
 ## Worker flow
 
