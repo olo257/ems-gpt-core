@@ -239,6 +239,20 @@ def build_handler(a: ApiAdapters):
                 name=path.rsplit("/",1)[-1]; params=parse_qs(urlparse(self.path).query); limit=min(500,max(1,int(params.get("limit",["96"])[0])))
                 if name == "plan":
                     limit = 500
+                if name == "todo":
+                    requested_status = params.get("status", [None])[0]
+                    if requested_status:
+                        requested_status = requested_status.upper()
+                        allowed_statuses = {"WATCHING", "OPEN", "SUGGESTED", "ACCEPTED",
+                                            "REJECTED", "RESOLVED", "ARCHIVED"}
+                        if requested_status not in allowed_statuses:
+                            return self.json({"error": "invalid_todo_status"}, HTTPStatus.BAD_REQUEST)
+                        queries_todo = ("SELECT * FROM ems_gpt_core_todo WHERE status=%s "
+                                        "ORDER BY created_at DESC LIMIT %s",
+                                        (requested_status, limit))
+                    else:
+                        queries_todo = ("SELECT * FROM ems_gpt_core_todo ORDER BY created_at DESC LIMIT %s",
+                                        (limit,))
                 queries={
                   "plan":("SELECT * FROM ems_gpt_slots WHERE actual_recorded_at IS NULL AND slot_start>=%s ORDER BY slot_start LIMIT %s",(slot_start().replace(tzinfo=None),limit)),
                   "execution":("""SELECT s.*,d.actual_grid_export_kwh,d.actual_ev_kwh,d.actual_dhw_kwh,
@@ -279,7 +293,8 @@ def build_handler(a: ApiAdapters):
                   "overrides":("SELECT * FROM ems_gpt_core_process_overrides ORDER BY requested_at DESC LIMIT %s",(limit,)),
                   "commands":("SELECT * FROM ems_gpt_core_commands ORDER BY created_at DESC LIMIT %s",(limit,)),
                   "process-execution":("SELECT * FROM ems_gpt_core_process_execution ORDER BY recorded_at DESC LIMIT %s",(limit,)),
-                  "todo":("SELECT * FROM ems_gpt_core_todo ORDER BY created_at DESC LIMIT %s",(limit,)),
+                  "todo":queries_todo if name == "todo" else
+                         ("SELECT * FROM ems_gpt_core_todo ORDER BY created_at DESC LIMIT %s",(limit,)),
                   "ai-runs":("SELECT * FROM ems_gpt_core_ai_runs ORDER BY started_at DESC LIMIT %s",(limit,)),
                   "appliances":("SELECT * FROM ems_gpt_core_appliance_daily ORDER BY local_day DESC,appliance_name LIMIT %s",(limit,)),
                 }
