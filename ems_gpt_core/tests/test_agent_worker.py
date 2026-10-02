@@ -24,6 +24,16 @@ class FakeModel:
         return self.response
 
 
+class SequenceModel(FakeModel):
+    def __init__(self, responses):
+        super().__init__("")
+        self.responses = list(responses)
+
+    def complete(self, messages, max_tokens=1200, json_mode=False):
+        self.calls.append((messages, max_tokens, json_mode))
+        return self.responses.pop(0)
+
+
 class FakeCore:
     def __init__(self, context):
         self._context = context
@@ -94,6 +104,24 @@ class AgentWorkerTests(unittest.TestCase):
         self.assertEqual(result, {"summary": "Wszystko zgodne.", "findings": []})
         self.assertIn("SHADOW_READ_ONLY", model.calls[0][0][0]["content"])
         self.assertTrue(model.calls[0][2])
+
+    def test_supervisory_review_repairs_malformed_json_once(self):
+        model = SequenceModel([
+            '{"summary":"Eksport wykryty", "findings":[}',
+            json.dumps({"summary": "Eksport wykryty", "findings": []}),
+        ])
+        result = supervisory_review(model, {"completed_slots": [], "future_slots": [], "analytics_runs": []})
+        self.assertEqual(result, {"summary": "Eksport wykryty", "findings": []})
+        self.assertEqual(len(model.calls), 2)
+        self.assertTrue(model.calls[0][2])
+        self.assertTrue(model.calls[1][2])
+        self.assertIn("Popraw odpowiedź Observera", model.calls[1][0][1]["content"])
+
+    def test_supervisory_review_reports_invalid_json_after_single_repair(self):
+        model = SequenceModel(["not json", "still not json"])
+        result = supervisory_review(model, {"completed_slots": [], "future_slots": [], "analytics_runs": []})
+        self.assertIsNone(result)
+        self.assertEqual(len(model.calls), 2)
 
     def test_supervisory_review_falls_back_when_provider_rejects_json_mode(self):
         class JsonModeUnsupportedModel(FakeModel):

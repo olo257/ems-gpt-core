@@ -5,6 +5,16 @@ Total output lines: 1585
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## AI Observer Worker 0.1.4 — naprawa niepoprawnego JSON
+
+- Gdy model zwróci niepoprawny JSON albo odpowiedź niezgodną z kontraktem,
+  worker wykonuje jedną próbę naprawy formatu i ponownie waliduje wynik.
+- Niepoprawna odpowiedź nie jest wykonywana ani zapisywana do Observera.
+  Po nieudanej naprawie worker zapisuje w logu przyczynę walidacji; kolejny
+  cykl może ponowić analizę, ponieważ watermark nie jest przesuwany.
+- Dodano testy udanej i nieudanej naprawy odpowiedzi.
+- Wersja Core pozostaje 0.39.18; wersja workera: 0.1.4.
+
 ## 0.39.18 — siedmiodniowa analiza Observera
 
 - Observer Core pobiera maksymalnie 7 dni historii. Przeglądy zdarzeń obejmują
