@@ -47,12 +47,14 @@ repository. Configure and start it only after setting these values:
 | `EMS_AGENT_STATE_PATH` | `/data/agent-worker-state.json` | Persistent marker preventing duplicate model runs for the same analytics run. Mount `/data` to persistent storage. |
 
 The Core produces analytics at most about once every 50 minutes. The worker
-uses each completed analytics run once, reads up to 28 days of completed slots
-and 96 future slots, compacts older history into daily evidence, and creates an
-Observer run even when no finding needs a TODO. Critical findings create an
-immediate `OPEN` TODO; recurring warnings follow the existing three-day
-Observer lifecycle. Operator questions can still be handled by the mailbox,
-but autonomous findings are written to **AI Observer** and **TODO**, not chat.
+uses each completed analytics run once, reads up to 7 days of completed slots
+and 96 future slots, and keeps a persisted watermark so already-reviewed
+historical slots are context rather than new incidents. Seven-day aggregates
+remain available for trend checks. It creates an Observer run even when no
+finding needs a TODO. Critical findings create an immediate `OPEN` TODO;
+recurring warnings follow the existing three-day Observer lifecycle. Operator
+questions can still use the default 28-day mailbox context. Autonomous
+findings are written to **AI Observer** and **TODO**, not chat.
 
 ## Build and start
 

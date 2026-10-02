@@ -38,6 +38,15 @@ class ObserverOperationalAuditTests(unittest.TestCase):
         findings, _ = audit_operational_rows(rows, [], options=self.options)
         self.assertFalse(any(item["metric"] == "import_outside_buy_window" for item in findings))
 
+    def test_old_historical_incident_is_not_reissued_without_new_slot_evidence(self):
+        rows = [{"slot_start": datetime(2026, 9, 29, 3), "market_window": "NEUTRAL",
+                 "actual_buy_kwh": 0.3, "planned_buy_kwh": 0}]
+        findings, summary = audit_operational_rows(
+            rows, [], options=self.options, incident_rows=[])
+        self.assertFalse(any(item["metric"] == "import_outside_buy_window" for item in findings))
+        self.assertEqual(summary["audited_history_slots"], 1)
+        self.assertEqual(summary["audited_new_history_slots"], 0)
+
     def test_pv_underforecast_requires_repeated_daily_evidence(self):
         rows = []
         for day in range(3):

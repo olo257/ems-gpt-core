@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from observer_details import format_observer_todo, metric_label
 
@@ -30,9 +30,33 @@ def _day(value):
     return None
 
 
-def audit_operational_rows(history_rows, future_rows, *, options):
+def _history_key(row):
+    recorded = row.get("actual_recorded_at")
+    slot = row.get("slot_start")
+    if isinstance(recorded, str):
+        try:
+            recorded = datetime.fromisoformat(recorded.replace("Z", "+00:00"))
+        except ValueError:
+            recorded = None
+    if isinstance(slot, str):
+        try:
+            slot = datetime.fromisoformat(slot.replace("Z", "+00:00"))
+        except ValueError:
+            slot = None
+    recorded = recorded or slot
+    if not isinstance(recorded, datetime) or not isinstance(slot, datetime):
+        return None
+    if recorded.tzinfo is not None:
+        recorded = recorded.astimezone(timezone.utc).replace(tzinfo=None)
+    if slot.tzinfo is not None:
+        slot = slot.astimezone(timezone.utc).replace(tzinfo=None)
+    return recorded, slot
+
+
+def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=None):
     """Build evidence-based, read-only checks from plans and slot execution."""
     suggestions = []
+    incident_rows = history_rows if incident_rows is None else incident_rows
 
     def add(metric, value, threshold, severity, suggestion, evidence):
         suggestions.append({"metric": metric, "value": value, "threshold": threshold,
@@ -41,7 +65,7 @@ def audit_operational_rows(history_rows, future_rows, *, options):
 
     zero_price = []
     immediate_zero_price = False
-    for row in [*history_rows, *future_rows]:
+    for row in [*incident_rows, *future_rows]:
         price = _number(row.get("price_sell_pln_kwh"))
         if price is None or price > 0:
             continue
@@ -64,7 +88,7 @@ def audit_operational_rows(history_rows, future_rows, *, options):
             zero_price[:12])
 
     threshold_kwh = max(0.0, float(options.get("technical_flow_threshold_kwh", 0.05)))
-    off_window_buys = [row for row in history_rows
+    off_window_buys = [row for row in incident_rows
                        if str(row.get("market_window") or "").upper() != "BUY"
                        and (_number(row.get("actual_buy_kwh"), 0) or 0) > threshold_kwh]
     if off_window_buys:
@@ -133,7 +157,7 @@ def audit_operational_rows(history_rows, future_rows, *, options):
                  "forecast_kwh": round(forecasts, 3), "actual_kwh": round(actuals, 3)})
 
     hp_outside = []
-    for row in [*history_rows, *future_rows]:
+    for row in [*incident_rows, *future_rows]:
         hp = _number(row.get("forecast_heat_pump_load_kwh"), 0) or 0
         slot = row.get("slot_start")
         if hp <= 0.02 or not isinstance(slot, datetime):
@@ -148,7 +172,7 @@ def audit_operational_rows(history_rows, future_rows, *, options):
             hp_outside[:12])
 
     completed_days = defaultdict(list)
-    for row in history_rows:
+    for row in incident_rows:
         day = _day(row.get("slot_start"))
         if day:
             completed_days[day].append(row)
@@ -189,6 +213,7 @@ def audit_operational_rows(history_rows, future_rows, *, options):
     return suggestions, {"pv_forecast_7d_bias_pct": None if pv_under_pct is None else round(pv_under_pct, 2),
                          "pv_underestimated_days_7d": len(under_days),
                          "audited_history_slots": len(history_rows),
+                         "audited_new_history_slots": len(incident_rows),
                          "audited_future_slots": len(future_rows)}
 
 
@@ -209,7 +234,22 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
         existing = cur.fetchone()
         if existing:
             return {"status": existing["status"], "run_id": existing["run_id"], "source_ref": source_ref, "deduplicated": True}
-        cur.execute("""SELECT s.slot_start,s.market_window,s.price_sell_pln_kwh,
+        cur.execute("""SELECT prompt_json FROM ems_gpt_core_ai_runs
+          WHERE role_name='EMS_OBSERVER' AND status='COMPLETED'
+          ORDER BY completed_at DESC LIMIT 1""")
+        previous_run = cur.fetchone()
+        previous_watermark = None
+        if previous_run:
+            try:
+                previous_prompt = previous_run.get("prompt_json")
+                if isinstance(previous_prompt, (bytes, bytearray)):
+                    previous_prompt = previous_prompt.decode("utf-8")
+                if isinstance(previous_prompt, str):
+                    previous_prompt = json.loads(previous_prompt)
+                previous_watermark = (previous_prompt or {}).get("analysis_scope", {}).get("history_watermark")
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                previous_watermark = None
+        cur.execute("""SELECT s.slot_start,s.actual_recorded_at,s.market_window,s.price_sell_pln_kwh,
           s.forecast_pv1_kwh,s.forecast_pv2_kwh,s.forecast_pv_total_kwh,s.actual_pv1_kwh,
           s.actual_pv2_kwh,s.actual_pv_total_kwh,s.forecast_load_kwh,s.actual_load_kwh,
           s.planned_buy_kwh,s.actual_buy_kwh,s.planned_sell_kwh,s.actual_sell_kwh,
@@ -217,18 +257,33 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
           s.heat_pump_window,s.soc_end_plan_pct,s.soc_required_pct,
           d.actual_grid_export_kwh,d.soc_start_pct,d.soc_delta_pct,d.soc_min_pct,d.coverage_pct
           FROM ems_gpt_slots s LEFT JOIN ems_gpt_core_execution_details d ON d.slot_start=s.slot_start
-          WHERE s.actual_recorded_at IS NOT NULL AND s.slot_start>=DATE_SUB(NOW(6),INTERVAL 28 DAY)
+          WHERE s.actual_recorded_at IS NOT NULL AND s.slot_start>=DATE_SUB(NOW(6),INTERVAL 7 DAY)
           ORDER BY s.slot_start""")
         history_rows = list(cur.fetchall())
+        if previous_watermark:
+            cutoff = _history_key(previous_watermark)
+            new_history_rows = [row for row in history_rows
+                                if (key := _history_key(row)) is not None and key > cutoff]
+        else:
+            new_history_rows = history_rows
         cur.execute("""SELECT slot_start,market_window,price_sell_pln_kwh,planned_sell_kwh,
           planned_pv_export_kwh,forecast_heat_pump_load_kwh,heat_pump_window,
           soc_end_plan_pct,soc_required_pct
           FROM ems_gpt_slots WHERE actual_recorded_at IS NULL AND slot_start>=NOW(6)
           ORDER BY slot_start LIMIT 96""")
         future_rows = list(cur.fetchall())
+        watermark_row = max(history_rows, key=lambda row: _history_key(row) or (datetime.min, datetime.min),
+                            default=None)
+        watermark = None
+        if watermark_row:
+            watermark_key = _history_key(watermark_row)
+            watermark = {"actual_recorded_at": watermark_key[0].isoformat(),
+                         "slot_start": watermark_key[1].isoformat()}
         prompt = {"contract": "EMS_AI_OBSERVER_0_39_12", "mode": "SHADOW_READ_ONLY",
                   "forbidden": ["PLAN_WRITE", "PPD_WRITE", "COMMAND_WRITE", "HA_SERVICE_CALL"],
-                  "analysis_scope": {"history_days": 28, "history_slots": len(history_rows),
+                  "analysis_scope": {"history_days": 7, "history_slots": len(history_rows),
+                                     "new_history_slots": len(new_history_rows),
+                                     "history_watermark": watermark,
                                      "future_slots": len(future_rows),
                                      "checks": ["plan_vs_execution", "PV_forecast_bias_by_series",
                                                 "export_price_floor", "import_window", "HP_window",
@@ -257,7 +312,7 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
                                 "threshold": quality_threshold, "severity": "WARNING",
                                 "suggestion": "Nie używaj tego przebiegu do uczenia; popraw kompletność telemetrii."})
         operational_suggestions, operational_summary = audit_operational_rows(
-            history_rows, future_rows, options=options)
+            history_rows, future_rows, options=options, incident_rows=new_history_rows)
         prompt["operational_audit_summary"] = operational_summary
         suggestions.extend(operational_suggestions)
         decision = "WATCH" if suggestions else "ACCEPT"
@@ -275,8 +330,8 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
     active_titles = []
     todo_scope = {
         "source_analytics_run_id": source_ref,
-        "history_days": 28,
-        "completed_slots_analyzed": operational_summary["audited_history_slots"],
+        "history_days": 7,
+        "completed_slots_analyzed": operational_summary["audited_new_history_slots"],
         "future_slots_analyzed": operational_summary["audited_future_slots"],
         "areas": ["plan i wykonanie", "prognoza PV1/PV2 i zużycia",
                   "ceny i eksport", "okna importu", "okno HP", "SOC końcowy"],

@@ -54,6 +54,7 @@ class AgentApiAuthTests(unittest.TestCase):
         self.claimed = []
         self.observer_results = []
         self.db = TodoDatabase()
+        self.context_requests = []
         adapters = ApiAdapters(
             app_name="EMS-GPT Core", app_version="test", state={}, lock=RLock(),
             log=logging.getLogger("agent-api-test"), db=self.db,
@@ -70,7 +71,8 @@ class AgentApiAuthTests(unittest.TestCase):
             slot_column_audit=lambda: {}, html="", agent_api_token="secret-test-token",
             agent_list_messages=lambda *_: [],
             agent_claim_messages=lambda agent_id, limit: self.claimed.append(agent_id) or [],
-            agent_read_context=lambda *_: {"mode": "READ_ONLY_ANALYSIS"},
+            agent_read_context=lambda limit, history_days: self.context_requests.append(
+                (limit, history_days)) or {"mode": "READ_ONLY_ANALYSIS", "history_days": history_days},
             agent_submit_reply=lambda *_: {}, agent_submit_message=lambda *_: {},
             agent_submit_observer_result=lambda agent_id, payload: self.observer_results.append(
                 (agent_id, payload)) or {"status": "COMPLETED", "run_id": "observer-run-1"},
@@ -101,6 +103,23 @@ class AgentApiAuthTests(unittest.TestCase):
         with urlopen(req, timeout=2) as response:
             self.assertEqual(response.status, 200)
             self.assertIn(b"READ_ONLY_ANALYSIS", response.read())
+        self.assertEqual(self.context_requests, [(96, 28)])
+
+    def test_authenticated_worker_can_request_seven_day_context(self):
+        req = Request(self.base + "/api/agent/context?history_days=7",
+                      headers={"Authorization": "Bearer secret-test-token"})
+        with urlopen(req, timeout=2) as response:
+            payload = json.loads(response.read())
+            self.assertEqual(payload["history_days"], 7)
+        self.assertEqual(self.context_requests, [(96, 7)])
+
+    def test_agent_context_rejects_invalid_history_window(self):
+        req = Request(self.base + "/api/agent/context?history_days=29",
+                      headers={"Authorization": "Bearer secret-test-token"})
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(req, timeout=2)
+        self.assertEqual(caught.exception.code, 400)
+        self.assertEqual(self.context_requests, [])
 
     def test_authenticated_inbox_claims_as_stable_agent_identity(self):
         req = Request(self.base + "/api/agent/inbox",

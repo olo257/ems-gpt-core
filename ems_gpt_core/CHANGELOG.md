@@ -5,6 +5,15 @@ Total output lines: 1585
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.18 — siedmiodniowa analiza Observera
+
+- Observer Core pobiera maksymalnie 7 dni historii. Przeglądy zdarzeń obejmują
+  tylko sloty zapisane po watermarku poprzedniego przebiegu, aby nie ponawiać
+  tych samych historycznych błędów; trendy nadal liczone są z całego okna.
+- Worker prosi o kontekst 7-dniowy podczas przeglądu cyklicznego i zapamiętuje
+  watermark slotów. Odpowiedzi na pytania operatora zachowują kontekst do 28 dni.
+- Obie ścieżki pozostają tylko do odczytu. Wersje: Core 0.39.18, Worker 0.1.3.
+
 ## 0.39.17 — TODO dostępne w kontekście projektu
 
 - Konektor Core udostępnia filtrowanie listy TODO po statusie, w tym

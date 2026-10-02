@@ -42,7 +42,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.39.17"
+APP_VERSION = "0.39.18"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -215,9 +215,10 @@ def agent_submit_reply(message_id: str, agent_id: str, text: str) -> dict:
     return submit_agent_reply_service(message_id, agent_id, text, db=db, now=local_now())
 
 
-def agent_read_context(limit: int = 96) -> dict:
+def agent_read_context(limit: int = 96, history_days: int = 28) -> dict:
     return read_agent_context_service(db=db, now=local_now(), state=STATE,
-                                      state_lock=LOCK, limit=limit)
+                                      state_lock=LOCK, limit=limit,
+                                      history_days=history_days)
 
 
 def generate_diagnostic_report(trigger_name: str = "scheduled") -> dict:

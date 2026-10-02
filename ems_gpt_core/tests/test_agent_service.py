@@ -134,6 +134,16 @@ class AgentServiceTests(unittest.TestCase):
                                             state={}, limit=1)
         self.assertEqual(len(result["todo_items"][0]["details"]), agent_service.MAX_TODO_DETAIL_CHARS)
 
+    def test_context_can_request_a_seven_day_history_without_changing_default(self):
+        cursor = Cursor([[], [], [], []])
+        result = agent_service.read_context(
+            db=Database(cursor), now=datetime(2026, 10, 2, 12, 0),
+            state={}, history_days=7,
+        )
+        self.assertEqual(result["history_days"], 7)
+        self.assertEqual(cursor.executed[1][1][0], datetime(2026, 9, 25, 12, 0))
+        self.assertEqual(cursor.executed[1][1][1], 7 * 96)
+
     def test_reply_requires_matching_claim_and_completes_thread(self):
         cursor = Cursor([{"thread_id": "thread-1"}])
         result = agent_service.submit_reply(
