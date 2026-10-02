@@ -22,7 +22,7 @@ _SLOT_CONTEXT_FIELDS = {
     "price_buy_pln_kwh", "price_sell_pln_kwh", "forecast_pv1_kwh",
     "forecast_pv2_kwh", "forecast_pv_total_kwh", "actual_pv1_kwh",
     "actual_pv2_kwh", "actual_pv_total_kwh", "forecast_load_kwh",
-    "actual_load_kwh", "actual_native_load_kwh", "forecast_heat_pump_load_kwh",
+    "actual_load_kwh", "actual_native_load_kwh", "forecast_heat_pump_load_kwh",\n    "forecast_heat_pump_dhw_load_kwh", "actual_heating_consumed_kwh", "actual_heating_generated_kwh",\n    "actual_dhw_consumed_kwh", "actual_dhw_generated_kwh", "actual_heat_pump_mode",\n    "actual_heat_pump_is_running", "actual_heat_pump_electric_kwh",
     "planned_buy_kwh", "actual_buy_kwh", "planned_sell_kwh",
     "planned_battery_charge_kwh", "actual_battery_charge_kwh",
     "planned_battery_discharge_kwh", "actual_battery_discharge_kwh",
