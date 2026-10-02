@@ -58,12 +58,16 @@ class AgentWorkerTests(unittest.TestCase):
             ],
             "future_slots": [{"slot_start": "future"}],
             "analytics_runs": [{"run_id": "analytics-1"}], "observer_runs": [],
+            "todo_items": [{"todo_id": "todo-1", "status": "ACCEPTED"}],
+            "todo_count": 1, "todo_source_of_truth": "ems_gpt_core_todo",
         }
         compact = compact_context(context)
         self.assertEqual(len(compact["history_daily_aggregates"]), 2)
         self.assertEqual(compact["history_daily_aggregates"][0]["nonpositive_price_export_slots"][0]["planned_sell_kwh"], .1)
         self.assertEqual(len(compact["latest_completed_day_detail"]), 1)
         self.assertEqual(compact["future_slots"], context["future_slots"])
+        self.assertEqual(compact["todo_items"], context["todo_items"])
+        self.assertEqual(compact["todo_source_of_truth"], "ems_gpt_core_todo")
 
     def test_chat_completions_client_uses_separate_model_key(self):
         http = FakeHttp({"choices": [{"message": {"content": "analiza"}}]})
