@@ -6,6 +6,7 @@ import pathlib
 import sys
 import threading
 import unittest
+from contextlib import contextmanager
 from datetime import datetime
 from http.server import ThreadingHTTPServer
 from threading import RLock, Thread
@@ -18,13 +19,44 @@ sys.path.insert(0, str(ROOT))
 from api_service import ApiAdapters, build_handler
 
 
+class TodoCursor:
+    def __init__(self):
+        self.executed = []
+        self.rows = [{"todo_id": "todo-accepted", "status": "ACCEPTED"}]
+
+    def execute(self, sql, params=None):
+        self.executed.append((" ".join(sql.split()), params))
+
+    def fetchall(self):
+        return self.rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class TodoDatabase:
+    def __init__(self):
+        self.cursor_obj = TodoCursor()
+
+    @contextmanager
+    def __call__(self):
+        yield self
+
+    def cursor(self):
+        return self.cursor_obj
+
+
 class AgentApiAuthTests(unittest.TestCase):
     def setUp(self):
         self.claimed = []
         self.observer_results = []
+        self.db = TodoDatabase()
         adapters = ApiAdapters(
             app_name="EMS-GPT Core", app_version="test", state={}, lock=RLock(),
-            log=logging.getLogger("agent-api-test"), db=lambda: None,
+            log=logging.getLogger("agent-api-test"), db=self.db,
             local_now=datetime.now, slot_start=datetime.now,
             settings_payload=lambda: {}, update_operational_settings=lambda *_: {},
             update_executor_mode=lambda *_: {}, update_process_override=lambda *_: {},
@@ -77,6 +109,23 @@ class AgentApiAuthTests(unittest.TestCase):
         with urlopen(req, timeout=2) as response:
             self.assertEqual(response.status, 200)
         self.assertEqual(self.claimed, ["worker-test"])
+
+    def test_project_connector_can_read_accepted_todos_by_status(self):
+        with urlopen(self.base + "/api/todo?status=ACCEPTED&limit=4", timeout=2) as response:
+            payload = json.loads(response.read())
+            self.assertEqual(response.status, 200)
+        self.assertEqual(payload["rows"][0]["todo_id"], "todo-accepted")
+        sql, params = self.db.cursor_obj.executed[0]
+        self.assertIn("WHERE status=%s ORDER BY created_at DESC LIMIT %s", sql)
+        self.assertEqual(params, ("ACCEPTED", 4))
+
+    def test_todo_status_filter_rejects_unknown_status(self):
+        try:
+            urlopen(self.base + "/api/todo?status=EXECUTE", timeout=2)
+            self.fail("unknown TODO status unexpectedly succeeded")
+        except HTTPError as exc:
+            self.assertEqual(exc.code, 400)
+        self.assertEqual(self.db.cursor_obj.executed, [])
 
     def test_observer_result_endpoint_requires_worker_token_and_saves_run(self):
         payload = {"source_ref": "analytics-1", "summary": "OK", "findings": [],
