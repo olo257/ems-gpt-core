@@ -24,8 +24,22 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.19"', APP_SOURCE)
-        self.assertIn('version: "0.39.19"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.20"', APP_SOURCE)
+        self.assertIn('version: "0.39.20"', CONFIG)
+
+    def test_observer_scope_feedback_and_hp_modes_are_explicit(self):
+        worker = (ROOT.parent / "ems_gpt_ai_observer_worker" / "worker.py").read_text(encoding="utf-8")
+        observer = MODULE_SOURCES["observer_service.py"]
+        agent = MODULE_SOURCES["agent_service.py"]
+        self.assertIn("def requested_history_days", worker)
+        self.assertIn("TODO REJECTED", worker)
+        self.assertIn("review_note", worker)
+        self.assertIn("HP_HEAT_DHW", worker)
+        self.assertIn("HP_DHW", worker)
+        self.assertIn("hp_heat_dhw_plan_outside_window", observer)
+        self.assertIn("forecast_heat_pump_dhw_load_kwh", observer)
+        self.assertIn("actual_heating_consumed_kwh", agent)
+        self.assertIn("actual_dhw_consumed_kwh", agent)
 
     def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
         planner = MODULE_SOURCES["planner_service.py"]
