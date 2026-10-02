@@ -4,6 +4,9 @@ The worker runs outside EMS-GPT Core. It polls the read-only context and the
 operator mailbox, asks an OpenAI-compatible model to review the data, and
 saves scheduled analyses as AI Observer runs and detailed TODO items. It has
 no database, Home Assistant, planner, PPD, executor, settings, or command access.
+The Core read-only context also carries current TODO items, prioritizing
+operator-accepted items for follow-up analysis. An accepted item remains a
+request for analysis, not permission for the worker to change Core or controls.
 
 ## Required configuration
 
