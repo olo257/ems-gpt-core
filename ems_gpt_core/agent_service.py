@@ -23,6 +23,9 @@ _SLOT_CONTEXT_FIELDS = {
     "forecast_pv2_kwh", "forecast_pv_total_kwh", "actual_pv1_kwh",
     "actual_pv2_kwh", "actual_pv_total_kwh", "forecast_load_kwh",
     "actual_load_kwh", "actual_native_load_kwh", "forecast_heat_pump_load_kwh",
+    "forecast_heat_pump_dhw_load_kwh", "actual_heating_consumed_kwh", "actual_heating_generated_kwh",
+    "actual_dhw_consumed_kwh", "actual_dhw_generated_kwh", "actual_heat_pump_mode",
+    "actual_heat_pump_is_running", "actual_heat_pump_electric_kwh",
     "planned_buy_kwh", "actual_buy_kwh", "planned_sell_kwh",
     "planned_battery_charge_kwh", "actual_battery_charge_kwh",
     "planned_battery_discharge_kwh", "actual_battery_discharge_kwh",
@@ -190,7 +193,8 @@ def read_context(*, db, now: datetime, state: dict, state_lock=None,
                FROM ems_gpt_core_todo
                WHERE status IN ('WATCHING','OPEN','SUGGESTED','ACCEPTED','REJECTED','RESOLVED')
                ORDER BY CASE WHEN status='ACCEPTED' THEN 0
-                             WHEN status IN ('WATCHING','OPEN','SUGGESTED') THEN 1 ELSE 2 END,
+                             WHEN status='REJECTED' THEN 1
+                             WHEN status IN ('WATCHING','OPEN','SUGGESTED') THEN 2 ELSE 3 END,
                         created_at DESC LIMIT %s""",
             (MAX_TODO_CONTEXT_ROWS,),
         )

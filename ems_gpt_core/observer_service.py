@@ -158,17 +158,31 @@ def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=
 
     hp_outside = []
     for row in [*incident_rows, *future_rows]:
-        hp = _number(row.get("forecast_heat_pump_load_kwh"), 0) or 0
+        # Only the explicit planned HP_HEAT_DHW window is evidence of a planned
+        # heating-mode run. Forecast energy and autonomous HP_DHW energy are
+        # separate quantities and must not create this finding.
+        hp_window = _number(row.get("heat_pump_window"), 0) or 0
         slot = row.get("slot_start")
-        if hp <= 0.02 or not isinstance(slot, datetime):
+        if hp_window <= 0.5 or not isinstance(slot, datetime):
             continue
         if (str(row.get("market_window") or "").upper() == "SELL"
                 or slot.hour < 7 or slot.hour >= 19):
-            hp_outside.append({"slot_start": slot, "market_window": row.get("market_window"),
-                               "forecast_heat_pump_load_kwh": hp})
+            hp_outside.append({
+                "slot_start": slot,
+                "market_window": row.get("market_window"),
+                "heat_pump_window": hp_window,
+                "actual_heat_pump_mode": row.get("actual_heat_pump_mode"),
+                "actual_heat_pump_is_running": row.get("actual_heat_pump_is_running"),
+                "actual_heating_consumed_kwh": row.get("actual_heating_consumed_kwh"),
+                "actual_dhw_consumed_kwh": row.get("actual_dhw_consumed_kwh"),
+                "hp_observed_state": row.get("hp_observed_state"),
+                "hp_control_origin": row.get("hp_control_origin"),
+                "forecast_heat_pump_load_kwh": row.get("forecast_heat_pump_load_kwh"),
+                "forecast_heat_pump_dhw_load_kwh": row.get("forecast_heat_pump_dhw_load_kwh"),
+            })
     if hp_outside:
-        add("heat_pump_outside_window", len(hp_outside), 0, "WARNING",
-            "Plan HP_HEAT_DHW zawiera energię poza dozwolonym oknem 07:00–19:00 lub w SELL.",
+        add("hp_heat_dhw_plan_outside_window", len(hp_outside), 0, "WARNING",
+            "Zaplanowano tryb HP_HEAT_DHW poza oknem 07:00–19:00 lub w SELL. Zużycie HP_DHW/CWU jest raportowane oddzielnie i nie stanowi dowodu pracy trybu grzania.",
             hp_outside[:12])
 
     completed_days = defaultdict(list)
@@ -254,9 +268,17 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
           s.actual_pv2_kwh,s.actual_pv_total_kwh,s.forecast_load_kwh,s.actual_load_kwh,
           s.planned_buy_kwh,s.actual_buy_kwh,s.planned_sell_kwh,s.actual_sell_kwh,
           s.planned_pv_export_kwh,s.actual_pv_export_kwh,s.forecast_heat_pump_load_kwh,
-          s.heat_pump_window,s.soc_end_plan_pct,s.soc_required_pct,
-          d.actual_grid_export_kwh,d.soc_start_pct,d.soc_delta_pct,d.soc_min_pct,d.coverage_pct
+          s.forecast_heat_pump_dhw_load_kwh,s.actual_heating_consumed_kwh,
+          s.actual_heating_generated_kwh,s.actual_dhw_consumed_kwh,s.actual_dhw_generated_kwh,
+          s.actual_heat_pump_mode,s.actual_heat_pump_is_running,s.heat_pump_window,
+          s.soc_end_plan_pct,s.soc_required_pct,
+          d.actual_grid_export_kwh,d.soc_start_pct,d.soc_delta_pct,d.soc_min_pct,d.coverage_pct,
+          hp_exec.planned_state hp_planned_state,hp_exec.observed_state hp_observed_state,
+          hp_exec.observed_energy_kwh hp_observed_energy_kwh,hp_exec.control_origin hp_control_origin
           FROM ems_gpt_slots s LEFT JOIN ems_gpt_core_execution_details d ON d.slot_start=s.slot_start
+          LEFT JOIN ems_gpt_core_process_execution hp_exec
+            ON hp_exec.id=(SELECT MAX(hp_exec2.id) FROM ems_gpt_core_process_execution hp_exec2
+                           WHERE hp_exec2.slot_start=s.slot_start AND hp_exec2.process_name='HP_HEAT_DHW')
           WHERE s.actual_recorded_at IS NOT NULL AND s.slot_start>=DATE_SUB(NOW(6),INTERVAL 7 DAY)
           ORDER BY s.slot_start""")
         history_rows = list(cur.fetchall())
@@ -267,8 +289,8 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
         else:
             new_history_rows = history_rows
         cur.execute("""SELECT slot_start,market_window,price_sell_pln_kwh,planned_sell_kwh,
-          planned_pv_export_kwh,forecast_heat_pump_load_kwh,heat_pump_window,
-          soc_end_plan_pct,soc_required_pct
+          planned_pv_export_kwh,forecast_heat_pump_load_kwh,forecast_heat_pump_dhw_load_kwh,
+          heat_pump_window,soc_end_plan_pct,soc_required_pct
           FROM ems_gpt_slots WHERE actual_recorded_at IS NULL AND slot_start>=NOW(6)
           ORDER BY slot_start LIMIT 96""")
         future_rows = list(cur.fetchall())
@@ -286,7 +308,7 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
                                      "history_watermark": watermark,
                                      "future_slots": len(future_rows),
                                      "checks": ["plan_vs_execution", "PV_forecast_bias_by_series",
-                                                "export_price_floor", "import_window", "HP_window",
+                                                "export_price_floor", "import_window", "HP_HEAT_DHW_vs_HP_DHW_modes",
                                                 "end_of_day_SOC"]},
                   "analytics": {k: analytics.get(k) for k in (
                       "slots_scanned", "complete_slots", "quality_score", "pv1_wape_pct", "pv2_wape_pct",
