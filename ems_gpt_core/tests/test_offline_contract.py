@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.19"', APP_SOURCE)
-        self.assertIn('version: "0.39.19"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.20"', APP_SOURCE)
+        self.assertIn('version: "0.39.20"', CONFIG)
 
     def test_observer_scope_feedback_and_hp_modes_are_explicit(self):
         worker = (ROOT.parent / "ems_gpt_ai_observer_worker" / "worker.py").read_text(encoding="utf-8")
