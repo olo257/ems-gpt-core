@@ -436,37 +436,73 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             "minimum_margin_pln_kwh": min_margin}
 
 
-def morning_sale_soc_requirements(rows: list[dict], required_soc_pcts: list[float],
-                                  daily_terminal_soc: dict) -> tuple[list[float], list[int]]:
-    """Require the historical daily SOC target immediately before a morning sale.
+def end_of_day_soc_target(historical_soc_pct: float, reserve_pct: float,
+                          target_cap_pct: float) -> float:
+    """Five percentage points of tolerance apply only to the daily close."""
+    return max(float(reserve_pct), min(float(target_cap_pct),
+                                       float(historical_soc_pct) - 5.0))
 
-    The midnight boundary alone is insufficient: native overnight load can
-    consume that reserve before the first high-price sale slot.  Placing the
-    same quantitative requirement on the slot immediately preceding the
-    morning SELL transition makes the optimizer preserve (or economically
-    rebuild in an earlier BUY window) enough energy for the morning peak.
+
+def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
+                                 daily_terminal_soc: dict) -> tuple[list[float], set[int]]:
+    if len(rows) != len(safety_pcts):
+        raise ValueError("rows and safety SOC lengths differ")
+    required = list(safety_pcts)
+    closes = set()
+    for index, row in enumerate(rows):
+        row_day = row.get("local_day") or row["slot_start"].date()
+        next_day = ((rows[index + 1].get("local_day")
+                     or rows[index + 1]["slot_start"].date())
+                    if index + 1 < len(rows) else None)
+        if next_day != row_day:
+            required[index] = max(safety_pcts[index], daily_terminal_soc[row_day])
+            closes.add(index)
+    return required, closes
+
+
+def replenishment_soc_requirements(rows: list[dict], capacity_kwh: float,
+                                   reserve_pct: float, buffer_pct: float,
+                                   eta_c: float, eta_d: float,
+                                   max_power_kw: float, slot_minutes: int,
+                                   uncertainty_weight: float,
+                                   soc_step_pct: float = 0.10) -> list[float]:
+    """Minimum end-of-slot SOC to bridge future load to feasible replenishment.
+
+    Historical daily closes never enter this calculation. BUY contributes only
+    its finite charge capacity outside SELL; PV contributes only surplus after
+    house/HP load, limited by the same battery power. The economic pass chooses
+    actual purchases under these requirements; build_soc_contracts subsequently
+    subtracts only those committed kWh. An insufficient window cannot reset the
+    bridge to reserve. Requirements are deliberately not clipped to capacity:
+    an impossible safety bridge must be reported rather than silently waived.
     """
-    if len(rows) != len(required_soc_pcts):
-        raise ValueError("rows and required SOC lengths differ")
-    result = list(required_soc_pcts)
-    protected_indices = []
-    for index in range(1, len(rows)):
+    capacity = max(0.001, float(capacity_kwh))
+    reserve = max(15.0, float(reserve_pct))
+    buffer = max(0.0, float(buffer_pct))
+    base_kwh = capacity * (reserve + buffer) / 100.0
+    charge_efficiency = max(0.01, float(eta_c))
+    discharge_efficiency = max(0.01, float(eta_d))
+    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
+    max_charge = max(0.0, float(max_power_kw)) * slot_minutes / 60.0 * charge_efficiency
+    quantum_kwh = capacity * max(0.001, float(soc_step_pct)) / 100.0
+    required_after = base_kwh
+    result = [0.0] * len(rows)
+    for index in range(len(rows) - 1, -1, -1):
+        result[index] = required_after / capacity * 100.0
         row = rows[index]
-        previous = rows[index - 1]
-        slot_time = row.get("slot_start_local") or row["slot_start"]
-        sale_starts = (strict_database_bool(row.get("sale_window"), "sale_window")
-                       and not strict_database_bool(
-                           previous.get("sale_window"), "sale_window"))
-        if not sale_starts or slot_time.hour >= 12:
-            continue
-        sale_day = row.get("local_day") or slot_time.date()
-        target = daily_terminal_soc.get(sale_day)
-        if target is None:
-            continue
-        protected_index = index - 1
-        result[protected_index] = max(result[protected_index], float(target))
-        protected_indices.append(protected_index)
-    return result, protected_indices
+        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
+                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
+        deficit = max(0.0, load - pv) / discharge_efficiency * (1.0 + uncertainty)
+        surplus = max(0.0, pv - load) * charge_efficiency * (1.0 - uncertainty)
+        buy_allowed = (strict_database_bool(row.get("buy_window", False), "buy_window")
+                       and not strict_database_bool(row.get("sale_window", False), "sale_window"))
+        supply = max_charge if buy_allowed else min(max_charge, surplus)
+        # The optimizer quantizes SOC. Do not promise fractional supply that
+        # its reachable frontier cannot deliver in this slot.
+        supply = math.floor(supply / quantum_kwh + 1e-9) * quantum_kwh
+        required_after = max(base_kwh, required_after + deficit - supply)
+    return result
 
 
 def economic_sell_indices(rows: list[dict], eta_c: float, eta_d: float,
@@ -1622,30 +1658,31 @@ def build_planner(a: PlannerAdapters):
             for planning_day in planning_days:
                 terminal_history = historical_terminal_soc(
                     closing_history, planning_day, history_weights, reserve)
-                daily_terminal_soc[planning_day] = max(
-                    reserve, min(target_cap, float(terminal_history["soc_pct"])))
+                daily_terminal_soc[planning_day] = end_of_day_soc_target(
+                    float(terminal_history["soc_pct"]), reserve, target_cap)
                 record_event("historical_terminal_soc_forecast", "planner", {
                     "terminal_day": str(planning_day),
                     "terminal_soc_pct": round(daily_terminal_soc[planning_day], 3),
+                    "historical_tolerance_pp": 5.0,
                     **terminal_history,
                 })
             terminal_soc = daily_terminal_soc[terminal_day]
-            daily_required_soc = [reserve] * len(horizon_rows)
-            for index, row in enumerate(horizon_rows):
-                row_day = row.get("local_day") or row["slot_start"].date()
-                next_day = ((horizon_rows[index + 1].get("local_day")
-                             or horizon_rows[index + 1]["slot_start"].date())
-                            if index + 1 < len(horizon_rows) else None)
-                if next_day != row_day:
-                    daily_required_soc[index] = daily_terminal_soc[row_day]
-            daily_required_soc, morning_protected_indices = morning_sale_soc_requirements(
-                horizon_rows, daily_required_soc, daily_terminal_soc)
-            for index in morning_protected_indices:
-                record_event("morning_sale_soc_protected", "planner", {
-                    "slot_start": str(horizon_rows[index]["slot_start"]),
-                    "required_soc_pct": round(daily_required_soc[index], 3),
-                    "sale_slot_start": str(horizon_rows[index + 1]["slot_start"]),
-                })
+            safety_required_soc = replenishment_soc_requirements(
+                horizon_rows, capacity, reserve,
+                float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
+                eta_c, eta_d, max_kw, int(OPTIONS["slot_minutes"]), uncertainty_weight)
+            for index, safety_pct in enumerate(safety_required_soc):
+                if safety_pct > target_cap + 1e-9:
+                    raise RuntimeError(f"SOC_SAFETY_BRIDGE_EXCEEDS_CAP:{index}:{safety_pct:.3f}")
+            daily_required_soc, daily_close_indices = daily_close_soc_requirements(
+                horizon_rows, safety_required_soc, daily_terminal_soc)
+            terminal_soc = max(terminal_soc, safety_required_soc[-1])
+            record_event("replenishment_soc_safety", "planner", {
+                "minimum_soc_pct": max(15.0, reserve),
+                "buffer_pp": float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
+                "maximum_required_soc_pct": max(safety_required_soc),
+                "historical_target_applies": "DAILY_CLOSE_ONLY",
+            })
             audit_stage(cur,run_id,"WINDOW_CANDIDATES","OK",len(rows),"pass 1: full horizon")
             audit_stage(cur,run_id,"LOAD","OK",len(rows),"pass 2: native and controllable load")
             audit_stage(cur,run_id,"PV","OK",len(rows),"pass 3: corrected PV balance")
@@ -1656,10 +1693,6 @@ def build_planner(a: PlannerAdapters):
             # loop is allowed to redefine or reset the energy bridge.
             optimized_floors = list(sale_constraints)
             internal_soc_step=0.10
-            daily_close_indices = {
-                index for index, value in enumerate(daily_required_soc)
-                if value > reserve + 0.01
-            }
             enforced_daily_required = list(daily_required_soc)
             waived_daily_closes = set()
             battery_sales_enabled = True
@@ -1700,8 +1733,6 @@ def build_planner(a: PlannerAdapters):
                     if not str(exc).startswith(prefix):
                         raise
                     failed_index = int(str(exc)[len(prefix):])
-                    if failed_index not in daily_close_indices:
-                        raise
                     if battery_sales_enabled:
                         battery_sales_enabled = False
                         record_event("battery_sales_disabled_for_daily_soc", "planner", {
@@ -1710,7 +1741,11 @@ def build_planner(a: PlannerAdapters):
                             "reason": str(exc),
                         }, "WARNING")
                         continue
-                    enforced_daily_required[failed_index] = reserve
+                    if (failed_index not in daily_close_indices
+                            or enforced_daily_required[failed_index]
+                            <= safety_required_soc[failed_index] + 1e-9):
+                        raise RuntimeError(f"SOC_SAFETY_BRIDGE_UNREACHABLE:{failed_index}") from exc
+                    enforced_daily_required[failed_index] = safety_required_soc[failed_index]
                     daily_close_indices.remove(failed_index)
                     waived_daily_closes.add(failed_index)
                     record_event("daily_terminal_soc_unreachable", "planner", {
@@ -1816,8 +1851,12 @@ def build_planner(a: PlannerAdapters):
                     horizon_rows,economic_optimization["flows"],capacity,reserve,
                     eta_c,eta_d,uncertainty_weight,terminal_soc,target_cap,0.25,
                     enforced_daily_required)
-                required_soc=list(commitment["required"])
-                charge_targets=list(commitment["charge_targets"])
+                required_soc = [max(contract, safety)
+                                for contract, safety in zip(
+                                    commitment["required"], enforced_daily_required)]
+                charge_targets = [max(target, required)
+                                  for target, required in zip(
+                                      commitment["charge_targets"], required_soc)]
                 for index in waived_daily_closes:
                     charge_targets[index] = max(
                         charge_targets[index], daily_required_soc[index])

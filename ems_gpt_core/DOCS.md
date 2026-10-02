@@ -144,9 +144,12 @@ dodawana z powrotem wyłącznie do oceny histerezy.
 Historyczne średnie końcowego SOC 7/14/28 dni są liczone niezależnie z pełnych,
 rzeczywiście zamkniętych dób. Doba z brakiem lub `MISSING_OUTAGE` nie jest
 próbką. Krótszy zakres odbudowy agregatów nie może ograniczać horyzontu 14/28.
-Ważona prognoza jest minimalnym SOC na końcu każdej doby objętej planem, nie
-tylko ostatniego dnia całego horyzontu. Wartość jest zaokrąglana w górę do
-kroku SOC; planer może zakończyć dobę wyżej, jeżeli wymaga tego dalszy bilans.
+Ważona średnia pomniejszona o 5 punktów procentowych stanowi minimalny SOC
+na końcu każdej doby objętej planem, nie tylko ostatniego dnia horyzontu.
+Nie jest osobnym wymaganiem przed porannym SELL. Niezależny bilans domu/HP
+i możliwości ładowania chroni minimum 15% plus bufor przed PV/BUY
+(`soc_replenishment_buffer_pct`, domyślnie 2 p.p.). Wymagania są zaokrąglane
+w górę do kroku SOC; potrzeby nocne mogą podnieść wymagane zamknięcie doby.
 
 ### AI Observer — audyt w tle
 

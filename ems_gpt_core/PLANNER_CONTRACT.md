@@ -144,17 +144,29 @@ Techniczne minimum SOC jest granicą awaryjną, nie celem operacyjnym. Planowana
 wykonalności od idealnego rozpoczęcia prognozowanego PV. Target zawiera zapas
 wynikający z konserwatywnej korekty zużycia i PV.
 
-Na końcu każdej lokalnej doby obowiązuje dodatkowa minimalna granica: ważona
-prognoza rzeczywistego SOC zamknięcia z niezależnych okien 7/14/28 dni.
-Granica dotyczy każdej doby w horyzoncie, jest zaokrąglana w górę do kroku SOC
-i nie może zostać wyzerowana przez BUY lub PV następnego dnia.
+Na końcu każdej lokalnej doby obowiązuje dodatkowa minimalna granica:
+ważona średnia rzeczywistego SOC zamknięcia z okien 7/14/28 dni pomniejszona
+o 5 punktów procentowych, nie niższa niż techniczna rezerwa. Tolerancja
+nie oznacza mnożenia średniej przez 95%. Wymaganie historyczne dotyczy tylko
+końca doby; nie jest powtarzane przed porannym SELL.
 
-Jeżeli kolejna doba zawiera poranne okno `SELL`, ten sam minimalny SOC jest
-wymagany również na końcu slotu bezpośrednio poprzedzającego początek tego
-okna. Bilans wsteczny musi zatem zachować na koniec poprzedniej doby dodatkową
-energię potrzebną na nocne odbiory. BUY może ją uzupełnić wyłącznie w
-rzeczywistym oknie zakupu; w przeciwnym razie wcześniejsza sprzedaż baterii
-jest ograniczana.
+Niezależny bilans bezpieczeństwa wymaga co najmniej 15% (lub wyższego minimum
+konfiguracji) plus `soc_replenishment_buffer_pct` (domyślnie 2 p.p.) w każdym
+slocie oraz energii na przyszły deficyt domu i HP. Uwzględnia sprawności i
+`forecast_uncertainty_weight`. Wymaganie końca doby jest maksimum celu
+historycznego minus 5 p.p. i tej rezerwy na noc w dostępnym horyzoncie.
+
+BUY odciąża wcześniejszy bilans wyłącznie o fizycznie dostępną moc i czas
+ładowania poza SELL. PV odciąża go tylko o nadwyżkę po odbiorach, ograniczoną
+mocą ładowania. Początek okna bez wystarczającej energii nie zeruje deficytu.
+Optymalizator wybiera ekonomicznie uzasadnione zakupy spełniające ten bilans;
+końcowe kontrakty SOC odejmują wyłącznie faktycznie przydzielone zakupy.
+
+Fallback najpierw usuwa SELL_BAT; może obniżyć niewykonalne wymaganie
+historyczne końca doby, ale nie może obniżyć niezależnej rezerwy bezpieczeństwa.
+Niewykonalny bilans bezpieczeństwa powoduje jawny błąd i odrzucenie wariantu.
+Brak cen/prognoz poza horyzontem nie stanowi potwierdzenia bezpieczeństwa
+kolejnej nocy. Po rozszerzeniu horyzontu bilans musi być przeliczony.
 
 Target obejmuje:
 
