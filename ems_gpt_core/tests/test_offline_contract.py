@@ -24,8 +24,8 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.18"', APP_SOURCE)
-        self.assertIn('version: "0.39.18"', CONFIG)
+        self.assertIn('APP_VERSION = "0.39.19"', APP_SOURCE)
+        self.assertIn('version: "0.39.19"', CONFIG)
 
     def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
         planner = MODULE_SOURCES["planner_service.py"]
@@ -110,9 +110,9 @@ class OfflineContractTests(unittest.TestCase):
         ):
             self.assertIn(key, planner)
             self.assertIn(key, executor)
-        self.assertIn("daily_terminal_soc[planning_day] = max(", planner)
+        self.assertIn("daily_terminal_soc[planning_day] = end_of_day_soc_target(", planner)
         self.assertIn("backward_target_commitments(", planner)
-        self.assertIn("daily_required_soc[index] = daily_terminal_soc[row_day]", planner)
+        self.assertIn("daily_close_soc_requirements(", planner)
         self.assertIn("required_soc_pcts=enforced_daily_required", planner)
         self.assertIn("daily_terminal_soc_unreachable", planner)
         self.assertIn("waived_daily_closes", planner)
@@ -156,7 +156,7 @@ class OfflineContractTests(unittest.TestCase):
     def test_daily_soc_recovery_disables_sales_before_waiving_target(self):
         planner = MODULE_SOURCES["planner_service.py"]
         disable = planner.index("if battery_sales_enabled:")
-        waive = planner.index("enforced_daily_required[failed_index] = reserve")
+        waive = planner.index("enforced_daily_required[failed_index] = safety_required_soc[failed_index]")
         self.assertLess(disable, waive)
         self.assertIn('"battery_sales_disabled_for_daily_soc"', planner)
 

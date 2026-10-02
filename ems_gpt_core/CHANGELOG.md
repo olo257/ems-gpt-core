@@ -5,6 +5,28 @@ Total output lines: 1585
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.19 — cel końca doby i niezależna rezerwa przed PV/BUY
+
+- Historyczny cel SOC z 7/14/28 dni obowiązuje tylko na końcu doby i ma
+  tolerancję 5 punktów procentowych. Usunięto jego ponowne wymuszanie przed
+  porannym SELL.
+- Dodano niezależny bilans bezpieczeństwa: minimum 15% plus konfigurowalny
+  bufor (domyślnie 2 p.p.), zużycie domu/HP, sprawności i niepewność prognoz.
+  Potrzeby nocne mogą podnieść cel końca doby ponad średnią minus 5 p.p.
+- Najbliższe BUY uwzględnia limit mocy/czasu; PV tylko nadwyżkę po odbiorach
+  ograniczoną mocą ładowania. Końcowy kontrakt odejmuje rzeczywisty przydział
+  zakupu, a nie całe potencjalne okno.
+- Rezerwa bezpieczeństwa pozostaje wymagana we wszystkich przebiegach.
+  Fallback usuwa sprzedaż przed obniżeniem niewykonalnego celu historycznego;
+  nie może znieść rezerwy. Niewykonalna rezerwa daje jawny błąd zamiast
+  publikacji niebezpiecznego wariantu.
+- Testy obejmują przejście północy, poranny SELL, krótkie i pominięte BUY,
+  opóźnione PV, moc ładowania, HP, niewykonalność i stabilność przeliczeń.
+- Weryfikacja: 320 testów OK, `compileall` i `git diff --check` OK.
+  Dodatkowo wykonano izolowane porównanie bilansu SOC na migawce 130
+  aktualnych slotów HA; nie jest to pełny odbiór planera ani wykonania.
+- Zmiana wymaga instalacji dodatku; odbiór na produkcji nie został wykonany.
+
 ## AI Observer Worker 0.1.4 — naprawa niepoprawnego JSON
 
 - Gdy model zwróci niepoprawny JSON albo odpowiedź niezgodną z kontraktem,
