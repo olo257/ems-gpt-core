@@ -1,9 +1,18 @@
-Warning: truncated output (original token count: 23345)
-Total output lines: 1585
-
 # EMS-GPT Core — historia zmian
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
+
+## 0.39.20 — zakres, uwagi operatora i rozdzielenie trybów HP
+
+- Interaktywne analizy używają domyślnie ostatnich 7 dni; jawnie wskazany
+  okres w pytaniu jest respektowany w zakresie 1–28 dni.
+- Agent odpowiada na konkretne pytanie bez stałej checklisty. Uwagi z
+  odrzuconych TODO są informacją zwrotną; odrzucony wniosek wraca tylko przy
+  nowym, wskazanym dowodzie.
+- Kontekst i audyt Observera rozdzielają tryby HP_HEAT_DHW oraz HP_DHW:
+  planowane okno grzania, prognozę CWU, rzeczywiste ogrzewanie i rzeczywiste
+  CWU. Zużycie CWU samo w sobie nie jest dowodem pracy trybu grzania.
+- Zmiany dotyczą analizy i prezentacji dowodów; planer i PPD pozostają bez zmian.
 
 ## 0.39.19 — cel końca doby i niezależna rezerwa przed PV/BUY
 
