@@ -190,7 +190,8 @@ def read_context(*, db, now: datetime, state: dict, state_lock=None,
                FROM ems_gpt_core_todo
                WHERE status IN ('WATCHING','OPEN','SUGGESTED','ACCEPTED','REJECTED','RESOLVED')
                ORDER BY CASE WHEN status='ACCEPTED' THEN 0
-                             WHEN status IN ('WATCHING','OPEN','SUGGESTED') THEN 1 ELSE 2 END,
+                             WHEN status='REJECTED' THEN 1
+                             WHEN status IN ('WATCHING','OPEN','SUGGESTED') THEN 2 ELSE 3 END,
                         created_at DESC LIMIT %s""",
             (MAX_TODO_CONTEXT_ROWS,),
         )
