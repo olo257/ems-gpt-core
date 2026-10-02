@@ -103,21 +103,36 @@ class AgentServiceTests(unittest.TestCase):
         history = [{"slot_start": "past"}]
         analytics = [{"run_id": "analytics-1"}]
         observer = [{"run_id": "observer-1"}]
-        cursor = Cursor([future, history, analytics, observer])
+        todos = [{"todo_id": "todo-1", "status": "ACCEPTED", "details": "evidence"}]
+        cursor = Cursor([future, history, analytics, observer, todos])
         result = agent_service.read_context(
             db=Database(cursor), now=datetime(2026, 9, 29, 8, 0),
             state={"modules": {"planner": "RUNNING"}}, limit=1000,
         )
-        self.assertEqual(len(cursor.executed), 4)
+        self.assertEqual(len(cursor.executed), 5)
         self.assertTrue(all(sql.lstrip().startswith("SELECT") for sql, _ in cursor.executed))
         self.assertEqual(result["future_slots"], future)
         self.assertEqual(result["completed_slots"], history)
         self.assertEqual(result["analytics_runs"], analytics)
         self.assertEqual(result["observer_runs"], observer)
+        self.assertEqual(result["todo_items"], todos)
+        self.assertEqual(result["todo_source_of_truth"], "ems_gpt_core_todo")
+        self.assertIn("READ_TODO", result["permissions"])
         self.assertEqual(result["mode"], "READ_ONLY_ANALYSIS")
         self.assertIn("COMMAND_WRITE", result["forbidden"])
         self.assertEqual(cursor.executed[0][1][1], 96)
         self.assertEqual(cursor.executed[1][1][1], 28 * 96)
+        self.assertIn("status IN ('WATCHING','OPEN','SUGGESTED','ACCEPTED','REJECTED','RESOLVED')",
+                      cursor.executed[4][0])
+        self.assertIn("CASE WHEN status='ACCEPTED' THEN 0", cursor.executed[4][0])
+        self.assertEqual(cursor.executed[4][1], (25,))
+
+    def test_todo_details_are_bounded_in_project_context(self):
+        long_todo = {"todo_id": "todo-1", "status": "OPEN", "details": "x" * 2000}
+        cursor = Cursor([[], [], [], [], [long_todo]])
+        result = agent_service.read_context(db=Database(cursor), now=datetime.now(),
+                                            state={}, limit=1)
+        self.assertEqual(len(result["todo_items"][0]["details"]), agent_service.MAX_TODO_DETAIL_CHARS)
 
     def test_reply_requires_matching_claim_and_completes_thread(self):
         cursor = Cursor([{"thread_id": "thread-1"}])
