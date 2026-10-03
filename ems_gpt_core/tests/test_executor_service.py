@@ -173,7 +173,6 @@ class ExecutorServiceTests(unittest.TestCase):
                 "executor": "LIVE",
                 "planner_failure_latched": "SOC_SAFETY_BRIDGE_UNREACHABLE:0",
             })
-            # Rebind event recording through the executor adapter's shared callback.
             result = service.stage_executor_commands()
 
         inserts = [row for row in executed
