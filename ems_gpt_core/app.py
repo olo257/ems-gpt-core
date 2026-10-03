@@ -390,6 +390,8 @@ def complete_rce_cycle(result: dict, run_type: str) -> dict:
         ppd = {"status": "ERROR", "error": str(exc), "plan_run_id": plan.get("run_id")}
         record_event("ppd_run_failed", "ppd", ppd, "ERROR")
         LOG.exception("PPD failed after successful RCE planner run")
+    if ppd.get("status") not in {"COMPLETED", "ERROR", "WAITING", "WAITING_FOR_PLAN"}:
+        ppd = {"status": "ERROR", "error": f"PPD_NOT_COMPLETED:{ppd.get('status')}"}
     if ppd.get("status") == "ERROR":
         with LOCK:
             STATE["ppd_failure_latched"] = str(ppd.get("error") or "PPD_FAILED")
