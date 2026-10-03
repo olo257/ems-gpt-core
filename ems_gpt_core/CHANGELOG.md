@@ -2,6 +2,14 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.22 — plan i wykonanie zestawione parami
+
+- Widoki godzinowy i dobowy pokazują główne wielkości obok siebie: PV plan / PV wykonanie, zużycie plan / zużycie wykonanie, a następnie import, eksport, ładowanie i rozładowanie baterii oraz wynik PLN.
+- Pozostałe wielkości planowane i wykonane są umieszczone po parach głównych; kolumny jakości i SOC zachowują dotychczasowe dane.
+- Nagłówki są jednopoziomowe i zachowują etykiety „plan” oraz „wykon.”, dzięki czemu nie sugerują osobnych bloków planu i wykonania.
+- Bieżąca godzina i doba nadal są prezentowane z wartościami narastającymi. Ograniczenie do zamkniętych rekordów pozostaje wyłącznie w widoku 15-minutowym.
+- Zmiana dotyczy kolejności i nagłówków kolumn; nie zmienia obliczeń planera ani wykonania.
+
 ## 0.39.21 — czytelne zestawienie planu i wykonania oraz odpowiedzi agenta
 
 - Widoki godzinowy i dobowy grupują kolumny w bloki „Planowane”,
