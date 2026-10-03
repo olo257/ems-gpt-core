@@ -2,6 +2,17 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.23 — tryb bezpieczny po błędzie planera lub PPD
+
+- Po błędzie planera, PPD albo oczekiwaniu na poprawny plan wstrzymywane są
+  decyzje z poprzedniego przebiegu; executor wystawia OFF dla PV_CWU, PV_EV
+  oraz HP_HEAT_DHW.
+- Skrypt OFF dla HP przełącza pompę na „DHW only” i pozostawia jej zasilanie.
+  Polecenia bezpieczeństwa są wysyłane także przy niedostępnej telemetrii.
+- Po poprawnym przebiegu planera i PPD odrzucone są niewysłane polecenia
+  awaryjne, a sterowanie wraca do bieżącego planu i istniejących override'ów.
+- Zabezpieczenie nie zapisuje celów SOC ani nie zmienia reguł BUY/SELL.
+
 ## 0.39.22 — plan i wykonanie zestawione parami
 
 - Widoki godzinowy i dobowy pokazują główne wielkości obok siebie: PV plan / PV wykonanie, zużycie plan / zużycie wykonanie, a następnie import, eksport, ładowanie i rozładowanie baterii oraz wynik PLN.
