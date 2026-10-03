@@ -61,6 +61,12 @@ def rce_event_keys(clock: datetime) -> tuple[str, ...]:
             f"RCE_{clock.date() - timedelta(days=1)}_NEXT")
 
 
+def should_dispatch_executor_commands(telemetry_ok: bool, planner_failure: str | None,
+                                      ppd_failure: str | None) -> bool:
+    """Dispatch normal commands only with telemetry; dispatch OFF fail-safes on faults."""
+    return bool(telemetry_ok or planner_failure or ppd_failure)
+
+
 def should_run_slot_replan(clock: datetime, current_slot: datetime,
                            last_published_at: datetime | None,
                            rce_ready: bool) -> bool:
@@ -288,10 +294,14 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                                 "ppd", a.run_ppd, replan.get("run_id"), "slot_replan")
                             ppd_health = "RUNNING"
                             module_activity("ppd", "Decyzje PPD opublikowane", "RUNNING")
+                            with a.lock:
+                                a.state["ppd_failure_latched"] = None
                         except Exception as ppd_exc:
                             ppd = {"status": "ERROR", "error": str(ppd_exc)}
                             ppd_health = "DEGRADED"
                             module_activity("ppd", f"Błąd PPD: {ppd_exc}", "DEGRADED")
+                            with a.lock:
+                                a.state["ppd_failure_latched"] = str(ppd_exc)
                             a.record_event("ppd_run_failed", "ppd", {
                                 "slot_start": key, "plan_run_id": replan.get("run_id"),
                                 "error": str(ppd_exc),
@@ -301,6 +311,8 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                         ppd = {"status": "WAITING_FOR_PLAN"}
                         ppd_health = "WAITING"
                         module_activity("ppd", "Oczekiwanie na plan", "WAITING")
+                        with a.lock:
+                            a.state["ppd_failure_latched"] = "WAITING_FOR_VALID_PLAN"
                     with a.lock:
                         a.state["planner_failure_latched"] = None
                     a.record_event("slot_replan_completed", "planner", {
@@ -318,8 +330,13 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                         "last_published_at": last_run,
                     }, "ERROR")
                     a.log.exception("slot replan failed: slot=%s", key)
-            # Never issue fresh control commands from stale or absent HA input.
-            if telemetry_ok:
+            # Stale telemetry suppresses normal commands. A latched planner/PPD
+            # fault is the exception: OFF fail-safe commands do not depend on
+            # telemetry and must still reach the configured safe scripts.
+            with a.lock:
+                planner_failure = a.state.get("planner_failure_latched")
+                ppd_failure = a.state.get("ppd_failure_latched")
+            if should_dispatch_executor_commands(telemetry_ok, planner_failure, ppd_failure):
                 a.stage_executor_commands()
                 a.dispatch_ready_commands()
             else:
