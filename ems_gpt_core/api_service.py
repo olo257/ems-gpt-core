@@ -414,7 +414,8 @@ def build_handler(a: ApiAdapters):
                             if ppd.get("status") == "ERROR" else
                             "WAITING_FOR_VALID_PLAN"
                             if health == "WAITING" or ppd.get("status") in {"WAITING", "WAITING_FOR_PLAN"}
-                            else None)
+                            else f"PPD_NOT_COMPLETED:{ppd.get('status')}"
+                            if ppd.get("status") != "COMPLETED" else None)
                     return self.json({"status":"ACCEPTED",**result,"ppd":ppd})
                 except Exception as exc:
                     failed_at = datetime.now(timezone.utc).isoformat()
