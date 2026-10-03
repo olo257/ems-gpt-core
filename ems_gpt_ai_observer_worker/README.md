@@ -41,7 +41,7 @@ repository. Configure and start it only after setting these values:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `EMS_AGENT_ID` | `ems-analysis-agent` | Stable worker identity for claims and run records. |
-| `EMS_AGENT_POLL_SECONDS` | `30` | Mailbox polling interval; minimum 5 seconds. |
+| `EMS_AGENT_POLL_SECONDS` | `5` | Mailbox polling interval; minimum 5 seconds. A new operator message is picked up on the next poll. |
 | `EMS_AGENT_SUPERVISION_INTERVAL_SECONDS` | `900` | Minimum interval between checks for a new analytics run; `0` disables periodic review while keeping mailbox replies enabled. |
 | `EMS_AGENT_LLM_TIMEOUT_SECONDS` | `120` | Model request timeout. |
 | `EMS_AGENT_STATE_PATH` | `/data/agent-worker-state.json` | Persistent marker preventing duplicate model runs for the same analytics run. Mount `/data` to persistent storage. |
