@@ -11,6 +11,7 @@ from scheduler_service import (
     publish_current_slot_prices,
     rce_event_keys,
     should_dispatch_executor_commands,
+    planner_retry_allowed,
     should_run_slot_replan,
     update_telemetry_health,
 )
@@ -155,6 +156,14 @@ class RceRestoreKeysTests(unittest.TestCase):
         result = update_telemetry_health(state, ImmediateLock(), True, now)
         self.assertEqual(result["readiness"], "READY")
         self.assertEqual(state["telemetry_consecutive_failures"], 0)
+
+
+class PlannerRetryBackoffTests(unittest.TestCase):
+    def test_transient_failure_obeys_retry_after(self):
+        now = datetime(2026, 10, 3, 9, 48, 0)
+        state = {"planner_retry_after": "2026-10-03T09:53:00"}
+        self.assertFalse(planner_retry_allowed(state, now))
+        self.assertTrue(planner_retry_allowed(state, now + timedelta(minutes=5)))
 
 
 if __name__ == "__main__":
