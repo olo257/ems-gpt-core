@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 from scheduler_service import (
     publish_current_slot_prices,
     rce_event_keys,
+    should_dispatch_executor_commands,
     should_run_slot_replan,
     update_telemetry_health,
 )
@@ -33,6 +34,16 @@ class PriceConnection:
     def __enter__(self): return self
     def __exit__(self, *args): return False
     def cursor(self): return PriceCursor(self.row)
+
+
+class PlannerFailureDispatchTests(unittest.TestCase):
+    def test_planner_or_ppd_failure_dispatches_safe_commands_without_telemetry(self):
+        self.assertTrue(should_dispatch_executor_commands(
+            False, "SOC_SAFETY_BRIDGE_UNREACHABLE:0", None))
+        self.assertTrue(should_dispatch_executor_commands(
+            False, None, "PPD_RUN_FAILED"))
+        self.assertFalse(should_dispatch_executor_commands(False, None, None))
+        self.assertTrue(should_dispatch_executor_commands(True, None, None))
 
 
 class RceRestoreKeysTests(unittest.TestCase):
