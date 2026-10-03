@@ -611,7 +611,66 @@ def build_executor(a: ExecutorAdapters):
         start = slot_start().replace(tzinfo=None)
         end = start + timedelta(minutes=int(OPTIONS.get("slot_minutes", 15)) + 1)
         staged = 0
+        with LOCK:
+            planner_failure = (STATE.get("planner_failure_latched")
+                               or STATE.get("ppd_failure_latched"))
         with db() as conn, conn.cursor() as cur:
+            if planner_failure:
+                # Do not execute stale PPD from the last published plan after
+                # the planner/PPD has failed. Stage explicit OFF commands for
+                # flexible loads and HP_HEAT_DHW (whose OFF script selects
+                # DHW-only while keeping the heat pump powered).
+                cur.execute("SELECT slot_id FROM ems_gpt_slots WHERE slot_start=%s LIMIT 1",
+                            (start,))
+                slot = cur.fetchone() or {}
+                slot_id = slot.get("slot_id")
+                if not slot_id:
+                    record_event("planner_failure_failsafe_missing_slot", "executor", {
+                        "slot_start": str(start), "error": str(planner_failure),
+                    }, "CRITICAL")
+                    return {"status": "PLANNER_FAILURE_FAIL_SAFE_SLOT_MISSING", "staged": 0}
+                cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',
+                  acknowledgement_json=%s
+                  WHERE slot_start=%s AND process_name IN ('PV_CWU','PV_EV','HP_HEAT_DHW')
+                    AND decision='ON' AND status='READY_FOR_CONNECTOR'""",
+                  (json.dumps({"reason": "PLANNER_FAILURE_FAIL_SAFE"}), start))
+                plan_version = "PLANNER_FAIL_SAFE:" + start.strftime("%Y%m%dT%H%M")
+                safety = json.dumps({
+                    "executor_enabled": True, "dry_run": dry_run,
+                    "connector_required": True,
+                    "soc_programs_1_6_write_allowed": False,
+                    "soc_restore_required": False,
+                    "planner_failure": str(planner_failure)[:500],
+                    "fail_safe": True,
+                })
+                for process in ("PV_CWU", "PV_EV", "HP_HEAT_DHW"):
+                    cur.execute("""INSERT IGNORE INTO ems_gpt_core_commands
+                      (command_id,slot_start,slot_id,process_name,decision,plan_version,
+                       created_at,expires_at,source,status,safety_json)
+                      VALUES(%s,%s,%s,%s,'OFF',%s,NOW(6),%s,'PLANNER_FAIL_SAFE',%s,%s)""",
+                      (str(uuid.uuid4()), start, slot_id, process, plan_version, end,
+                       "DRY_RUN" if dry_run else "READY_FOR_CONNECTOR", safety))
+                    staged += max(0, int(cur.rowcount))
+                state = "DRY_RUN" if dry_run else "LIVE"
+                with LOCK:
+                    STATE["executor"] = state
+                    STATE["modules"]["executor"] = state
+                if staged:
+                    record_event("planner_failure_failsafe_staged", "executor", {
+                        "slot_start": str(start), "slot_id": slot_id,
+                        "processes": ["PV_CWU", "PV_EV", "HP_HEAT_DHW"],
+                        "error": str(planner_failure),
+                    }, "CRITICAL")
+                return {"status": "PLANNER_FAILURE_FAIL_SAFE", "staged": staged}
+
+            # If a valid planner/PPD cycle recovered before emergency OFF
+            # commands were dispatched, discard those pending commands. The
+            # current published plan will be staged below.
+            cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',
+              acknowledgement_json=%s
+              WHERE slot_start=%s AND source='PLANNER_FAIL_SAFE'
+                AND status='READY_FOR_CONNECTOR'""",
+              (json.dumps({"reason": "PLANNER_RECOVERED_BEFORE_DISPATCH"}), start))
             cur.execute("""SELECT d.*,s.heat_pump_window planner_heat_pump_window,
               COALESCE(s.soc_charge_target_pct,s.soc_target_pct) runtime_soc_target_pct,
               o.requested_state,o.override_id FROM ems_gpt_core_process_decisions d
