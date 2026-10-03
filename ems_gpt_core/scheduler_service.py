@@ -67,6 +67,23 @@ def should_dispatch_executor_commands(telemetry_ok: bool, planner_failure: str |
     return bool(telemetry_ok or planner_failure or ppd_failure)
 
 
+def planner_retry_allowed(state: dict, now: datetime) -> bool:
+    """Apply bounded retry backoff after transient planner input failures."""
+    raw = state.get("planner_retry_after")
+    if not raw:
+        return True
+    try:
+        retry_after = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return True
+    compare_now = now
+    if retry_after.tzinfo is not None and compare_now.tzinfo is None:
+        compare_now = compare_now.replace(tzinfo=retry_after.tzinfo)
+    elif retry_after.tzinfo is None and compare_now.tzinfo is not None:
+        retry_after = retry_after.replace(tzinfo=compare_now.tzinfo)
+    return compare_now >= retry_after
+
+
 def should_run_slot_replan(clock: datetime, current_slot: datetime,
                            last_published_at: datetime | None,
                            rce_ready: bool) -> bool:
@@ -280,7 +297,10 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                         }
                     a.log.exception("RCE import failed: target=%s", target)
                     raise
-            if should_run_slot_replan(clock, start, last_run, rce_done):
+            with a.lock:
+                planner_retry_ready = planner_retry_allowed(a.state, clock)
+            if (telemetry_ok and planner_retry_ready
+                    and should_run_slot_replan(clock, start, last_run, rce_done)):
                 module_activity("planner", "Przeliczanie planu dla bieżącego slotu", "RUNNING")
                 module_activity("ppd", "Oczekiwanie na wynik planera", "WAITING")
                 try:
@@ -318,6 +338,8 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                             a.state["ppd_failure_latched"] = "WAITING_FOR_VALID_PLAN"
                     with a.lock:
                         a.state["planner_failure_latched"] = None
+                        a.state["planner_retry_after"] = None
+                        a.state["planner_retry_failures"] = 0
                     a.record_event("slot_replan_completed", "planner", {
                         "slot_start": key, **replan, "ppd": ppd,
                     })
@@ -327,6 +349,10 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                     module_activity("planner", f"Błąd przeliczenia: {exc}", "DEGRADED")
                     module_activity("ppd", "Zachowano ostatnie poprawne decyzje", "DEGRADED")
                     with a.lock:
+                        failures = int(a.state.get("planner_retry_failures") or 0) + 1
+                        a.state["planner_retry_failures"] = failures
+                        delay = min(300, 30 * (2 ** min(failures - 1, 4)))
+                        a.state["planner_retry_after"] = (clock + timedelta(seconds=delay)).isoformat()
                         a.state["planner_failure_latched"] = str(exc)
                     a.record_event("slot_replan_failed", "planner", {
                         "slot_start": key, "error": str(exc),
