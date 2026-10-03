@@ -16,7 +16,7 @@ options:
   llm_base_url: ""
   llm_model: ""
   llm_api_key: ""
-  poll_seconds: 30
+  poll_seconds: 5
   supervision_interval_seconds: 900
   llm_timeout_seconds: 120
 schema:
