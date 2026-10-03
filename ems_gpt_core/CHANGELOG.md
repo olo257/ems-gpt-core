@@ -22,7 +22,7 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
   nieprawidłowa migawka TOU jest traktowana jako niedostępność wejścia; ponowienia
   planera mają ograniczony backoff 30–300 s.
 - AI Observer Worker 0.1.7 czeka na endpoint `/live` Core i ponawia połączenie
-  co 10 s. Nie publikuje ponownie ustalenia odrzuconego lub rozwiązango bez
+  co 10 s. Nie publikuje ponownie ustalenia odrzuconego lub rozwiązanego bez
   dowodu z czasu po przeglądzie.
 - Zmiany nie modyfikują algorytmu SOC ani reguł BUY/SELL; dodatkowe odbiory
   pozostają wyłączone w ścieżce fail-safe.
