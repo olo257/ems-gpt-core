@@ -42,7 +42,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.39.20"
+APP_VERSION = "0.39.24"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -374,6 +374,8 @@ def complete_rce_cycle(result: dict, run_type: str) -> dict:
     except Exception as exc:
         # RCE completeness is an ingestion fact. A downstream failure must not
         # turn 96 imported prices into a failed or retryable import.
+        with LOCK:
+            STATE["planner_failure_latched"] = str(exc)
         failed = {
             **result,
             "planner": {"status": "ERROR", "error": str(exc)},
@@ -388,6 +390,19 @@ def complete_rce_cycle(result: dict, run_type: str) -> dict:
         ppd = {"status": "ERROR", "error": str(exc), "plan_run_id": plan.get("run_id")}
         record_event("ppd_run_failed", "ppd", ppd, "ERROR")
         LOG.exception("PPD failed after successful RCE planner run")
+    if ppd.get("status") not in {"COMPLETED", "ERROR", "WAITING", "WAITING_FOR_PLAN"}:
+        ppd = {"status": "ERROR", "error": f"PPD_NOT_COMPLETED:{ppd.get('status')}"}
+    if ppd.get("status") == "ERROR":
+        with LOCK:
+            STATE["ppd_failure_latched"] = str(ppd.get("error") or "PPD_FAILED")
+    elif (plan.get("status") == "WAITING"
+          or ppd.get("status") in {"WAITING", "WAITING_FOR_PLAN"}):
+        with LOCK:
+            STATE["ppd_failure_latched"] = "WAITING_FOR_VALID_PLAN"
+    else:
+        with LOCK:
+            STATE["planner_failure_latched"] = None
+            STATE["ppd_failure_latched"] = None
     completed = {**result, "pv": pv, "weather": weather,
                  "load_slots_filled": learned, "planner": {"status": "ACCEPTED", **plan},
                  "ppd": ppd}

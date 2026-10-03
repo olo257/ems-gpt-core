@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import pathlib
 import sys
 import unittest
@@ -10,6 +10,8 @@ sys.path.insert(0, str(ROOT))
 from scheduler_service import (
     publish_current_slot_prices,
     rce_event_keys,
+    should_dispatch_executor_commands,
+    planner_retry_allowed,
     should_run_slot_replan,
     update_telemetry_health,
 )
@@ -33,6 +35,16 @@ class PriceConnection:
     def __enter__(self): return self
     def __exit__(self, *args): return False
     def cursor(self): return PriceCursor(self.row)
+
+
+class PlannerFailureDispatchTests(unittest.TestCase):
+    def test_planner_or_ppd_failure_dispatches_safe_commands_without_telemetry(self):
+        self.assertTrue(should_dispatch_executor_commands(
+            False, "SOC_SAFETY_BRIDGE_UNREACHABLE:0", None))
+        self.assertTrue(should_dispatch_executor_commands(
+            False, None, "PPD_RUN_FAILED"))
+        self.assertFalse(should_dispatch_executor_commands(False, None, None))
+        self.assertTrue(should_dispatch_executor_commands(True, None, None))
 
 
 class RceRestoreKeysTests(unittest.TestCase):
@@ -144,6 +156,14 @@ class RceRestoreKeysTests(unittest.TestCase):
         result = update_telemetry_health(state, ImmediateLock(), True, now)
         self.assertEqual(result["readiness"], "READY")
         self.assertEqual(state["telemetry_consecutive_failures"], 0)
+
+
+class PlannerRetryBackoffTests(unittest.TestCase):
+    def test_transient_failure_obeys_retry_after(self):
+        now = datetime(2026, 10, 3, 9, 48, 0)
+        state = {"planner_retry_after": "2026-10-03T09:53:00"}
+        self.assertFalse(planner_retry_allowed(state, now))
+        self.assertTrue(planner_retry_allowed(state, now + timedelta(minutes=5)))
 
 
 if __name__ == "__main__":

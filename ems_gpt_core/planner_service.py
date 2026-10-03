@@ -205,8 +205,12 @@ def pv_first_target_caps(rows: list[dict], flows: list[dict],
     return caps
 
 
-def planning_tou_programs(live_programs: list[dict], baselines: dict[str, float]) -> list[dict]:
+def planning_tou_programs(live_programs: list[dict] | None, baselines: dict[str, float]) -> list[dict]:
     """Use live TOU times but immutable configured SOC baselines for planning."""
+    if not isinstance(live_programs, list) or not live_programs:
+        raise RuntimeError("TOU_PROGRAMS_UNAVAILABLE")
+    if any(not isinstance(program, dict) for program in live_programs):
+        raise RuntimeError("TOU_PROGRAMS_INVALID")
     result = []
     for live in live_programs:
         program = int(live["program"])

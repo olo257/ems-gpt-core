@@ -115,7 +115,7 @@ class ExecutorServiceTests(unittest.TestCase):
             (True, False),
         )
 
-    def build_service(self, directory, db=lambda: None):
+    def build_service(self, directory, db=lambda: None, slot_start_fn=None):
         self.options = {
             "executor_enabled": False,
             "executor_dry_run": True,
@@ -133,13 +133,58 @@ class ExecutorServiceTests(unittest.TestCase):
             record_event=lambda *args: None,
             local_now=datetime.now,
             db=db,
-            slot_start=lambda value: value,
+            slot_start=slot_start_fn or (lambda value: value),
             tou_program_snapshot=lambda: [],
             active_tou_program=lambda *args: None,
             number=lambda value: value,
             ha_state=lambda entity: None,
             ha_service_response=lambda *args, **kwargs: None,
         ))
+
+    def test_planner_failure_stages_off_for_extra_loads_and_selects_dhw(self):
+        executed = []
+        class Cursor:
+            rowcount = 0
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def execute(self, sql, params=()):
+                self.rowcount = 1 if "INSERT IGNORE INTO ems_gpt_core_commands" in sql else 0
+                executed.append((" ".join(sql.split()), params, self.rowcount))
+            def fetchone(self):
+                return {"slot_id": "20261003T1900Z"}
+
+        class Connection:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def cursor(self): return Cursor()
+
+        now = datetime.now().replace(second=0, microsecond=0)
+        current_slot = now.replace(minute=(now.minute // 15) * 15)
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.build_service(
+                directory, db=Connection,
+                slot_start_fn=lambda: current_slot)
+            self.options.update({
+                "executor_enabled": True,
+                "executor_dry_run": False,
+                "executor_activation_ack": "EMS_CONNECTOR_ACCEPTED",
+            })
+            self.state.update({
+                "executor": "LIVE",
+                "planner_failure_latched": "SOC_SAFETY_BRIDGE_UNREACHABLE:0",
+            })
+            result = service.stage_executor_commands()
+
+        inserts = [row for row in executed
+                   if "INSERT IGNORE INTO ems_gpt_core_commands" in row[0]]
+        self.assertEqual(result["status"], "PLANNER_FAILURE_FAIL_SAFE")
+        self.assertEqual(result["staged"], 3)
+        self.assertEqual([row[1][3] for row in inserts],
+                         ["PV_CWU", "PV_EV", "HP_HEAT_DHW"])
+        self.assertTrue(all("'OFF'" in row[0] for row in inserts))
+        self.assertTrue(all(row[1][6] == "READY_FOR_CONNECTOR" for row in inserts))
+        self.assertTrue(all("PLANNER_FAIL_SAFE" in row[0] for row in inserts))
+        self.assertFalse(any("SELECT d.*" in row[0] for row in executed))
 
     def test_settings_are_validated_and_persisted(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -210,6 +210,11 @@ class CoreClient:
         return self.http.request(method, self.base_url + path, token=self.token,
                                  agent_id=self.agent_id, payload=payload)
 
+    def live(self) -> dict:
+        """Probe process liveness while Core finishes its database startup."""
+        return self.http.request("GET", self.base_url + "/live")
+
+
     def inbox(self) -> list[dict]:
         return self._request("GET", "/api/agent/inbox?limit=1").get("rows", [])
 
@@ -317,6 +322,45 @@ def _parse_observer_response(raw: str) -> tuple[dict | None, str | None]:
     if not isinstance(data.get("findings"), list):
         return None, "contract:findings_must_be_array"
     return {"summary": data["summary"][:4000], "findings": data["findings"][:20]}, None
+
+
+def suppress_reviewed_findings(findings: list[dict], todo_items: list[dict]) -> list[dict]:
+    """Suppress rejected/resolved findings unless evidence postdates the review."""
+    reviewed = {}
+    metric_pattern = re.compile(r"Kontrola:.*?\(([a-zA-Z0-9_./-]+)\)")
+    for todo in todo_items:
+        if str(todo.get("status") or "").upper() not in {"REJECTED", "RESOLVED"}:
+            continue
+        details = str(todo.get("details") or "")
+        match = metric_pattern.search(details)
+        metric = match.group(1) if match else None
+        title = str(todo.get("title") or "").casefold()
+        if not metric:
+            metric = next((key for key in (
+                "export_at_nonpositive_price", "import_outside_buy_window",
+                "pv_forecast_underestimation_7d", "pv1_forecast_underestimation_7d",
+                "pv2_forecast_underestimation_7d", "load_forecast_underestimation_7d",
+                "hp_heat_dhw_plan_outside_window", "end_of_day_soc_below_target_range",
+                "planned_end_soc_below_required", "quality_score",
+            ) if key.casefold() in title), None)
+        if metric:
+            reviewed[metric] = _parse_datetime(todo.get("reviewed_at"))
+    filtered = []
+    for finding in findings:
+        metric = str(finding.get("metric") or "")
+        reviewed_at = reviewed.get(metric)
+        if reviewed_at is None:
+            filtered.append(finding)
+            continue
+        evidence_times = []
+        for item in finding.get("evidence") or []:
+            if isinstance(item, dict):
+                stamp = _parse_datetime(item.get("slot_start") or item.get("actual_recorded_at"))
+                if stamp:
+                    evidence_times.append(stamp)
+        if evidence_times and max(evidence_times) > reviewed_at:
+            filtered.append(finding)
+    return filtered
 
 
 def supervisory_review(model: ChatCompletionsClient, context: dict) -> dict | None:
@@ -434,6 +478,11 @@ class AgentWorker:
         result = supervisory_review(self.model, context)
         if result is None:
             return False
+        original_count = len(result.get("findings") or [])
+        result["findings"] = suppress_reviewed_findings(
+            result.get("findings") or [], context.get("todo_items") or [])
+        if len(result["findings"]) < original_count:
+            result["summary"] = "Pominięto powtórzone, odrzucone lub rozwiązane ustalenia bez nowych dowodów. " + result["summary"]
         result_payload = {
             "source_ref": source_ref,
             "summary": result["summary"],
@@ -498,6 +547,14 @@ def main() -> None:
     poll = int(configured("EMS_AGENT_POLL_SECONDS", "poll_seconds", "5"))
     supervise = int(configured("EMS_AGENT_SUPERVISION_INTERVAL_SECONDS", "supervision_interval_seconds", "900"))
     state_path = configured("EMS_AGENT_STATE_PATH", "state_path", "/data/agent-worker-state.json")
+    while True:
+        try:
+            core.live()
+            LOG.info("EMS-GPT Core is live")
+            break
+        except Exception as exc:
+            LOG.warning("EMS-GPT Core is not live yet (%s); retrying in 10s", type(exc).__name__)
+            time.sleep(10)
     AgentWorker(core, model, supervise, state_path).run_forever(poll)
 
 
