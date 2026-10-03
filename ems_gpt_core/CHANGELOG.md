@@ -14,7 +14,7 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
 - Worker domyślnie odbiera nowe pytania z Core co 5 sekund (wcześniej 30 s);
   ustawienie pozostaje konfigurowalne.
 - Powiadomienia e-mail nie zostały włączone: w HA nie ma obecnie skonfigurowanej
-  integracji/encjii SMTP ani wskazanego odbiorcy. Wynik pozostaje w panelu agenta.
+  integracji/encji SMTP ani wskazanego odbiorcy. Wynik pozostaje w panelu agenta.
 - Weryfikacja przed odbiorem: składnia skryptu JavaScript UI sprawdzona,
   odczyt zwrotny zmian na gałęzi potwierdzony. Nie wykonano pełnego zestawu
   testów repozytorium ani odbioru wizualnego w HA; wersje wymagają instalacji
