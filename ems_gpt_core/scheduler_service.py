@@ -292,6 +292,9 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                         try:
                             ppd = a.run_serialized(
                                 "ppd", a.run_ppd, replan.get("run_id"), "slot_replan")
+                            if not isinstance(ppd, dict) or ppd.get("status") != "COMPLETED":
+                                status = ppd.get("status") if isinstance(ppd, dict) else type(ppd).__name__
+                                raise RuntimeError(f"PPD_NOT_COMPLETED:{status}")
                             ppd_health = "RUNNING"
                             module_activity("ppd", "Decyzje PPD opublikowane", "RUNNING")
                             with a.lock:
