@@ -2,6 +2,24 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.21 — czytelne zestawienie planu i wykonania oraz odpowiedzi agenta
+
+- Widoki godzinowy i dobowy grupują kolumny w bloki „Planowane”,
+  „Wykonanie narastająco” oraz „Jakość i podsumowanie”. Zachowują otwartą
+  bieżącą godzinę i bieżącą dobę z dostępnym wykonaniem; filtr wyłącznie
+  zamkniętych slotów nadal dotyczy tylko widoku 15-minutowego.
+- Widok agenta sprawdza nowe wiadomości co 15 sekund i przebudowuje listę
+  tylko wtedy, gdy zmieni się jej treść lub status. Zachowuje pozycję czytania,
+  zamiast przewijać do końca przy każdym odświeżeniu.
+- Worker domyślnie odbiera nowe pytania z Core co 5 sekund (wcześniej 30 s);
+  ustawienie pozostaje konfigurowalne.
+- Powiadomienia e-mail nie zostały włączone: w HA nie ma obecnie skonfigurowanej
+  integracji/encji SMTP ani wskazanego odbiorcy. Wynik pozostaje w panelu agenta.
+- Weryfikacja przed odbiorem: składnia skryptu JavaScript UI sprawdzona,
+  odczyt zwrotny zmian na gałęzi potwierdzony. Nie wykonano pełnego zestawu
+  testów repozytorium ani odbioru wizualnego w HA; wersje wymagają instalacji
+  ręcznej i odbioru operatora.
+
 ## 0.39.20 — zakres, uwagi operatora i rozdzielenie trybów HP
 
 - Interaktywne analizy używają domyślnie ostatnich 7 dni; jawnie wskazany

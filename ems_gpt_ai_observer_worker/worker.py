@@ -461,7 +461,7 @@ class AgentWorker:
         LOG.info("saved background analysis to AI Observer run %s", submitted.get("run_id"))
         return True
 
-    def run_forever(self, poll_seconds: int = 30) -> None:
+    def run_forever(self, poll_seconds: int = 5) -> None:
         while True:
             try:
                 self.process_one()
@@ -495,7 +495,7 @@ def main() -> None:
         configured("EMS_AGENT_LLM_API_KEY", "llm_api_key"),
         timeout=int(configured("EMS_AGENT_LLM_TIMEOUT_SECONDS", "llm_timeout_seconds", "120")),
     )
-    poll = int(configured("EMS_AGENT_POLL_SECONDS", "poll_seconds", "30"))
+    poll = int(configured("EMS_AGENT_POLL_SECONDS", "poll_seconds", "5"))
     supervise = int(configured("EMS_AGENT_SUPERVISION_INTERVAL_SECONDS", "supervision_interval_seconds", "900"))
     state_path = configured("EMS_AGENT_STATE_PATH", "state_path", "/data/agent-worker-state.json")
     AgentWorker(core, model, supervise, state_path).run_forever(poll)
