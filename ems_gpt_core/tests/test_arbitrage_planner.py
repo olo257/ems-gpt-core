@@ -1305,5 +1305,13 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(cheapest_recovery_indices(rows, eligible, 0, 3.0, 1.25, 0.90), {2, 3, 4})
 
 
+class TouStartupReadinessTests(unittest.TestCase):
+    def test_missing_tou_snapshot_fails_closed(self):
+        for unavailable in (None, [], {"program": 1}):
+            with self.subTest(unavailable=unavailable):
+                with self.assertRaisesRegex(RuntimeError, "TOU_PROGRAMS_UNAVAILABLE|TOU_PROGRAMS_INVALID"):
+                    planning_tou_programs(unavailable, {"1": 10.0})
+
+
 if __name__ == "__main__":
     unittest.main()
