@@ -11,7 +11,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ems_gpt_ai_observer_worker"))
 
 from worker import (AgentWorker, ChatCompletionsClient, compact_context,
-                    supervisory_review, _new_completed_slots)
+                    supervisory_review, _new_completed_slots,
+                    suppress_reviewed_findings, CoreClient)
 
 
 class FakeModel:
@@ -170,6 +171,29 @@ class AgentWorkerTests(unittest.TestCase):
             {"slot_start": "2026-10-01T12:15:00", "actual_recorded_at": "2026-10-01T12:20:00"},
         ]
         self.assertEqual(_new_completed_slots(rows, watermark), [rows[1]])
+
+
+class StartupAndRepeatFindingTests(unittest.TestCase):
+    def test_rejected_and_resolved_findings_need_post_review_evidence(self):
+        todos = [
+            {"status": "REJECTED", "reviewed_at": "2026-10-01T12:00:00",
+             "details": "Kontrola: błąd planu (planner_fault)"},
+            {"status": "ACCEPTED", "reviewed_at": "2026-10-01T12:00:00",
+             "details": "Kontrola: inna rzecz (accepted_metric)"},
+        ]
+        findings = [
+            {"metric": "planner_fault", "evidence": [{"slot_start": "2026-09-30T10:00:00"}]},
+            {"metric": "planner_fault", "evidence": [{"slot_start": "2026-10-02T10:00:00"}]},
+            {"metric": "accepted_metric", "evidence": []},
+        ]
+        self.assertEqual(suppress_reviewed_findings(findings, todos), findings[1:])
+
+    def test_core_liveness_probe_uses_public_live_endpoint(self):
+        http = FakeHttp({"ok": True, "status": "PROCESS_RUNNING"})
+        core = CoreClient("http://core:8099", "token", "worker", http=http)
+        self.assertTrue(core.live()["ok"])
+        self.assertEqual(http.requests[0][1], "http://core:8099/live")
+        self.assertIsNone(http.requests[0][2].get("token"))
 
 
 if __name__ == "__main__":
