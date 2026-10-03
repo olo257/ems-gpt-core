@@ -13,6 +13,22 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
   awaryjne, a sterowanie wraca do bieżącego planu i istniejących override'ów.
 - Zabezpieczenie nie zapisuje celów SOC ani nie zmienia reguł BUY/SELL.
 
+## 0.39.24 — zabezpieczenie PPD i odporność rozruchu
+
+- Przy błędzie planera/PPD lub braku poprawnego planu executor odrzuca stare
+  decyzje i wystawia OFF dla PV_CWU, PV_EV oraz HP_HEAT_DHW; skrypt HP ustawia
+  „DHW only” i pozostawia pompę zasiloną. Polecenia awaryjne są audytowane.
+- Core nie rozpoczyna automatycznego replanu bez świeżej telemetrii. Brak albo
+  nieprawidłowa migawka TOU jest traktowana jako niedostępność wejścia; ponowienia
+  planera mają ograniczony backoff 30–300 s.
+- AI Observer Worker 0.1.7 czeka na endpoint `/live` Core i ponawia połączenie
+  co 10 s. Nie publikuje ponownie ustalenia odrzuconego lub rozwiązango bez
+  dowodu z czasu po przeglądzie.
+- Zmiany nie modyfikują algorytmu SOC ani reguł BUY/SELL; dodatkowe odbiory
+  pozostają wyłączone w ścieżce fail-safe.
+- Dodano testy dla poleceń fail-safe, backoffu planera, nieobecnej migawki TOU,
+  oczekiwania Worker na Core oraz filtrowania starych findingów.
+
 ## 0.39.22 — plan i wykonanie zestawione parami
 
 - Widoki godzinowy i dobowy pokazują główne wielkości obok siebie: PV plan / PV wykonanie, zużycie plan / zużycie wykonanie, a następnie import, eksport, ładowanie i rozładowanie baterii oraz wynik PLN.
