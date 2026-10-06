@@ -66,10 +66,18 @@ class ObserverOperationalAuditTests(unittest.TestCase):
 
     def test_hp_plan_outside_allowed_window_is_reported(self):
         rows = [{"slot_start": datetime(2026, 9, 29, 6, 45), "market_window": "NEUTRAL",
-                 "forecast_heat_pump_load_kwh": 0.3}]
+                 "heat_pump_window": 1, "forecast_heat_pump_load_kwh": 0.3}]
         findings, _ = audit_operational_rows([], rows, options=self.options)
-        finding = next(item for item in findings if item["metric"] == "heat_pump_outside_window")
+        finding = next(item for item in findings if item["metric"] == "hp_heat_dhw_plan_outside_window")
         self.assertEqual(finding["evidence"][0]["forecast_heat_pump_load_kwh"], 0.3)
+
+    def test_autonomous_dhw_energy_does_not_imply_planned_heating(self):
+        rows = [{"slot_start": datetime(2026, 9, 29, 6, 45), "market_window": "NEUTRAL",
+                 "heat_pump_window": 0, "forecast_heat_pump_load_kwh": 0.3,
+                 "forecast_heat_pump_dhw_load_kwh": 0.3, "actual_dhw_consumed_kwh": 0.3,
+                 "actual_heat_pump_mode": "DHW only"}]
+        findings, _ = audit_operational_rows(rows, [], options=self.options)
+        self.assertFalse(any(item["metric"] == "hp_heat_dhw_plan_outside_window" for item in findings))
 
     def test_planned_export_at_negative_price_in_future_is_critical(self):
         rows = [{"slot_start": datetime(2026, 9, 29, 12), "price_sell_pln_kwh": -0.01,

@@ -1,5 +1,6 @@
 import ast
 import pathlib
+import re
 import unittest
 
 
@@ -24,8 +25,11 @@ class OfflineContractTests(unittest.TestCase):
                 ast.parse(source)
 
     def test_version_is_consistent(self):
-        self.assertIn('APP_VERSION = "0.39.20"', APP_SOURCE)
-        self.assertIn('version: "0.39.20"', CONFIG)
+        app_version = re.search(r'^APP_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$', APP_SOURCE, re.MULTILINE)
+        config_version = re.search(r'^version: "([0-9]+\.[0-9]+\.[0-9]+)"$', CONFIG, re.MULTILINE)
+        self.assertIsNotNone(app_version)
+        self.assertIsNotNone(config_version)
+        self.assertEqual(app_version.group(1), config_version.group(1))
 
     def test_observer_scope_feedback_and_hp_modes_are_explicit(self):
         worker = (ROOT.parent / "ems_gpt_ai_observer_worker" / "worker.py").read_text(encoding="utf-8")
