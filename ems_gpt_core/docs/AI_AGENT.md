@@ -79,3 +79,19 @@ worker is online.
 claim lifecycle, and absence of planner/PPD/executor/HA dependencies in the
 agent service. Existing planner, PPD, executor and offline contract suites
 remain release gates and must pass before publication.
+
+## Worker 0.1.8 — failure handling
+
+Mailbox answers and periodic reviews run in separately guarded stages. A failure
+in one stage does not skip the other. Each stage retries after 60 seconds, with
+exponential backoff capped at 900 seconds; success resets that stage's backoff.
+Failed reviews do not advance the completed-source marker or history watermark.
+The existing ten-minute Core mailbox claim lease remains in effect, so unanswered
+questions can be reclaimed after a failed model request or a worker restart.
+
+Logs include the failing stage, HTTP status, and only allowlisted provider error
+codes (for example `insufficient_quota` or `invalid_api_key`). Raw response text,
+request headers, credentials, and EMS context are never copied into diagnostics.
+This change diagnoses provider/configuration failures; it cannot replenish an
+API quota or repair provider credentials automatically.
+
