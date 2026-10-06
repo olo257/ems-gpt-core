@@ -162,6 +162,26 @@ def compact_context(context: dict) -> dict:
     }
 
 
+class HttpRequestError(RuntimeError):
+    """HTTP status plus an allowlisted diagnostic; never provider text or secrets."""
+    def __init__(self, status: int, provider_code: str | None = None):
+        super().__init__(f"HTTP_{status}")
+        self.provider_code = provider_code
+
+
+def safe_error_code(exc: Exception) -> str:
+    if isinstance(exc, HttpRequestError):
+        return str(exc) + (f":{exc.provider_code}" if exc.provider_code else "")
+    code = str(exc)
+    if type(exc) is RuntimeError and (re.fullmatch(r"HTTP_[1-5][0-9]{2}", code) or code in {
+        "TimeoutError", "URLError", "OSError", "RESPONSE_TOO_LARGE",
+        "JSON_OBJECT_REQUIRED", "LLM_EMPTY_RESPONSE", "OBSERVER_RESULT_NOT_ACCEPTED",
+        "OBSERVER_RESPONSE_INVALID",
+    }):
+        return code
+    return type(exc).__name__
+
+
 class JsonHttpClient:
     def __init__(self, timeout: int = 30):
         self.timeout = timeout
@@ -182,8 +202,23 @@ class JsonHttpClient:
             with urlopen(req, timeout=self.timeout) as response:
                 raw = response.read(4_000_001)
         except HTTPError as exc:
-            # Never log response headers or request secrets.
-            raise RuntimeError(f"HTTP_{exc.code}") from None
+            # Extract only known machine codes. Error messages can echo credentials
+            # or EMS data, so they must never enter logs or persisted diagnostics.
+            provider_code = None
+            try:
+                error = json.loads(exc.read(8193)).get("error")
+                code = error.get("code") if isinstance(error, dict) else None
+                if isinstance(code, str) and code in {
+                    "insufficient_quota", "rate_limit_exceeded", "invalid_api_key",
+                    "model_not_found", "context_length_exceeded", "invalid_request_error",
+                    "account_deactivated", "billing_hard_limit_reached",
+                }:
+                    provider_code = code
+            except (OSError, ValueError, AttributeError):
+                pass
+            finally:
+                exc.close()
+            raise HttpRequestError(exc.code, provider_code) from None
         except (TimeoutError, URLError, OSError) as exc:
             raise RuntimeError(type(exc).__name__) from None
         if len(raw) > 4_000_000:
@@ -404,8 +439,8 @@ def supervisory_review(model: ChatCompletionsClient, context: dict) -> dict | No
     try:
         repaired = _complete_json(model, repair_messages)
     except Exception as exc:
-        LOG.warning("Observer JSON repair request failed: %s", type(exc).__name__)
-        return None
+        LOG.warning("Observer JSON repair request failed: %s", safe_error_code(exc))
+        raise
     result, repair_problem = _parse_observer_response(repaired)
     if result is None:
         LOG.warning("Observer response rejected after one JSON repair attempt: %s", repair_problem)
@@ -422,6 +457,8 @@ class AgentWorker:
         self.state_path = state_path
         self.state = self._load_state()
         self.last_supervision = 0.0
+        self.retry_after = {"mailbox": 0.0, "supervision": 0.0}
+        self.failures = {"mailbox": 0, "supervision": 0}
 
     def _load_state(self) -> dict:
         try:
@@ -477,7 +514,7 @@ class AgentWorker:
         )
         result = supervisory_review(self.model, context)
         if result is None:
-            return False
+            raise RuntimeError("OBSERVER_RESPONSE_INVALID")
         original_count = len(result.get("findings") or [])
         result["findings"] = suppress_reviewed_findings(
             result.get("findings") or [], context.get("todo_items") or [])
@@ -510,13 +547,33 @@ class AgentWorker:
         LOG.info("saved background analysis to AI Observer run %s", submitted.get("run_id"))
         return True
 
+    def run_cycle(self, now: float | None = None) -> None:
+        """A failed mailbox answer must not skip the scheduled review (or vice versa)."""
+        now = time.time() if now is None else now
+        for phase in ("mailbox", "supervision"):
+            if now < self.retry_after[phase]:
+                continue
+            previous_supervision = self.last_supervision
+            try:
+                if phase == "mailbox":
+                    self.process_one()
+                else:
+                    self.review_once(now=now)
+            except Exception as exc:
+                if phase == "supervision":
+                    self.last_supervision = previous_supervision
+                self.failures[phase] += 1
+                delay = min(900, 60 * 2 ** min(self.failures[phase] - 1, 4))
+                self.retry_after[phase] = now + delay
+                LOG.error("worker %s failed: %s; retry in %ss", phase,
+                          safe_error_code(exc), delay)
+            else:
+                self.failures[phase] = 0
+                self.retry_after[phase] = 0.0
+
     def run_forever(self, poll_seconds: int = 5) -> None:
         while True:
-            try:
-                self.process_one()
-                self.review_once()
-            except Exception as exc:  # isolate worker failures from EMS Core
-                LOG.error("worker cycle failed: %s", type(exc).__name__)
+            self.run_cycle()
             time.sleep(poll_seconds)
 
 
@@ -553,7 +610,7 @@ def main() -> None:
             LOG.info("EMS-GPT Core is live")
             break
         except Exception as exc:
-            LOG.warning("EMS-GPT Core is not live yet (%s); retrying in 10s", type(exc).__name__)
+            LOG.warning("EMS-GPT Core is not live yet (%s); retrying in 10s", safe_error_code(exc))
             time.sleep(10)
     AgentWorker(core, model, supervise, state_path).run_forever(poll)
 
