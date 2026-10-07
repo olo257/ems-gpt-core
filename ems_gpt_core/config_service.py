@@ -13,12 +13,13 @@ DEYE_PROGRAM_SOC_DEFAULTS = {
     "deye_program_6_soc_pct": 30,
 }
 
+LEGACY_REMOVED_OPTIONS = {"agent_api_token"}
+
 # These values belong exclusively to Supervisor add-on options. They must
 # never be shadowed by runtime-settings.json written from the application UI.
 ADDON_ONLY_SETTINGS = {
     *DEYE_PROGRAM_SOC_DEFAULTS,
     "garden_temperature_entity",
-    "agent_api_token",
 }
 
 
@@ -213,7 +214,6 @@ DEFAULT_OPTIONS = {
     "executor_activation_ack": "",
     "connector_service_map_json": "{}",
     "ai_observer_enabled": True,
-    "agent_api_token": "",
     "backup_enabled": False,
     "backup_time": "02:20",
     "backup_local_directory": "/backup/ems-gpt",
@@ -242,7 +242,9 @@ for _key, (_label, _energy, _power, _water, _state, _counter, _threshold) in APP
 def load_options(options_path: Path, runtime_settings_path: Path) -> dict:
     result = dict(DEFAULT_OPTIONS)
     try:
-        result.update(json.loads(options_path.read_text(encoding="utf-8")))
+        saved_options = json.loads(options_path.read_text(encoding="utf-8"))
+        result.update({key: value for key, value in saved_options.items()
+                       if key not in LEGACY_REMOVED_OPTIONS})
     except FileNotFoundError:
         pass
     try:
@@ -251,5 +253,6 @@ def load_options(options_path: Path, runtime_settings_path: Path) -> dict:
         runtime = {}
     result.update({key: value for key, value in runtime.items()
                    if key not in ADDON_ONLY_SETTINGS
+                   and key not in LEGACY_REMOVED_OPTIONS
                    and key != "deye_program_soc_baseline_json"})
     return result

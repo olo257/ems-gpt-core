@@ -153,30 +153,20 @@ w górę do kroku SOC; potrzeby nocne mogą podnieść wymagane zamknięcie doby
 
 ### AI Observer — audyt w tle
 
-- Observer uruchamia się po przebiegu analityki, nie częściej niż co 50 minut.
-- Core Observer wykonuje regułowe kontrole po analityce. Dodatkowy worker LLM
-  może pogłębić analizę po pojawieniu się nowego przebiegu analityki; czyta
-  ostatnie 28 dni zamkniętych slotów i do 96 przyszłych slotów planu.
-- Wynik workera zapisuje się jako osobny przebieg AI Observera oraz TODO,
-  zawierające zakres analizy, dowody i wnioski. Nie trafia do skrzynki czatu.
-- Worker jest osobnym procesem i nie uruchamia się od samego `agent_api_token`.
-  Wymaga prywatnego adresu API Core, tego tokenu, adresu usługi LLM oraz
-  ewentualnego osobnego klucza dostawcy modelu. Instrukcja jest w
-  [`EMS-GPT AI Observer Worker`](../ems_gpt_ai_observer_worker/README.md).
-- Kontrole obejmują plan względem wykonania i jakości telemetrii, eksport przy
-  cenie sprzedaży <= 0, import poza BUY (z pominięciem szumu < 0,050 kWh),
-  powtarzalne błędy prognozy PV1/PV2/łącznej PV i zużycia, sloty HP poza oknem,
-  SOC zamknięcia doby oraz zgodność planowanego SOC z wymaganym.
-- Wzorzec prognozy PV/zużycia jest oceniany na zagregowanych dobach; pojedynczy
-  nietypowy slot nie uruchamia wniosku o systematycznym niedoszacowaniu.
-- Każdy TODO przechowuje zakres i liczbę przeanalizowanych slotów, wykrytą
-  metrykę, wartość i próg, przykłady z `slot_start`, wniosek oraz zalecaną
-  weryfikację. Krytyczne naruszenia są otwierane od razu; pozostałe zachowują
-  dotychczasowy cykl obserwacji przez kolejne dni.
-- Observer ma wyłącznie tryb `SHADOW_READ_ONLY`; wynik nigdy sam nie zmienia
-  planu, PPD, wykonawcy, ustawień ani usług Home Assistant.
-- Skrzynka operatora pozostaje odrębnym kanałem do zadawania pytań o błąd;
-  odpowiedzi czatu nie są raportami okresowego nadzoru.
+- Wbudowany Observer uruchamia się po przebiegu analityki, nie częściej niż co
+  50 minut i wykonuje regułowe kontrole planu, wykonania oraz jakości telemetrii.
+- Wyniki i sugestie są zapisywane w historii AI Observera i TODO. Observer
+  pozostaje w trybie `SHADOW_READ_ONLY`: nie zmienia planu, PPD, wykonawcy,
+  ustawień ani usług Home Assistant.
+- Analiza obejmuje eksport przy cenie sprzedaży <= 0, import poza BUY
+  (z pominięciem szumu < 0,050 kWh), błędy prognozy PV/zużycia, sloty HP poza
+  oknem, SOC zamknięcia doby oraz zgodność planowanego SOC z wymaganym.
+- Pojedynczy nietypowy slot nie uruchamia wniosku o systematycznym błędzie;
+  wzorce prognozy są oceniane na zagregowanych dobach.
+- TODO przechowuje zakres i liczbę analizowanych slotów, metrykę, wartość
+  i próg, przykłady z `slot_start`, wniosek oraz zalecaną weryfikację.
+- Zewnętrzny AI Agent, jego skrzynka API i Worker zostały usunięte. Wbudowany
+  Observer oraz historyczne rekordy w bazie pozostają zachowane.
 
 ## 6. RCE i bieżące ceny
 

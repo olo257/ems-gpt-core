@@ -91,11 +91,21 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("e.key==='Escape'", HTML)
         self.assertIn("if(e.target===todoModal)closeTodo()", HTML)
 
-    def test_agent_panel_uses_mailbox_and_escapes_messages(self):
-        self.assertIn("data-view='agent'", HTML)
-        self.assertIn("api/agent/message", HTML)
-        self.assertIn("api/agent/messages", HTML)
-        self.assertIn("escapeHtml(m.message_text)", HTML)
+    def test_execution_pairs_plan_and_actual_and_includes_open_slot(self):
+        self.assertIn("['execution_status','Status slotu']", HTML)
+        self.assertIn("['forecast_pv_total_kwh','PV plan kWh']", HTML)
+        self.assertIn("['actual_pv_total_kwh','PV wykon. kWh']", HTML)
+        self.assertIn("['planned_buy_kwh','Import plan kWh']", HTML)
+        self.assertIn("['actual_buy_kwh','Import wykon. kWh']", HTML)
+        self.assertIn("s.actual_recorded_at IS NOT NULL OR s.slot_start=%s", API)
+        self.assertIn("'IN_PROGRESS'", API)
+        self.assertIn("v==='IN_PROGRESS'?'W TOKU'", HTML)
+
+    def test_agent_ui_is_removed_and_observer_tab_remains(self):
+        self.assertNotIn("data-view='agent'", HTML)
+        self.assertNotIn("api/agent/", HTML)
+        self.assertIn("data-view='ai-runs'", HTML)
+        self.assertIn('"ai-runs"', API)
 
 
 if __name__ == "__main__":
