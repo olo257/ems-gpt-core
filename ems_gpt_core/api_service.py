@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import hmac
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
@@ -44,13 +43,6 @@ class ApiAdapters:
     slot_column_audit: Callable
     html: str
     icon_path: str = "/app/icon.png"
-    agent_api_token: str = ""
-    agent_submit_message: Callable | None = None
-    agent_list_messages: Callable | None = None
-    agent_claim_messages: Callable | None = None
-    agent_submit_reply: Callable | None = None
-    agent_read_context: Callable | None = None
-    agent_submit_observer_result: Callable | None = None
 
 
 def build_handler(a: ApiAdapters):
@@ -70,31 +62,12 @@ def build_handler(a: ApiAdapters):
     database_catalog = a.database_catalog
     slot_column_audit = a.slot_column_audit
     HTML, icon_path = a.html, a.icon_path
-    agent_api_token = a.agent_api_token
-    agent_submit_message, agent_list_messages = a.agent_submit_message, a.agent_list_messages
-    agent_claim_messages, agent_submit_reply = a.agent_claim_messages, a.agent_submit_reply
-    agent_read_context = a.agent_read_context
-    agent_submit_observer_result = a.agent_submit_observer_result
 
     class Handler(BaseHTTPRequestHandler):
         def json(self, payload: dict, status=HTTPStatus.OK):
             data = json.dumps(payload, ensure_ascii=False, default=str).encode()
             self.send_response(status); self.send_header("Content-Type", "application/json; charset=utf-8"); self.send_header("Cache-Control", "no-store"); self.send_header("Pragma", "no-cache"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
 
-        def agent_authorized(self):
-            supplied = self.headers.get("Authorization", "")
-            expected = f"Bearer {agent_api_token}" if agent_api_token else ""
-            return bool(expected and hmac.compare_digest(supplied, expected))
-
-        def read_json(self, max_bytes=20000):
-            length = int(self.headers.get("Content-Length", "0") or 0)
-            if length < 0 or length > max_bytes:
-                raise ValueError("REQUEST_TOO_LARGE")
-            payload = json.loads(self.rfile.read(length) or b"{}")
-            if not isinstance(payload, dict):
-                raise ValueError("JSON_OBJECT_REQUIRED")
-            return payload
-    
         def do_GET(self):
             path = self.path.split("?", 1)[0].rstrip("/")
             if path.endswith("/live") or path == "/live":
@@ -182,30 +155,6 @@ def build_handler(a: ApiAdapters):
                 return self.json(payload)
             if path.endswith("/api/settings") or path == "/api/settings":
                 return self.json({"settings": settings_payload()})
-            if path.endswith("/api/agent/messages") or path == "/api/agent/messages":
-                params = parse_qs(urlparse(self.path).query)
-                limit = min(200, max(1, int(params.get("limit", ["100"])[0])))
-                thread_id = params.get("thread_id", [None])[0]
-                return self.json({"rows": agent_list_messages(limit, thread_id),
-                                  "agent_enabled": bool(agent_api_token)})
-            if path.endswith("/api/agent/inbox") or path == "/api/agent/inbox":
-                if not self.agent_authorized():
-                    return self.json({"error": "agent_auth_required"}, HTTPStatus.UNAUTHORIZED)
-                params = parse_qs(urlparse(self.path).query)
-                limit = min(20, max(1, int(params.get("limit", ["5"])[0])))
-                agent_id = self.headers.get("X-EMS-Agent-ID", "ems-analysis-agent")
-                return self.json({"rows": agent_claim_messages(agent_id, limit)})
-            if path.endswith("/api/agent/context") or path == "/api/agent/context":
-                if not self.agent_authorized():
-                    return self.json({"error": "agent_auth_required"}, HTTPStatus.UNAUTHORIZED)
-                params = parse_qs(urlparse(self.path).query)
-                try:
-                    history_days = int(params.get("history_days", ["28"])[0])
-                except (TypeError, ValueError):
-                    return self.json({"error": "invalid_history_days"}, HTTPStatus.BAD_REQUEST)
-                if not 1 <= history_days <= 28:
-                    return self.json({"error": "invalid_history_days"}, HTTPStatus.BAD_REQUEST)
-                return self.json(agent_read_context(96, history_days))
             if path.endswith("/api/database-audit") or path == "/api/database-audit":
                 try:
                     return self.json(database_audit())
@@ -316,35 +265,6 @@ def build_handler(a: ApiAdapters):
     
         def do_POST(self):
             path=self.path.split("?",1)[0].rstrip("/")
-            if path.endswith("/api/agent/message") or path == "/api/agent/message":
-                try:
-                    payload = self.read_json(12000)
-                    actor = self.headers.get("X-Ingress-User") or "operator"
-                    return self.json(agent_submit_message(payload.get("message"), actor), HTTPStatus.ACCEPTED)
-                except (ValueError, TypeError, json.JSONDecodeError) as exc:
-                    return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.BAD_REQUEST)
-            if path.endswith("/api/agent/reply") or path == "/api/agent/reply":
-                if not self.agent_authorized():
-                    return self.json({"error": "agent_auth_required"}, HTTPStatus.UNAUTHORIZED)
-                try:
-                    payload = self.read_json(24000)
-                    agent_id = self.headers.get("X-EMS-Agent-ID", "ems-analysis-agent")
-                    result = agent_submit_reply(payload.get("message_id"), agent_id, payload.get("message"))
-                    return self.json(result, HTTPStatus.CREATED)
-                except PermissionError as exc:
-                    return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.CONFLICT)
-                except (ValueError, TypeError, json.JSONDecodeError) as exc:
-                    return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.BAD_REQUEST)
-            if path.endswith("/api/agent/observer-result") or path == "/api/agent/observer-result":
-                if not self.agent_authorized():
-                    return self.json({"error": "agent_auth_required"}, HTTPStatus.UNAUTHORIZED)
-                try:
-                    payload = self.read_json(100000)
-                    agent_id = self.headers.get("X-EMS-Agent-ID", "ems-analysis-agent")
-                    result = agent_submit_observer_result(agent_id, payload)
-                    return self.json(result, HTTPStatus.CREATED if result.get("status") == "COMPLETED" else HTTPStatus.OK)
-                except (ValueError, TypeError, json.JSONDecodeError) as exc:
-                    return self.json({"status":"REJECTED","error":str(exc)},HTTPStatus.BAD_REQUEST)
             if path.endswith("/api/settings") or path=="/api/settings":
                 try:
                     length=min(65536,int(self.headers.get("Content-Length","0") or 0))

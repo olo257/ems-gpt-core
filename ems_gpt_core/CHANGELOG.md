@@ -2,6 +2,21 @@
 
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
+## 0.39.25 — widok wykonania slotów i usunięcie Agenta AI
+
+- Widok Wykonanie zestawia plan z wykonaniem dla slotów 15-minutowych:
+  PV, zużycie, import, eksport, ładowanie i rozładowanie baterii, PV→EV oraz SOC.
+- Bieżący slot jest zwracany jako `IN_PROGRESS` i oznaczony „W toku”.
+  Pokazuje plan, a niewypełnione jeszcze pola wykonania pozostają puste.
+  Tabela odświeża się w istniejącym cyklu 30 sekund.
+- Usunięto z Core skrzynkę Agenta AI, jej API, konfigurację, panel, Worker
+  add-on i integrację wyników workera z Observerem. Wbudowany AI Observer
+  pozostaje bez zmian w trybie `SHADOW_READ_ONLY`.
+- Nie usunięto danych historycznych: tabela wiadomości oraz rekordy
+  Observera zachowują dotychczasową zawartość.
+- Testy kontraktów potwierdzają pary plan/wykonanie, widoczność bieżącego
+  slotu oraz pozostawienie panelu AI Observera.
+
 ## 0.39.23 — tryb bezpieczny po błędzie planera lub PPD
 
 - Po błędzie planera, PPD albo oczekiwaniu na poprawny plan wstrzymywane są

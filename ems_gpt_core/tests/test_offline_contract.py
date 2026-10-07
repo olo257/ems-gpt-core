@@ -31,19 +31,16 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIsNotNone(config_version)
         self.assertEqual(app_version.group(1), config_version.group(1))
 
-    def test_observer_scope_feedback_and_hp_modes_are_explicit(self):
-        worker = (ROOT.parent / "ems_gpt_ai_observer_worker" / "worker.py").read_text(encoding="utf-8")
+    def test_internal_observer_remains_and_agent_worker_is_removed(self):
         observer = MODULE_SOURCES["observer_service.py"]
-        agent = MODULE_SOURCES["agent_service.py"]
-        self.assertIn("def requested_history_days", worker)
-        self.assertIn("TODO REJECTED", worker)
-        self.assertIn("review_note", worker)
-        self.assertIn("HP_HEAT_DHW", worker)
-        self.assertIn("HP_DHW", worker)
-        self.assertIn("hp_heat_dhw_plan_outside_window", observer)
-        self.assertIn("forecast_heat_pump_dhw_load_kwh", observer)
-        self.assertIn("actual_heating_consumed_kwh", agent)
-        self.assertIn("actual_dhw_consumed_kwh", agent)
+        api = (ROOT / "api_service.py").read_text(encoding="utf-8")
+        self.assertIn("def run_ai_observer(", observer)
+        self.assertIn("SHADOW_READ_ONLY", observer)
+        self.assertFalse((ROOT / "agent_service.py").exists())
+        self.assertFalse((ROOT / "observer_worker_service.py").exists())
+        self.assertFalse((ROOT.parent / "ems_gpt_ai_observer_worker").exists())
+        self.assertNotIn("/api/agent/", api)
+        self.assertIn('"ai-runs"', api)
 
     def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
         planner = MODULE_SOURCES["planner_service.py"]
