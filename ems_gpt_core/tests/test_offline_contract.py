@@ -355,16 +355,11 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("INSERT INTO ems_gpt_core_ai_runs", SOURCE)
         self.assertIn("run_ai_observer(analytics_result.get(\"run_id\"))", SOURCE)
 
-    def test_external_observer_worker_cannot_touch_planner_or_controls(self):
-        worker = MODULE_SOURCES["observer_worker_service.py"]
-        for forbidden in ("planner_service", "executor_service", "ppd_service",
-                          "ha_gateway_service"):
-            self.assertNotIn(forbidden, worker)
-        self.assertIn("HA_SERVICE_CALL", worker)
-        self.assertIn("COMMAND_WRITE", worker)
-        self.assertIn("INSERT INTO ems_gpt_core_ai_runs", worker)
-        self.assertIn("create_todo(\"ai_agent\"", worker)
-        self.assertNotIn("UPDATE ems_gpt_slots", worker)
+    def test_external_observer_worker_bridge_is_removed(self):
+        api = MODULE_SOURCES["api_service.py"]
+        self.assertFalse((ROOT / "observer_worker_service.py").exists())
+        self.assertNotIn("/api/agent/observer-result", api)
+        self.assertIn("def run_ai_observer(", MODULE_SOURCES["observer_service.py"])
 
     def test_command_expiry_covers_dispatched_and_accepted(self):
         self.assertIn("def expire_stale_commands", SOURCE)
