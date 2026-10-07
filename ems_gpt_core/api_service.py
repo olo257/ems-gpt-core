@@ -264,9 +264,12 @@ def build_handler(a: ApiAdapters):
                   "plan":("SELECT * FROM ems_gpt_slots WHERE actual_recorded_at IS NULL AND slot_start>=%s ORDER BY slot_start LIMIT %s",(slot_start().replace(tzinfo=None),limit)),
                   "execution":("""SELECT s.*,d.actual_grid_export_kwh,d.actual_ev_kwh,d.actual_dhw_kwh,
                     d.soc_start_pct,d.soc_min_pct,d.soc_delta_pct,
-                    d.sample_count,d.coverage_pct,d.export_attribution FROM ems_gpt_slots s
+                    d.sample_count,d.coverage_pct,d.export_attribution,
+                    CASE WHEN s.actual_recorded_at IS NULL THEN 'IN_PROGRESS' ELSE 'CLOSED' END AS execution_status
+                    FROM ems_gpt_slots s
                     LEFT JOIN ems_gpt_core_execution_details d ON d.slot_start=s.slot_start
-                    WHERE s.actual_recorded_at IS NOT NULL ORDER BY s.slot_start DESC LIMIT %s""",(limit,)),
+                    WHERE (s.actual_recorded_at IS NOT NULL OR s.slot_start=%s)
+                    ORDER BY s.slot_start DESC LIMIT %s""",(slot_start().replace(tzinfo=None),limit)),
                   "hourly":("SELECT * FROM ems_gpt_core_hourly WHERE hour_start<=%s ORDER BY hour_start DESC LIMIT %s",(local_now().replace(tzinfo=None),limit)),
                   "daily":("SELECT * FROM ems_gpt_daily ORDER BY day_date DESC LIMIT %s",(limit,)),
                   "runs":("SELECT * FROM ems_gpt_plan_runs ORDER BY created_at DESC LIMIT %s",(limit,)),
