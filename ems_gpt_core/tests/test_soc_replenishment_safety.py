@@ -7,7 +7,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from planner_service import (
     build_soc_contracts, daily_close_soc_requirements,
     end_of_day_soc_target, optimize_energy_horizon,
-    replenishment_soc_requirements,
+    replenishment_soc_requirements, validate_recoverable_soc_requirements,
 )
 
 
@@ -138,6 +138,25 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             row['forecast_load_kwh'] = 1.0
         with self.assertRaisesRegex(RuntimeError, 'No feasible SOC state'):
             self.optimize(rows, self.safety(rows), initial=20.0)
+
+    def test_recovery_runs_before_cap_validation_but_never_weakens_post_buy_bridge(self):
+        rows = self.rows(4)
+        rows[2]['buy_window'] = True
+        # Requirements above the cap in the already-missed prefix are recoverable
+        # only up to the first BUY.
+        result = validate_recoverable_soc_requirements(
+            rows, [105.0, 105.0, 17.0, 17.0], 13.0, 15.0, 100.0)
+        self.assertEqual(result['required_soc_pcts'], [15.0, 15.0, 17.0, 17.0])
+        # The same over-cap requirement after the BUY stays a hard failure.
+        with self.assertRaisesRegex(RuntimeError, r'SOC_SAFETY_BRIDGE_EXCEEDS_CAP:3:105'):
+            validate_recoverable_soc_requirements(
+                rows, [105.0, 17.0, 17.0, 105.0], 13.0, 15.0, 100.0)
+
+    def test_no_buy_does_not_relax_an_over_cap_bridge(self):
+        rows = self.rows(3)
+        with self.assertRaisesRegex(RuntimeError, r'SOC_SAFETY_BRIDGE_EXCEEDS_CAP:0:105'):
+            validate_recoverable_soc_requirements(
+                rows, [105.0, 17.0, 17.0], 13.0, 15.0, 100.0)
 
     def test_requirements_do_not_clip_an_impossible_bridge(self):
         rows = self.rows(20)
