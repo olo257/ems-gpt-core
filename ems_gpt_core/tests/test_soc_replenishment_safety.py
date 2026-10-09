@@ -127,10 +127,15 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertEqual(recovery['recovery_buy_index'], 1)
         self.assertEqual(recovery['relaxed_indices'], [0])
         self.assertEqual(recovery['required_soc_pcts'], [15.0, 17.0, 17.0, 17.0])
+        recovery = validate_recoverable_soc_requirements(
+            rows, recovery['required_soc_pcts'], 13.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
         plan = self.optimize(rows, recovery['required_soc_pcts'],
                              initial=13.0, terminal=17.0)
         self.assertGreater(plan['flows'][1]['grid_charge_kwh'], 0.0)
-        self.assertGreaterEqual(plan['flows'][0]['soc_end_pct'], 15.0)
+        self.assertAlmostEqual(plan['flows'][0]['soc_end_pct'], 13.0)
+        self.assertGreaterEqual(plan['flows'][1]['soc_end_pct'], 17.0)
 
     def test_insufficient_initial_soc_is_not_silently_waived(self):
         rows = self.rows(4)
@@ -138,6 +143,10 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             row['forecast_load_kwh'] = 1.0
         with self.assertRaisesRegex(RuntimeError, 'No feasible SOC state'):
             self.optimize(rows, self.safety(rows), initial=20.0)
+
+    def test_invalid_measured_soc_above_100_is_rejected(self):
+        with self.assertRaisesRegex(RuntimeError, 'INVALID_INITIAL_SOC'):
+            self.optimize(self.rows(1), [15.0], initial=100.1)
 
     def test_over_capacity_bridge_is_bounded_and_disables_sales(self):
         rows = self.rows(4)
@@ -161,6 +170,44 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertLessEqual(max(result['required_soc_pcts']), 100.0)
         self.assertEqual(result['required_soc_pcts'][0], 15.0)
         self.assertTrue(result['disable_battery_sales'])
+
+    def test_unreachable_floor_is_bounded_to_physical_reachability(self):
+        rows = self.rows(4)
+        rows[1].update(forecast_load_kwh=0.5, buy_window=False)
+        rows[2].update(forecast_load_kwh=0.0, buy_window=True)
+        result = validate_recoverable_soc_requirements(
+            rows, [50.0, 80.0, 80.0, 50.0], 50.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
+        self.assertEqual(result['unreachable_indices'], [1, 2])
+        self.assertLessEqual(result['required_soc_pcts'][1],
+                             result['reachable_soc_ceiling_pcts'][1])
+        self.assertTrue(result['disable_battery_sales'])
+        plan = self.optimize(rows, result['required_soc_pcts'], initial=50.0)
+        self.assertLessEqual(max(flow['soc_end_pct'] for flow in plan['flows']), 100.0)
+        for flow, floor in zip(plan['flows'], result['required_soc_pcts']):
+            self.assertGreaterEqual(flow['soc_end_pct'] + 1e-9, floor)
+
+    def test_joint_reachability_relaxes_earlier_floor_for_later_buy(self):
+        rows = self.rows(6)
+        rows[0]['buy_window'] = True
+        rows[1]['forecast_load_kwh'] = 1.4523
+        rows[2]['forecast_pv_total_kwh'] = 4.6066
+        rows[3]['buy_window'] = True
+        rows[4].update(buy_window=True, forecast_load_kwh=2.5365)
+        rows[5]['forecast_load_kwh'] = 3.4881
+        requested = [92.9, 84.2, 91.7, 99.2, 100.0, 91.3]
+        result = validate_recoverable_soc_requirements(
+            rows, requested, 85.4201, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
+        self.assertEqual(result['unreachable_indices'], [3])
+        self.assertLess(result['required_soc_pcts'][3], requested[3])
+        self.assertEqual(result['required_soc_pcts'][4], 100.0)
+        plan = self.optimize(rows, result['required_soc_pcts'],
+                             initial=85.4201, terminal=15.0)
+        for flow, floor in zip(plan['flows'], result['required_soc_pcts']):
+            self.assertGreaterEqual(flow['soc_end_pct'] + 1e-9, floor)
 
     def test_requirements_do_not_clip_an_impossible_bridge(self):
         rows = self.rows(20)
