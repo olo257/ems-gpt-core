@@ -17,11 +17,19 @@ from executor_service import (
     build_executor,
     flexible_command_plan_version,
     flexible_surplus_runtime_decisions,
+    flexible_process_is_allowed,
     scalar_number,
 )
 
 
 class ExecutorServiceTests(unittest.TestCase):
+    def test_flexible_runtime_requires_explicit_planner_allow(self):
+        blocked = [{"process_name": "PV_CWU", "eligible": 0}]
+        allowed = [{"process_name": "PV_CWU", "eligible": 1}]
+        self.assertFalse(flexible_process_is_allowed(blocked, "PV_CWU"))
+        self.assertFalse(flexible_process_is_allowed(blocked, "PV_EV"))
+        self.assertTrue(flexible_process_is_allowed(allowed, "PV_CWU"))
+
     def test_live_surplus_transition_key_is_stable_and_fits_database(self):
         value = flexible_command_plan_version(
             "1" * 36, "2" * 36, "3" * 32, "ON")
