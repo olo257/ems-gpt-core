@@ -164,9 +164,12 @@ końcowe kontrakty SOC odejmują wyłącznie faktycznie przydzielone zakupy.
 
 Fallback najpierw usuwa SELL_BAT; może obniżyć niewykonalne wymaganie
 historyczne końca doby, ale nie może obniżyć niezależnej rezerwy bezpieczeństwa.
-Niewykonalny bilans bezpieczeństwa powoduje jawny błąd i odrzucenie wariantu.
-Brak cen/prognoz poza horyzontem nie stanowi potwierdzenia bezpieczeństwa
-kolejnej nocy. Po rozszerzeniu horyzontu bilans musi być przeliczony.
+Wymagania SOC są ograniczone do fizycznego zakresu 0–100%. Jeżeli wymagany most
+przekracza pojemność, planer ogranicza wymaganie do osiągalnego zakresu, blokuje
+sprzedaż baterii w tym przebiegu i pokazuje nieunikniony import resztowy domu.
+Rezerwa techniczna pozostaje twardą dolną granicą. Brak cen/prognoz poza
+horyzontem nie stanowi potwierdzenia bezpieczeństwa kolejnej nocy. Po
+rozszerzeniu horyzontu bilans musi być przeliczony.
 
 Target obejmuje:
 
@@ -381,12 +384,13 @@ Każda zmiana planera musi obejmować co najmniej:
 ## 10. Granica recovery i diagnostyki runtime
 
 Jeżeli bieżący SOC jest już niższy od wymaganego mostu, recovery może obniżyć
-wymagania wyłącznie w slotach przed pierwszym przyszłym, dozwolonym BUY i tylko
-do technicznej rezerwy. Pierwotne wymaganie wraca w slocie BUY. Wymaganie
-przekraczające limit w slocie BUY lub później pozostaje twardym błędem; bez
-przyszłego BUY nie wolno stosować recovery. Kontrola limitu musi następować po
-tym ograniczonym recovery, aby wykonalny wyjątek przed BUY nie został pomylony
-z błędem po BUY. Wymagań bezpieczeństwa nie wolno obcinać do 100%.
+wymagania wyłącznie przed pierwszym przyszłym, dozwolonym BUY i tylko do
+technicznej rezerwy. Żadne wymaganie ani cel SOC nie może przekroczyć 100%.
+Jeżeli wyliczony most wymaga więcej niż pojemność, planer ogranicza je do
+fizycznego zakresu, blokuje SELL_BAT dla przebiegu i pozwala bilansowi wykazać
+import resztowy domu po osiągnięciu rezerwy. BUY nadal występuje wyłącznie w
+dozwolonych oknach. Raport diagnostyczny zachowuje przyczynę ograniczenia, ale
+starszy opublikowany plan nie może ukryć zdegradowanego stanu planera.
 
 Raport diagnostyczny musi uwzględniać bieżący stan modułów planera i PPD oraz
 ich zatrzaśnięte błędy. Starszy opublikowany plan nie oznacza zdrowego systemu,
