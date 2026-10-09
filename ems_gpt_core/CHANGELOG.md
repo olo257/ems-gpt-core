@@ -1,5 +1,19 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.32 — PPD nadwyżki PV dopiero przy pełnym SOC
+
+- `soc_target` nadal ogranicza wyłącznie ładowanie baterii z sieci; ładowanie
+  baterii z PV może trwać do fizycznego 100% SOC.
+- Kandydackie okno `PV_CWU`/`PV_EV` jest otwierane dopiero dla slotów z
+  prognozowanym SOC 100%; świeży pomiar wykonawczy poniżej 100% blokuje oba
+  procesy, nawet gdy przekroczył `soc_target`.
+- Zaktualizowano opis produkcyjny i kontrakt planera, usuwając sprzeczne
+  reguły, które dopuszczały odbiorniki elastyczne po samym osiągnięciu targetu.
+- Dodano regresje dla prognozowanego i rzeczywistego SOC poniżej 100%.
+- Weryfikacja: 39 testów PPD/executora zaliczonych. Nie oznacza to instalacji
+  ani odbioru wydania w Home Assistant.
+
+
 ## 0.39.31 — spójny target zakupu i walidacja całego przepływu
 
 - Target wybranego BUY jest wyprowadzany z wymagania po oknie uzupełnienia; nie jest kopiowany z SOC znalezionego przez nieograniczony przebieg ekonomiczny. Ujemna cena nie powoduje sama zakupu do 100%.

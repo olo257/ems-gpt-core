@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja przygotowana: **0.39.31**.
+Status: obowiązująca. Wersja przygotowana: **0.39.32**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -116,14 +116,14 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
 - Rzeczywiste wykonanie i ręczne odstępstwa są domeną tabel wykonania i
   analityki; nie wracają jako ukryte wejście kolejnego planu.
 - `PV_CWU` oraz `PV_EV` są wyznaczane przez PPD po zamrożeniu targetu. Planer
-  może otworzyć ich wspólne kandydackie okno od następnego slotu po osiągnięciu targetu,
+  może otworzyć ich wspólne kandydackie okno od następnego slotu po osiągnięciu 100% SOC,
   gdy istnieje istotna planowana nadwyżka PV, nawet poniżej progów uruchomienia
   odbiorników. Prognoza służy wyłącznie do wyznaczenia okna; osobne progi
   uruchomienia sprawdza wykonawca na podstawie rzeczywistego pomiaru.
   Rzeczywista praca zależy od świeżej telemetrii nadwyżki PV i
   automatyki wykonawczej. Wspólne okno zapobiega sytuacji EV=ALLOWED przy
   CWU=BLOCKED; wykonawca stosuje kolejność CWU → EV i histerezę;
-  brak danych, SOC poniżej opublikowanego targetu albo zanik nadwyżki wymusza
+  brak danych, SOC poniżej 100% albo zanik nadwyżki wymusza
   wyłączenie w trybie AUTO. Procesy nie są częścią load ani targetu.
 - PPD publikuje `SELL_BAT` i `SELL_PV` na dwóch niezależnych osiach:
   polityka `ALLOWED/BLOCKED` oraz stan planowany/efektywny `ON/OFF`.
@@ -133,7 +133,7 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
 
 Obowiązująca kolejność wykorzystania bieżącej produkcji to: najpierw load domu
 (w tym HP), następnie ładowanie PV baterii do fizycznego maksimum 100%. Po
-osiągnięciu `soc_target` PPD może dopuścić CWU, następnie EV. Pozostała nadwyżka
+osiągnięciu 100% SOC PPD może dopuścić CWU, następnie EV. Pozostała nadwyżka
 PV jest sprzedawana tylko przy cenie sprzedaży > 0 PLN/kWh; w przeciwnym razie
 produkcja jest ograniczana. Executor bazuje na świeżej telemetrii i po włączeniu
 CWU/EV uwzględnia ich pobór, przez co dalsze ładowanie baterii jest naturalnie

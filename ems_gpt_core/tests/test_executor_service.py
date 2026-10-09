@@ -43,7 +43,7 @@ class ExecutorServiceTests(unittest.TestCase):
     def test_live_surplus_keeps_cwu_and_ev_outside_load_and_soc(self):
         decision = flexible_surplus_runtime_decisions(
             pv_power_w=7000, load_power_w=1500, battery_charge_power_w=1000,
-            ev_power_w=0, pv_cwu_on=False, live_soc_pct=80,
+            ev_power_w=0, pv_cwu_on=False, live_soc_pct=100,
             target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
             cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
         self.assertTrue(decision["pv_cwu"])
@@ -62,10 +62,10 @@ class ExecutorServiceTests(unittest.TestCase):
         self.assertEqual(decision["surplus_kw"], 3.415)
         self.assertEqual(decision["battery_charge_kw_observed"], 3.236)
 
-    def test_live_surplus_fails_closed_below_target_or_without_telemetry(self):
+    def test_live_surplus_fails_closed_below_full_soc_or_without_telemetry(self):
         below = flexible_surplus_runtime_decisions(
             pv_power_w=7000, load_power_w=1000, battery_charge_power_w=0,
-            ev_power_w=0, pv_cwu_on=False, live_soc_pct=69,
+            ev_power_w=0, pv_cwu_on=False, live_soc_pct=99.9,
             target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
             cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
         missing = flexible_surplus_runtime_decisions(
@@ -75,11 +75,12 @@ class ExecutorServiceTests(unittest.TestCase):
             cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
         self.assertEqual((below["pv_cwu"], below["pv_ev"]), (False, False))
         self.assertEqual((missing["pv_cwu"], missing["pv_ev"]), (False, False))
+        self.assertEqual(below["reason"], "LIVE_SOC_BELOW_100_PERCENT")
 
     def test_live_surplus_hysteresis_adds_back_running_flexible_loads(self):
         decision = flexible_surplus_runtime_decisions(
             pv_power_w=5000, load_power_w=5500, battery_charge_power_w=0,
-            ev_power_w=1500, pv_cwu_on=True, live_soc_pct=80,
+            ev_power_w=1500, pv_cwu_on=True, live_soc_pct=100,
             target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
             cwu_threshold_kw=2.0, ev_threshold_kw=1.5,
             hysteresis_ratio=0.80)

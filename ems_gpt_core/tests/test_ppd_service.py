@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from ppd_service import build_flexible_ppd, current_live_flexible_row, plan_bound_decisions
 
 
-def rows(soc=(60, 70, 80, 80, 80), pv=(0.1, 0.6, 0.1, 0.7, 0.0), target=70):
+def rows(soc=(60, 100, 100, 100, 80), pv=(0.1, 0.6, 0.1, 0.7, 0.0), target=70):
     start = datetime(2026, 9, 16, 10, 0)
     return [
         {
@@ -24,12 +24,26 @@ class FlexiblePpdTests(unittest.TestCase):
     def test_live_surplus_opens_current_slot_despite_underforecast(self):
         source = rows(soc=(49, 53, 60, 60, 60), pv=(0, 0, 0.4, 0, 0), target=53)
         sample = {"captured_at": source[0]["slot_start"] + timedelta(seconds=30),
-                  "soc_pct": 56, "pv_power_w": 4172, "load_power_w": 1228}
+                  "soc_pct": 100, "pv_power_w": 4172, "load_power_w": 1228}
         source[0] = current_live_flexible_row(
             source[0], sample, now=sample["captured_at"], stale_seconds=120)
         result = build_flexible_ppd(source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.375)
         self.assertTrue(result[0].pv_cwu_allowed)
         self.assertTrue(result[0].pv_ev_allowed)
+
+    def test_soc_target_below_full_does_not_open_flexible_window(self):
+        result = build_flexible_ppd(
+            rows(soc=(99.9, 99.9, 99.9, 99.9, 99.9), target=75),
+            cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
+        self.assertFalse(any(x.pv_cwu_allowed or x.pv_ev_allowed for x in result))
+
+    def test_live_soc_above_target_but_below_full_cannot_open_corridor(self):
+        source = rows(soc=(99.9, 100, 100, 100, 80), target=75)
+        sample = {"captured_at": source[0]["slot_start"], "soc_pct": 99.9,
+                  "pv_power_w": 6000, "load_power_w": 1000}
+        result = current_live_flexible_row(
+            source[0], sample, now=sample["captured_at"], stale_seconds=120)
+        self.assertIs(result, source[0])
 
     def test_stale_telemetry_cannot_open_flexible_corridor(self):
         source = rows(soc=(49, 49, 49, 49, 49), pv=(0, 0, 0, 0, 0), target=53)
@@ -48,7 +62,7 @@ class FlexiblePpdTests(unittest.TestCase):
         self.assertTrue(result[2].pv_cwu_allowed)
 
     def test_target_is_read_only_and_not_returned_as_a_planner_input(self):
-        source = rows(target=75)
+        source = rows(soc=(60, 70, 100, 100, 80), target=75)
         result = build_flexible_ppd(source, cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
         self.assertEqual([x.pv_cwu_allowed for x in result], [False, False, True, True, False])
         self.assertFalse(hasattr(result[0], "soc_target_pct"))
@@ -56,7 +70,7 @@ class FlexiblePpdTests(unittest.TestCase):
 
     def test_unexpected_soc_gain_moves_window_earlier_on_next_run(self):
         low = build_flexible_ppd(rows(soc=(60, 65, 80, 80, 80)), cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
-        high = build_flexible_ppd(rows(soc=(75, 75, 80, 80, 80)), cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
+        high = build_flexible_ppd(rows(soc=(100, 100, 100, 100, 100)), cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
         self.assertFalse(low[1].pv_cwu_allowed)
         self.assertTrue(high[1].pv_cwu_allowed)
 
@@ -64,9 +78,9 @@ class FlexiblePpdTests(unittest.TestCase):
         result = build_flexible_ppd(rows(pv=(0.0, 0.01, 0.01, 0.01, 0.0)), cwu_threshold_kwh=0.5, ev_threshold_kwh=0.4)
         self.assertFalse(any(x.pv_cwu_allowed or x.pv_ev_allowed for x in result))
 
-    def test_weak_forecast_keeps_live_surplus_option_open_after_target(self):
+    def test_weak_forecast_keeps_live_surplus_option_open_after_full_soc(self):
         result = build_flexible_ppd(
-            rows(soc=(99, 99, 99, 99, 99), pv=(0.0, 0.245, 0.20, 0.0, 0.0), target=95),
+            rows(soc=(100, 100, 100, 100, 100), pv=(0.0, 0.245, 0.20, 0.0, 0.0), target=95),
             cwu_threshold_kwh=0.5, ev_threshold_kwh=0.375)
         self.assertTrue(result[1].pv_cwu_allowed)
         self.assertTrue(result[1].pv_ev_allowed)
@@ -127,7 +141,7 @@ class FlexiblePpdTests(unittest.TestCase):
             source.append({
                 "slot_start": start + timedelta(minutes=15 * index),
                 "local_day": start.date(),
-                "soc_end_pct": 80.0,
+                "soc_end_pct": 100.0,
                 "soc_target_pct": 70.0,
                 "pv_flex_kwh": 0.75 if daytime else 0.0,
                 "sell_battery": False,

@@ -64,7 +64,7 @@ def _anchor(row: dict, threshold_kwh: float) -> bool:
     return (
         float(row.get("pv_flex_kwh") or 0.0) + 1e-9 >= threshold_kwh
         and float(row.get("soc_end_pct") or 0.0) + 0.01
-        >= float(row.get("soc_target_pct") or 0.0)
+        >= 100.0
     )
 
 
@@ -78,10 +78,9 @@ def current_live_flexible_row(row: dict, telemetry: dict, *, now: datetime,
         soc = float(telemetry["soc_pct"])
         pv = float(telemetry["pv_power_w"])
         load = float(telemetry["load_power_w"])
-        target = float(row["soc_target_pct"])
     except (KeyError, TypeError, ValueError):
         return row
-    if soc + 0.01 < target or pv <= load:
+    if soc + 0.01 < 100.0 or pv <= load:
         return row
     # Forecast allocations may be zero while actual PV is already exceeding
     # household load. Execution still applies the full live power thresholds.
@@ -173,7 +172,7 @@ def build_flexible_ppd(
             ev_window_start=ev_start,
             ev_window_end=ev_end,
             reason=(
-                f"target_read_only={float(row.get('soc_target_pct') or 0.0):.2f}; "
+                f"full_soc_required=100.00; "
                 f"soc_end={float(row.get('soc_end_pct') or 0.0):.2f}; "
                 f"pv_flex={float(row.get('pv_flex_kwh') or 0.0):.3f}; "
                 f"cwu_window={cwu_start}..{cwu_end}; ev_window={ev_start}..{ev_end}"
