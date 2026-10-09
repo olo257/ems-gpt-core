@@ -36,7 +36,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.39.27"
+APP_VERSION = "0.39.28"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -194,10 +194,17 @@ def run_ai_observer(source_ref: str | None = None) -> dict:
 
 
 def generate_diagnostic_report(trigger_name: str = "scheduled") -> dict:
+    with LOCK:
+        runtime_state = {
+            "modules": dict(STATE.get("modules") or {}),
+            "planner_failure_latched": STATE.get("planner_failure_latched"),
+            "ppd_failure_latched": STATE.get("ppd_failure_latched"),
+        }
     return run_diagnostics_service(
         trigger_name, options=OPTIONS, db=db, local_now=local_now, slot_start=slot_start,
         canonical_slots_for_day=canonical_slots_for_day, create_todo=create_todo,
         reconcile_diagnostic_todos=reconcile_diagnostic_todos, record_event=record_event,
+        runtime_state=runtime_state,
     )
 
 
