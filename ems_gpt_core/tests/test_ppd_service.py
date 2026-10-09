@@ -174,6 +174,20 @@ class FlexiblePpdTests(unittest.TestCase):
         by_name = {decision[0]: decision for decision in decisions}
         self.assertEqual(by_name["SELL_PV"][2], "BLOCKED")
 
+    def test_positive_price_allows_sell_pv_without_forecast_export(self):
+        decisions = plan_bound_decisions({
+            "planned_buy_kwh": 0.0,
+            "planned_sell_kwh": 0.0,
+            "planned_pv_export_kwh": 0.0,
+            "price_sell_pln_kwh": 0.01,
+            "sell_pv_policy_allowed": 1,
+            "grid_policy_planned": "NEUTRAL",
+            "export_policy_planned": "NEUTRAL",
+            "heat_pump_window": 0,
+        }, 0.02)
+        sell_pv = next(item for item in decisions if item[0] == "SELL_PV")
+        self.assertEqual(sell_pv[1:3], (True, "ALLOWED"))
+
     def test_nonpositive_price_blocks_only_sell_pv_process(self):
         decisions = plan_bound_decisions({
             "planned_buy_kwh": 0.0,
