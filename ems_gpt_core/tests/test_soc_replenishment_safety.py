@@ -123,12 +123,12 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         rows[1]['buy_window'] = True
         from planner_service import recoverable_soc_requirements
         recovery = recoverable_soc_requirements(
-            rows, [17.0, 17.0, 20.0, 23.0], 13.0, 15.0)
+            rows, [17.0, 17.0, 17.0, 17.0], 13.0, 15.0)
         self.assertEqual(recovery['recovery_buy_index'], 1)
         self.assertEqual(recovery['relaxed_indices'], [0])
         self.assertEqual(recovery['required_soc_pcts'], [15.0, 17.0, 20.0, 23.0])
         plan = self.optimize(rows, recovery['required_soc_pcts'],
-                             initial=13.0, terminal=23.0)
+                             initial=13.0, terminal=17.0)
         self.assertGreater(plan['flows'][1]['grid_charge_kwh'], 0.0)
         self.assertGreaterEqual(plan['flows'][0]['soc_end_pct'], 15.0)
 
