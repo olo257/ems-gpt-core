@@ -243,8 +243,13 @@ def _soc_reachability_profile(
                     grid_charge = 0.0
                     grid_load = max(0.0, deficit-battery_to_load)
                 voluntary_grid_load = max(0.0, grid_load-unavoidable_grid_load)
+                # Match optimize_energy_horizon's conservative retry with
+                # battery sales disabled: a BUY charge cannot be used to
+                # justify voluntary grid supply to the house. Otherwise this
+                # reachability pass can certify a SOC path which the planner
+                # later rejects as hidden household import during BUY.
                 if grid_charge > 1e-9:
-                    if voluntary_grid_load > grid_charge + 1e-9:
+                    if voluntary_grid_load > 1e-9:
                         continue
                 elif voluntary_grid_load > unit_kwh * eta_discharge + 1e-9:
                     continue
@@ -323,10 +328,13 @@ def validate_recoverable_soc_requirements(
                 reachable is not None and requested > feasible_path[index] + 1e-9):
             unreachable_indices.append(index)
             limited_indices.append(index)
-            if requested > ceiling:
+            if reachable is None:
                 bounded[index] = max(0.0, ceiling)
-            elif reachable is not None:
-                bounded[index] = max(0.0, feasible_path[index])
+            else:
+                # A per-slot ceiling ignores how earlier floors constrain the
+                # trajectory. Clamp to the jointly feasible no-sales path even
+                # when the requested value also exceeds the local ceiling.
+                bounded[index] = max(0.0, min(ceiling, feasible_path[index]))
     if limited_indices:
         recovery["required_soc_pcts"] = bounded
         recovery["capacity_limited_indices"] = sorted(set(limited_indices))
@@ -2433,3 +2441,4 @@ def build_planner(a: PlannerAdapters):
         optimize_hp_heating_slots=optimize_hp_heating_slots,
         run_planner=run_planner,
     )
+

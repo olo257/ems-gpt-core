@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja przygotowana: **0.39.32**.
+Status: obowiązująca. Wersja przygotowana: **0.39.33**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -115,7 +115,7 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
   slotów dnia zakłada wykonanie własnego wcześniej opublikowanego planu.
 - Rzeczywiste wykonanie i ręczne odstępstwa są domeną tabel wykonania i
   analityki; nie wracają jako ukryte wejście kolejnego planu.
-- `PV_CWU` oraz `PV_EV` są wyznaczane przez PPD po zamrożeniu targetu. Planer
+- `PV_CWU` oraz `PV_EV` są wyznaczane przez PPD po zamrożeniu planu. Planer
   może otworzyć ich wspólne kandydackie okno od następnego slotu po osiągnięciu 100% SOC,
   gdy istnieje istotna planowana nadwyżka PV, nawet poniżej progów uruchomienia
   odbiorników. Prognoza służy wyłącznie do wyznaczenia okna; osobne progi
@@ -208,3 +208,4 @@ Przed scaleniem i publikacją wymagane są:
 
 Zmiana wersji w plikach nie oznacza publikacji. Dopiero scalone wydanie w
 repozytorium jest dostępne dla Home Assistant.
+

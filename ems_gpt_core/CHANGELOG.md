@@ -1,5 +1,16 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.33 — wspólna osiągalność SOC i dispatchu bez sprzedaży baterii
+
+- Walidator mostu SOC liczy osiągalność według tych samych zasad co retry
+  planera z wyłączoną sprzedażą baterii.
+- BUY nie może podtrzymywać SOC równolegle z dobrowolnym importem dla domu;
+  wymagania przekraczające wspólnie osiągalną trajektorię są ograniczane do
+  fizycznie wykonalnej ścieżki, a sprzedaż baterii jest wyłączana.
+- Dodano regresje dla importu domu ukrywanego w BUY oraz dla trajektorii,
+  której osiągalność lokalna nie zgadzała się z pełnym przebiegiem.
+- Weryfikacja: 23 testy bezpieczeństwa SOC zaliczone.
+
 ## 0.39.32 — PPD nadwyżki PV dopiero przy pełnym SOC
 
 - `soc_target` nadal ogranicza wyłącznie ładowanie baterii z sieci; ładowanie
@@ -10,9 +21,8 @@
 - Zaktualizowano opis produkcyjny i kontrakt planera, usuwając sprzeczne
   reguły, które dopuszczały odbiorniki elastyczne po samym osiągnięciu targetu.
 - Dodano regresje dla prognozowanego i rzeczywistego SOC poniżej 100%.
-- Weryfikacja: 39 testów PPD/executora zaliczonych. Nie oznacza to instalacji
+- Weryfikacja: 38 testów PPD/executora zaliczonych. Nie oznacza to instalacji
   ani odbioru wydania w Home Assistant.
-
 
 ## 0.39.31 — spójny target zakupu i walidacja całego przepływu
 
@@ -1582,3 +1592,4 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
 - agregacja dobowa: OK;
 - restart wyłącznie aplikacji: OK, plan i baza zachowane;
 - brak poleceń do urządzeń: potwierdzony.
+
