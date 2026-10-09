@@ -19,6 +19,7 @@ def runtime_module_health_check(runtime_state: dict | None) -> dict:
     return {
         "name": "planner_runtime_health",
         "ok": ok,
+        "severity": "INFO" if ok else "ERROR",
         "value": {
             "planner": planner, "ppd": ppd,
             "planner_failure": planner_failure, "ppd_failure": ppd_failure,
@@ -97,7 +98,8 @@ def generate_diagnostic_report(trigger_name: str = "scheduled", *, options, db, 
                 observer is not None and observer.get("source_ref") == analytics.get("run_id"),
                 None if not observer else observer.get("source_ref"), analytics.get("run_id"))
         alerts = [c for c in checks if not c["ok"]]
-        status = "OK" if not alerts else ("WARNING" if len(alerts) <= 2 else "ERROR")
+        critical_alert = any(alert.get("severity") == "ERROR" for alert in alerts)
+        status = "OK" if not alerts else ("ERROR" if critical_alert or len(alerts) > 2 else "WARNING")
         summary = "Wszystkie kontrole zakończone poprawnie" if not alerts else "; ".join(c["name"] for c in alerts)
         cur.execute("INSERT INTO ems_gpt_core_diagnostic_reports VALUES(%s,NOW(6),%s,%s,%s,%s,%s)",
                     (report_id, trigger_name, status, len(alerts), summary[:500], json.dumps(checks, ensure_ascii=False, default=str)))
@@ -105,6 +107,7 @@ def generate_diagnostic_report(trigger_name: str = "scheduled", *, options, db, 
     record_event("diagnostic_report", "diagnostics", result, "INFO" if not alerts else "WARNING")
     for alert in alerts:
         create_todo("diagnostics", f"Diagnostyka: {alert['name']}",
-                    json.dumps(alert, ensure_ascii=False, default=str), "WARNING", report_id)
+                    json.dumps(alert, ensure_ascii=False, default=str),
+                    alert.get("severity", "WARNING"), report_id)
     reconcile_diagnostic_todos([f"Diagnostyka: {alert['name']}" for alert in alerts])
     return result
