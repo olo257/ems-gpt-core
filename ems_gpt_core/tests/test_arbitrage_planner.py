@@ -23,6 +23,7 @@ from planner_service import (
     planning_tou_programs,
     strict_database_bool,
     historical_terminal_soc,
+    terminal_soc_recovery,
     historical_hp_power_kw,
     hp_heating_window_indices,
     bridge_soc_commitments,
@@ -33,6 +34,19 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_unreachable_future_historical_terminal_target_relaxes_to_safety_only(self):
+        action, target = terminal_soc_recovery(42.0, 21.5, False)
+        self.assertEqual(action, "RELAX_HISTORICAL_TARGET")
+        self.assertEqual(target, 21.5)
+
+        action, target = terminal_soc_recovery(21.5, 21.5, False)
+        self.assertEqual(action, "FAIL")
+        self.assertEqual(target, 21.5)
+
+        action, target = terminal_soc_recovery(42.0, 21.5, True)
+        self.assertEqual(action, "DISABLE_BATTERY_SALES")
+        self.assertEqual(target, 42.0)
+
     def test_optimizer_apparent_sale_profit_loses_value_of_remaining_energy(self):
         rows = [
             {"price_buy_pln_kwh": 2.29, "price_sell_pln_kwh": 1.70,
@@ -1413,3 +1427,4 @@ class TouStartupReadinessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

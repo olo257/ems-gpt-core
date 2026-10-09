@@ -1,5 +1,17 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.34 — odzyskiwanie z nieosiągalnego historycznego SOC końca horyzontu
+
+- Przy błędzie `No feasible terminal SOC state for complete horizon` planner
+  najpierw wyłącza sprzedaż baterii, a następnie może obniżyć wyłącznie
+  historyczny cel końcowy do niezależnego SOC bezpieczeństwa.
+- Dotyczy także horyzontu kończącego się w przyszłej dobie. Wymagania mostu
+  SOC i minimalna rezerwa pozostają twarde; jeżeli sam poziom bezpieczeństwa
+  jest nieosiągalny, przebieg nadal kończy się błędem i nie publikuje planu.
+- Dodano testy kolejności fallbacku: najpierw wyłączenie sprzedaży, potem
+  relaksacja celu historycznego, bez relaksacji bezpieczeństwa.
+- Weryfikacja lokalna: 324 testy zaliczone; kompilacja modułów Python poprawna.
+
 ## 0.39.33 — wspólna osiągalność SOC i dispatchu bez sprzedaży baterii
 
 - Walidator mostu SOC liczy osiągalność według tych samych zasad co retry

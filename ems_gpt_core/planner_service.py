@@ -52,6 +52,23 @@ def historical_terminal_soc(closing_rows: list[dict], terminal_day,
             "available_weight_pct": available_weight, "source": source}
 
 
+def terminal_soc_recovery(requested_soc_pct: float, safety_soc_pct: float,
+                          battery_sales_enabled: bool) -> tuple[str, float]:
+    """Relax only the historical terminal goal after safer retries fail.
+
+    The independent replenishment/safety SOC remains a hard floor. A future
+    horizon end must not make an unreachable historical daily-close target
+    abort an otherwise safe plan.
+    """
+    if battery_sales_enabled:
+        return "DISABLE_BATTERY_SALES", float(requested_soc_pct)
+    requested = float(requested_soc_pct)
+    safety = float(safety_soc_pct)
+    if requested > safety + 1e-9:
+        return "RELAX_HISTORICAL_TARGET", safety
+    return "FAIL", requested
+
+
 def historical_hp_power_kw(heating_rows: list[dict], planning_day,
                            weights_pct: dict[int, float], fallback_kw: float) -> dict:
     """Forecast electric heating power from active historical HP slots."""
@@ -2006,6 +2023,17 @@ def build_planner(a: PlannerAdapters):
                                 "reason": str(exc),
                             }, "WARNING")
                             continue
+                        recovery_action, recovered_terminal = terminal_soc_recovery(
+                            terminal_soc, safety_required_soc[-1], battery_sales_enabled)
+                        if recovery_action == "RELAX_HISTORICAL_TARGET":
+                            record_event("historical_terminal_soc_relaxed_for_feasibility", "planner", {
+                                "terminal_day": str(terminal_day),
+                                "requested_soc_pct": terminal_soc,
+                                "safety_soc_pct": safety_required_soc[-1],
+                                "reason": str(exc),
+                            }, "WARNING")
+                            terminal_soc = recovered_terminal
+                            continue
                         if terminal_day != local_now().date():
                             raise
                         terminal_shortfall_allowed = True
@@ -2080,6 +2108,18 @@ def build_planner(a: PlannerAdapters):
                                 "requested_soc_pct": terminal_soc,
                                 "reason": str(exc),
                             }, "WARNING")
+                            continue
+                        recovery_action, recovered_terminal = terminal_soc_recovery(
+                            terminal_soc, safety_required_soc[-1], battery_sales_enabled)
+                        if recovery_action == "RELAX_HISTORICAL_TARGET":
+                            record_event("historical_terminal_soc_relaxed_for_feasibility", "planner", {
+                                "stage": pass_name,
+                                "terminal_day": str(terminal_day),
+                                "requested_soc_pct": terminal_soc,
+                                "safety_soc_pct": safety_required_soc[-1],
+                                "reason": str(exc),
+                            }, "WARNING")
+                            terminal_soc = recovered_terminal
                             continue
                         if terminal_day != local_now().date():
                             raise
