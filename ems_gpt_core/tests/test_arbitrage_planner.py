@@ -13,6 +13,7 @@ from planner_service import (
     allocate_slot_discharge,
     backward_target_commitments,
     build_soc_contracts,
+    target_commitment_safety_fallback,
     battery_sale_economics,
     cheapest_recovery_indices,
     economic_sell_indices,
@@ -34,6 +35,31 @@ from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_target_commitment_fallback_keeps_hard_soc_and_drops_optional_buy_deadlines(self):
+        required = [25.0, 30.0, 30.0]
+        targets, hard_indices, due_indices = target_commitment_safety_fallback(required)
+
+        self.assertEqual(targets, required)
+        self.assertIsNot(targets, required)
+        self.assertEqual(hard_indices, set())
+        self.assertEqual(due_indices, set())
+
+        # A relaxed target is still a grid-import ceiling; PV can charge above
+        # it, but a grid BUY cannot exceed the preserved required SOC.
+        rows = [{"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.0,
+                 "buy_window": index == 1, "sale_window": False,
+                 "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0}
+                for index in range(3)]
+        result = optimize_energy_horizon(
+            rows, 25.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * 3, 30.0, 0.25, 100.0,
+            targets, hard_indices, due_indices, required,
+            battery_sales_enabled=False)
+        for index, flow in enumerate(result["flows"]):
+            self.assertGreaterEqual(flow["soc_end_pct"] + 1e-9, required[index])
+            if flow["grid_charge_kwh"] > 1e-9:
+                self.assertLessEqual(flow["soc_end_pct"], required[index] + 1e-9)
+
     def test_unreachable_future_historical_terminal_target_relaxes_to_safety_only(self):
         action, target = terminal_soc_recovery(42.0, 21.5, False)
         self.assertEqual(action, "RELAX_HISTORICAL_TARGET")
