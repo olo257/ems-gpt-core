@@ -940,7 +940,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         # MariaDB returns BOOL/TINYINT as 0/1 (and some drivers as Decimal),
         # so identity checks against False would incorrectly allow 0.
         grid_charge_allowed = (
-            strict_database_bool(row.get("buy_window", True), "buy_window")
+            strict_database_bool(row.get("buy_window", False), "buy_window")
             and not strict_database_bool(row.get("sale_window", False), "sale_window")
         )
         battery_sale_allowed = (battery_sales_enabled and sell_price > 0.0
@@ -990,27 +990,10 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     pv_curtail = max(0.0, surplus-pv_to_bat-pv_export)
                     battery_discharge = 0.0
                     battery_charge_internal = max(0.0, delta)
-                    # SOC is intentionally quantized to 0.25%, while physical
-                    # PV energy is continuous. Below target the sub-step
-                    # remainder still belongs to the battery; it must never be
-                    # reclassified as export merely because it cannot advance
-                    # the displayed SOC state by a complete step.
-                    if (minimum_soc_targets is not None
-                            and next_unit < last_unit
-                            and pv_export > 1e-9):
-                        remaining_charge_internal = max(
-                            0.0, max_internal_charge - battery_charge_internal)
-                        remaining_capacity_internal = max(
-                            0.0, capacity - current_energy - battery_charge_internal)
-                        fractional_pv = min(
-                            pv_export,
-                            remaining_charge_internal / eta_c,
-                            remaining_capacity_internal / eta_c,
-                        )
-                        pv_to_bat += fractional_pv
-                        battery_charge_internal += fractional_pv * eta_c
-                        pv_export = max(0.0, pv_export - fractional_pv)
-                        pv_curtail = max(0.0, surplus - pv_to_bat - pv_export)
+                    # The DP state is quantized. Do not report sub-step PV as
+                    # battery charge unless the SOC transition records that
+                    # energy; otherwise it disappears from the next slot's
+                    # state and creates a nonphysical trajectory.
                 else:
                     battery_discharge = -delta
                     delivered = battery_discharge * eta_d
@@ -1121,13 +1104,27 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         best_reachable_unit = max(costs)
         candidates = [(costs[best_reachable_unit], best_reachable_unit)]
     objective, unit = min(candidates, key=lambda value: (value[0], -value[1]))
+    selected_terminal_unit = unit
     flows = [None]*len(rows)
     for index in range(len(rows)-1, -1, -1):
         unit, flows[index] = predecessors[index][unit]
+    for index, flow in enumerate(flows):
+        soc_delta_internal = (
+            float(flow["soc_end_pct"]) - float(flow["soc_start_pct"])
+        ) * capacity / 100.0
+        flow_delta_internal = (
+            float(flow["battery_charge_internal_kwh"])
+            - float(flow["battery_discharge_internal_kwh"])
+        )
+        if abs(soc_delta_internal - flow_delta_internal) > 1e-7:
+            raise RuntimeError(
+                f"SOC_TRANSITION_VIOLATION:{index}:"
+                f"{soc_delta_internal}!={flow_delta_internal}")
     return {"flows": flows, "objective_pln": round(objective, 6),
             "soc_step_pct": step, "terminal_soc_pct": terminal_unit*step,
-            "achieved_terminal_soc_pct": unit*step,
-            "terminal_shortfall_pct": max(0.0, (terminal_unit-unit)*step),
+            "achieved_terminal_soc_pct": selected_terminal_unit*step,
+            "terminal_shortfall_pct": max(
+                0.0, (terminal_unit-selected_terminal_unit)*step),
             "effective_target_pcts": effective_target_pcts}
 
 
@@ -1520,18 +1517,17 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
             "selected_buy_indices": selected_buy}
 
 
-def target_commitment_safety_fallback(required_soc_pcts: list[float] | None
+def target_commitment_safety_fallback(minimum_targets: list[float] | None
                                       ) -> tuple[list[float] | None, set[int], set[int]]:
-    """Drop optional replenishment deadlines while preserving every hard SOC floor.
-
-    A selected BUY is an economic choice, not a safety requirement. If the
-    deadline attached to that choice makes the constrained pass infeasible,
-    retry with the independently calculated required SOC as the import cap and
-    keep no forced BUY deadline. The optimizer still enforces required SOC in
-    every slot, respects the technical reserve, and can use PV above the cap.
-    """
-    targets = None if required_soc_pcts is None else list(required_soc_pcts)
+    """Drop optional BUY deadlines without changing the calculated import cap."""
+    targets = None if minimum_targets is None else list(minimum_targets)
     return targets, set(), set()
+
+
+def target_commitment_required_fallback(safety_required_soc_pcts: list[float]
+                                        ) -> list[float]:
+    """Retain the independently validated replenishment and daily-close safety bridge."""
+    return list(safety_required_soc_pcts)
 
 
 def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], required_slots: int,
@@ -2101,7 +2097,11 @@ def build_planner(a: PlannerAdapters):
                 """Apply the terminal-SOC recovery contract to every later pass."""
                 nonlocal battery_sales_enabled, terminal_shortfall_allowed, terminal_soc
                 requested_terminal_soc = terminal_soc
-                target_commitment_fallback_applied = False
+                target_commitment_fallback_level = 0
+                original_import_caps = (None if minimum_targets is None
+                                        else list(minimum_targets))
+                original_required_pcts = (None if required_pcts is None
+                                          else list(required_pcts))
                 while True:
                     try:
                         result = optimize_energy_horizon(
@@ -2116,21 +2116,40 @@ def build_planner(a: PlannerAdapters):
                         slot_error_prefix = "No feasible SOC state at horizon slot "
                         if (pass_name == "TARGET_COMMITMENT"
                                 and not battery_sales_enabled
-                                and not target_commitment_fallback_applied
+                                and target_commitment_fallback_level < 2
                                 and required_pcts is not None
                                 and str(exc).startswith(slot_error_prefix)):
                             failed_index = int(str(exc)[len(slot_error_prefix):])
                             if not 0 <= failed_index < len(horizon_rows):
                                 raise
-                            minimum_targets, hard_indices, due_indices = (
-                                target_commitment_safety_fallback(required_pcts))
-                            target_commitment_fallback_applied = True
-                            record_event("target_commitment_deadline_relaxed", "planner", {
+                            hard_indices, due_indices = set(), set()
+                            if target_commitment_fallback_level == 0:
+                                minimum_targets, _, _ = target_commitment_safety_fallback(
+                                    original_import_caps)
+                                event_name = "target_commitment_deadlines_relaxed"
+                                event_payload = {
+                                    "import_cap_preserved": True,
+                                    "required_soc_preserved": True,
+                                }
+                            else:
+                                required_pcts = target_commitment_required_fallback(
+                                    enforced_daily_required)
+                                event_name = "target_commitment_optional_bridge_relaxed"
+                                event_payload = {
+                                    "replenishment_safety_preserved": True,
+                                    "daily_close_target_preserved": True,
+                                    "required_soc_pct": required_pcts[failed_index],
+                                    "original_contract_soc_pct": original_required_pcts[failed_index],
+                                    "import_cap_preserved": True,
+                                }
+                            target_commitment_fallback_level += 1
+                            record_event(event_name, "planner", {
                                 "stage": pass_name,
                                 "slot_start": str(horizon_rows[failed_index]["slot_start"]),
                                 "failed_index": failed_index,
-                                "required_soc_pct": required_pcts[failed_index],
+                                "fallback_level": target_commitment_fallback_level,
                                 "reason": str(exc),
+                                **event_payload,
                             }, "WARNING")
                             continue
                         if (pass_name == "TARGET_COMMITMENT"

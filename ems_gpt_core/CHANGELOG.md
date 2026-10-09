@@ -1,5 +1,15 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.36 — zgodność przejść SOC i raportowania wyniku horyzontu
+
+- Wynik SOC końca horyzontu zachowuje wybrany stan terminalny po odtworzeniu
+  ścieżki; nie używa już stanu początkowego jako końcowego.
+- Ładowanie PV poniżej kwantu SOC nie jest doliczane do baterii bez zmiany SOC.
+  Walidator sprawdza bilans energii wewnętrznej baterii dla każdego slotu.
+- Brak jawnego `buy_window` nie daje prawa do ładowania z sieci.
+- Dodano regresje dla wyniku terminalnego, podkwantowego PV i domyślnej blokady
+  BUY. Pełny zestaw testów: 328 zaliczonych.
+
 ## 0.39.35 — bezpieczne odzyskiwanie planera przy nieosiągalnym terminie BUY
 
 - Jeśli etap `TARGET_COMMITMENT` nie znajduje wykonalnej trajektorii SOC,
