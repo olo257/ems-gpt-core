@@ -168,11 +168,11 @@ def recoverable_soc_requirements(rows: list[dict], required_soc_pcts: list[float
 def validate_recoverable_soc_requirements(
         rows: list[dict], required_soc_pcts: list[float], initial_soc_pct: float,
         reserve_pct: float, target_cap_pct: float) -> dict:
-    """Apply only the documented pre-BUY recovery, then enforce the physical cap.
+    """Recover a breached prefix and bound impossible bridges to physical SOC.
 
-    An already missed bridge may be relaxed up to the first future BUY. A
-    requirement at or after that replenishment remains hard and cannot be
-    clipped to the configured target cap.
+    Requirements above 100% are not SOC targets. For those slots keep the
+    technical reserve as the hard floor, disable battery sales for the run, and
+    let residual native-load demand flow to the grid.
     """
     recovery = recoverable_soc_requirements(
         rows, required_soc_pcts, initial_soc_pct, reserve_pct)
@@ -188,7 +188,7 @@ def validate_recoverable_soc_requirements(
         # native-load import instead of rejecting the whole plan.
         bounded = list(recovery["required_soc_pcts"])
         for index in limited_indices:
-            bounded[index] = max(float(reserve_pct), min(physical_cap, float(target_cap_pct)))
+            bounded[index] = max(0.0, min(physical_cap, float(reserve_pct)))
         recovery["required_soc_pcts"] = bounded
         recovery["capacity_limited_indices"] = limited_indices
         recovery["disable_battery_sales"] = True
