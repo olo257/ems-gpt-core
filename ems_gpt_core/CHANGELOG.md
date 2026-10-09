@@ -6,6 +6,8 @@
 - Diagnostyka uwzględnia stan runtime planera/PPD i błędy zatrzaśnięte, nawet gdy w bazie pozostaje starszy plan.
 - Testy regresyjne obejmują recovery przed BUY, twardy błąd po BUY i raportowanie zdegradowanego planera.
 - Kontrola spójności wersji obejmuje dokumentację i oba pliki README.
+- PPD publikuje pozwolenia CWU/EV dopiero w oknie po osiągnięciu targetu; executor respektuje `eligible` i nie traktuje samego rekordu `BLOCK` jako zgody.
+- `SELL_PV` jest `ALLOWED` przy cenie > 0 PLN/kWh niezależnie od prognozowanej nadwyżki; cena ≤ 0 blokuje sprzedaż. Nadwyżka po CWU → EV jest eksportowana, a pozostała produkcja ograniczana.
 
 
 ## 0.39.27 — zgodność wersji API i dodatku
