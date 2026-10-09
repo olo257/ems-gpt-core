@@ -2,7 +2,7 @@
 
 ## 0.39.28 — granica recovery SOC i alarm diagnostyczny
 
-- Walidacja limitu SOC działa po recovery ograniczonym do slotów przed pierwszym przyszłym BUY; wymagania po BUY nadal odrzucają plan bez obniżania rezerwy.
+- Wymagania SOC są ograniczone do 100%; gdy most energetyczny przekracza pojemność, planer wyłącza sprzedaż baterii i rozlicza brak dla domu jako import resztowy, zachowując rezerwę techniczną.
 - Diagnostyka uwzględnia stan runtime planera/PPD i błędy zatrzaśnięte, nawet gdy w bazie pozostaje starszy plan.
 - Testy regresyjne obejmują recovery przed BUY, twardy błąd po BUY i raportowanie zdegradowanego planera.
 - Kontrola spójności wersji obejmuje dokumentację i oba pliki README.
