@@ -15,6 +15,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
             "ppd_failure_latched": "WAITING_FOR_VALID_PLAN",
         })
         self.assertFalse(result["ok"])
+        self.assertEqual(result["severity"], "ERROR")
         self.assertEqual(result["name"], "planner_runtime_health")
 
     def test_healthy_runtime_has_no_failure_alert(self):
