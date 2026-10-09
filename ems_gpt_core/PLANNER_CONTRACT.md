@@ -119,6 +119,13 @@ W jednym slocie bateria nie może być jednocześnie ładowana i rozładowywana.
 Każdy przepływ musi spełniać limit mocy 5 kW, czas 0,25 h, dostępną pojemność,
 SOC, sprawność i progi techniczne.
 
+Optymalizator używa dyskretnych stanów SOC. Zmiana energii wewnętrznej baterii
+w każdym slocie musi być równa różnicy SOC przed i po slocie pomnożonej przez
+pojemność. Energia PV mniejsza od kwantu stanu nie może być raportowana jako
+ładowanie baterii bez odpowiadającej jej zmiany SOC; pozostaje jawnie
+przypisana do eksportu albo ograniczenia produkcji. Walidator odrzuca plan,
+jeśli ilości przepływów i przejście SOC nie są zgodne.
+
 ## 5. `soc_target`
 
 `soc_target` jest zapotrzebowaniem energetycznym do najbliższego realnego,

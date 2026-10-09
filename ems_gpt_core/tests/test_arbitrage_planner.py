@@ -13,6 +13,7 @@ from planner_service import (
     allocate_slot_discharge,
     backward_target_commitments,
     build_soc_contracts,
+    target_commitment_required_fallback,
     target_commitment_safety_fallback,
     battery_sale_economics,
     cheapest_recovery_indices,
@@ -36,34 +37,75 @@ from ingestion_service import derive_price_windows
 
 class PairedArbitrageTests(unittest.TestCase):
     def test_target_commitment_fallback_keeps_hard_soc_and_drops_optional_buy_deadlines(self):
-        required = [25.0, 30.0, 30.0]
-        targets, hard_indices, due_indices = target_commitment_safety_fallback(required)
+        import_caps = [35.0, 40.0, 40.0]
+        safety_required = [30.0, 35.0, 35.0]
+        targets, hard_indices, due_indices = target_commitment_safety_fallback(import_caps)
 
-        self.assertEqual(targets, required)
-        self.assertIsNot(targets, required)
+        self.assertEqual(targets, import_caps)
+        self.assertIsNot(targets, import_caps)
         self.assertEqual(hard_indices, set())
         self.assertEqual(due_indices, set())
+        self.assertEqual(target_commitment_required_fallback(safety_required), safety_required)
 
         # A relaxed target is still a grid-import ceiling; PV can charge above
         # it, but a grid BUY cannot exceed the preserved required SOC.
         rows = [{"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.0,
-                 "buy_window": index == 1, "sale_window": False,
+                 "buy_window": index < 2, "sale_window": False,
                  "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0}
                 for index in range(3)]
         result = optimize_energy_horizon(
-            rows, 25.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * 3, 30.0, 0.25, 100.0,
-            targets, hard_indices, due_indices, required,
+            rows, 30.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * 3, 35.0, 0.25, 100.0,
+            targets, hard_indices, due_indices, safety_required,
             battery_sales_enabled=False)
         for index, flow in enumerate(result["flows"]):
-            self.assertGreaterEqual(flow["soc_end_pct"] + 1e-9, required[index])
+            self.assertGreaterEqual(flow["soc_end_pct"] + 1e-9, safety_required[index])
             if flow["grid_charge_kwh"] > 1e-9:
-                self.assertLessEqual(flow["soc_end_pct"], required[index] + 1e-9)
+                self.assertLessEqual(flow["soc_end_pct"], targets[index] + 1e-9)
 
     def test_unreachable_future_historical_terminal_target_relaxes_to_safety_only(self):
         action, target = terminal_soc_recovery(42.0, 21.5, False)
         self.assertEqual(action, "RELAX_HISTORICAL_TARGET")
         self.assertEqual(target, 21.5)
+
+    def test_optimizer_reports_selected_terminal_state_after_backtracking(self):
+        rows = [{"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.0,
+                 "buy_window": True, "sale_window": False,
+                 "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0}
+                for _ in range(2)]
+        result = optimize_energy_horizon(
+            rows, 20.0, 10.0, 10.0, 0.90, 0.95, 0.0, 0.05,
+            5.0, 15, [10.0, 10.0], 30.0, 0.25, 100.0)
+
+        self.assertEqual(result["flows"][-1]["soc_end_pct"], 30.0)
+        self.assertEqual(result["achieved_terminal_soc_pct"], 30.0)
+        self.assertEqual(result["terminal_shortfall_pct"], 0.0)
+
+    def test_substep_pv_is_not_counted_as_charge_without_soc_transition(self):
+        rows = [{"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 1.0,
+                 "buy_window": False, "sale_window": False,
+                 "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.001}]
+        result = optimize_energy_horizon(
+            rows, 50.0, 10.0, 10.0, 0.90, 0.95, 0.0, 0.05,
+            5.0, 15, [10.0], 50.0, 0.25, 100.0,
+            minimum_soc_targets=[50.0], hard_target_indices=set(),
+            target_due_indices=set())
+        flow = result["flows"][0]
+
+        self.assertEqual(flow["soc_end_pct"], flow["soc_start_pct"])
+        self.assertEqual(flow["battery_charge_internal_kwh"], 0.0)
+        self.assertEqual(flow["pv_to_bat_kwh"], 0.0)
+        self.assertAlmostEqual(flow["pv_export_kwh"], 0.001)
+
+    def test_missing_buy_permission_fails_closed(self):
+        rows = [{"price_buy_pln_kwh": -1.0, "price_sell_pln_kwh": 0.0,
+                 "sale_window": False, "forecast_load_kwh": 0.0,
+                 "forecast_pv_total_kwh": 0.0}]
+        result = optimize_energy_horizon(
+            rows, 50.0, 10.0, 10.0, 0.90, 0.95, 0.0, 0.05,
+            5.0, 15, [10.0], 50.0, 0.25, 100.0)
+
+        self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
 
         action, target = terminal_soc_recovery(21.5, 21.5, False)
         self.assertEqual(action, "FAIL")
@@ -682,8 +724,11 @@ class PairedArbitrageTests(unittest.TestCase):
 
         self.assertGreater(result["flows"][0]["pv_to_bat_kwh"], 0.0)
         self.assertGreater(result["flows"][1]["pv_to_bat_kwh"], 0.0)
-        self.assertEqual(result["flows"][0]["pv_export_kwh"], 0.0)
-        self.assertEqual(result["flows"][1]["pv_export_kwh"], 0.0)
+        # The DP cannot retain PV energy smaller than one SOC quantum. That
+        # remainder must be represented as export, never as untracked charge.
+        quantum_ac_kwh = 15.0 * 0.25 / 100.0 / 0.90
+        self.assertLessEqual(result["flows"][0]["pv_export_kwh"], quantum_ac_kwh)
+        self.assertLessEqual(result["flows"][1]["pv_export_kwh"], quantum_ac_kwh)
         self.assertLess(result["flows"][2]["grid_charge_kwh"], 0.75)
 
     def test_hard_target_rejects_unfunded_discharge(self):
