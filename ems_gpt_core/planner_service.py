@@ -1520,6 +1520,20 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
             "selected_buy_indices": selected_buy}
 
 
+def target_commitment_safety_fallback(required_soc_pcts: list[float] | None
+                                      ) -> tuple[list[float] | None, set[int], set[int]]:
+    """Drop optional replenishment deadlines while preserving every hard SOC floor.
+
+    A selected BUY is an economic choice, not a safety requirement. If the
+    deadline attached to that choice makes the constrained pass infeasible,
+    retry with the independently calculated required SOC as the import cap and
+    keep no forced BUY deadline. The optimizer still enforces required SOC in
+    every slot, respects the technical reserve, and can use PV above the cap.
+    """
+    targets = None if required_soc_pcts is None else list(required_soc_pcts)
+    return targets, set(), set()
+
+
 def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], required_slots: int,
                               min_cycle_slots: int, min_gap_slots: int,
                               max_gap_slots: int, planned_power_kw: float,
@@ -2087,6 +2101,7 @@ def build_planner(a: PlannerAdapters):
                 """Apply the terminal-SOC recovery contract to every later pass."""
                 nonlocal battery_sales_enabled, terminal_shortfall_allowed, terminal_soc
                 requested_terminal_soc = terminal_soc
+                target_commitment_fallback_applied = False
                 while True:
                     try:
                         result = optimize_energy_horizon(
@@ -2098,6 +2113,35 @@ def build_planner(a: PlannerAdapters):
                             allow_terminal_shortfall=terminal_shortfall_allowed)
                         break
                     except RuntimeError as exc:
+                        slot_error_prefix = "No feasible SOC state at horizon slot "
+                        if (pass_name == "TARGET_COMMITMENT"
+                                and not battery_sales_enabled
+                                and not target_commitment_fallback_applied
+                                and required_pcts is not None
+                                and str(exc).startswith(slot_error_prefix)):
+                            failed_index = int(str(exc)[len(slot_error_prefix):])
+                            if not 0 <= failed_index < len(horizon_rows):
+                                raise
+                            minimum_targets, hard_indices, due_indices = (
+                                target_commitment_safety_fallback(required_pcts))
+                            target_commitment_fallback_applied = True
+                            record_event("target_commitment_deadline_relaxed", "planner", {
+                                "stage": pass_name,
+                                "slot_start": str(horizon_rows[failed_index]["slot_start"]),
+                                "failed_index": failed_index,
+                                "required_soc_pct": required_pcts[failed_index],
+                                "reason": str(exc),
+                            }, "WARNING")
+                            continue
+                        if (pass_name == "TARGET_COMMITMENT"
+                                and battery_sales_enabled
+                                and str(exc).startswith(slot_error_prefix)):
+                            battery_sales_enabled = False
+                            record_event("battery_sales_disabled_for_target_commitment", "planner", {
+                                "stage": pass_name,
+                                "reason": str(exc),
+                            }, "WARNING")
+                            continue
                         if str(exc) != "No feasible terminal SOC state for complete horizon":
                             raise
                         if battery_sales_enabled:

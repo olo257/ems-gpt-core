@@ -1,5 +1,17 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.35 — bezpieczne odzyskiwanie planera przy nieosiągalnym terminie BUY
+
+- Jeśli etap `TARGET_COMMITMENT` nie znajduje wykonalnej trajektorii SOC,
+  planer najpierw wyłącza sprzedaż baterii, a następnie ponawia przebieg bez
+  wymuszonego terminu realizacji opcjonalnego zakupu.
+- Ponowienie zachowuje wymagany SOC w każdym slocie, rezerwę bezpieczeństwa,
+  cel końca doby i limit importu. Zakup z sieci nie może przekroczyć
+  wymaganego SOC; ładowanie z PV nadal może przekroczyć ten poziom.
+- Jeśli trajektoria pozostaje niewykonalna przy zachowaniu twardych wymagań,
+  planer nadal zgłasza błąd i pozostaje w trybie fail-safe.
+- Dodano test regresji fallbacku. Weryfikacja lokalna: 325 testów zaliczonych.
+
 ## 0.39.34 — odzyskiwanie z nieosiągalnego historycznego SOC końca horyzontu
 
 - Przy błędzie `No feasible terminal SOC state for complete horizon` planner
