@@ -165,38 +165,115 @@ def recoverable_soc_requirements(rows: list[dict], required_soc_pcts: list[float
             "recovery_buy_index": recovery_buy}
 
 
+def reachable_soc_ceiling_pcts(
+        rows: list[dict], initial_soc_pct: float, capacity_kwh: float,
+        reserve_pct: float, eta_c: float, eta_d: float,
+        max_power_kw: float, slot_minutes: int, soc_step_pct: float = 0.10,
+) -> list[float]:
+    """Compute the highest physically reachable SOC after each slot.
+
+    This is an optimistic reachability bound: charge at maximum whenever an
+    allowed PV surplus or BUY window permits it, disable battery sales, and
+    leave residual home demand to grid once the technical reserve is reached.
+    It never creates charge power or allows SOC above 100%.
+    """
+    capacity = max(0.001, float(capacity_kwh))
+    reserve = max(0.0, min(100.0, float(reserve_pct)))
+    step = max(0.05, float(soc_step_pct))
+    unit_kwh = capacity * step / 100.0
+    first_unit = int(math.ceil(reserve / step - 1e-9))
+    last_unit = int(math.floor(100.0 / step + 1e-9))
+    current_unit = max(first_unit, min(last_unit, int(round(
+        min(100.0, max(0.0, float(initial_soc_pct))) / step))))
+    eta_charge = max(0.01, min(1.0, float(eta_c)))
+    eta_discharge = max(0.01, min(1.0, float(eta_d)))
+    max_internal_charge = max(0.0, float(max_power_kw)) * slot_minutes / 60.0 * eta_charge
+    max_internal_discharge = max(0.0, float(max_power_kw)) * slot_minutes / 60.0 / eta_discharge
+    max_up = int(math.floor(max_internal_charge / unit_kwh + 1e-9))
+    max_down = int(math.floor(max_internal_discharge / unit_kwh + 1e-9))
+    ceilings = []
+    for row in rows:
+        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
+        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
+                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+        deficit, surplus = max(0.0, load - pv), max(0.0, pv - load)
+        buy_allowed = (
+            strict_database_bool(row.get("buy_window", False), "buy_window")
+            and not strict_database_bool(row.get("sale_window", False), "sale_window")
+        )
+        if deficit > 1e-9:
+            # The optimizer may import native load while charging only when
+            # the permitted battery charge input also covers that load.
+            can_charge_and_cover_load = (
+                buy_allowed and max_internal_charge / eta_charge + 1e-9 >= deficit
+            )
+            if can_charge_and_cover_load:
+                current_unit = min(last_unit, current_unit + max_up)
+            else:
+                quantum_output = unit_kwh * eta_discharge
+                required_down = max(
+                    0, int(math.ceil(deficit / quantum_output - 1.0 - 1e-9)))
+                available_down = max(0, current_unit - first_unit)
+                current_unit -= min(max_down, available_down, required_down)
+        else:
+            available_charge = min(
+                max_internal_charge,
+                surplus * eta_charge + (max_internal_charge if buy_allowed else 0.0),
+            )
+            reachable_up = int(math.floor(available_charge / unit_kwh + 1e-9))
+            current_unit = min(last_unit, current_unit + reachable_up)
+        ceilings.append(current_unit * step)
+    return ceilings
+
+
 def validate_recoverable_soc_requirements(
         rows: list[dict], required_soc_pcts: list[float], initial_soc_pct: float,
-        reserve_pct: float, target_cap_pct: float) -> dict:
-    """Recover a breached prefix and bound impossible bridges to physical SOC.
+        reserve_pct: float, target_cap_pct: float, *,
+        capacity_kwh: float | None = None, eta_c: float = 0.9,
+        eta_d: float = 0.95, max_power_kw: float = 5.0,
+        slot_minutes: int = 15, soc_step_pct: float = 0.10) -> dict:
+    """Recover missed bridges and bound every hard SOC floor to reachability.
 
-    Requirements above 100% are not SOC targets. For those slots keep the
-    technical reserve as the hard floor, disable battery sales for the run, and
-    let residual native-load demand flow to the grid.
+    A requirement above 100% or above the highest SOC physically reachable at
+    that slot is not an executable target. Preserve the technical reserve,
+    disable battery sales, and route unavoidable household demand to grid.
     """
     recovery = recoverable_soc_requirements(
         rows, required_soc_pcts, initial_soc_pct, reserve_pct)
+    required = list(recovery["required_soc_pcts"])
     physical_cap = 100.0
-    limited_indices = [
-        index for index, safety_pct in enumerate(recovery["required_soc_pcts"])
-        if safety_pct > physical_cap + 1e-9
-    ]
+    reachable = None
+    if capacity_kwh is not None:
+        reachable = reachable_soc_ceiling_pcts(
+            rows, initial_soc_pct, capacity_kwh, reserve_pct,
+            eta_c, eta_d, max_power_kw, slot_minutes, soc_step_pct)
+        if len(reachable) != len(required):
+            raise ValueError("RECOVERY_SOC_REACHABILITY_LENGTH_MISMATCH")
+    limited_indices = []
+    unreachable_indices = []
+    bounded = list(required)
+    for index, requested in enumerate(required):
+        ceiling = physical_cap if reachable is None else min(physical_cap, reachable[index])
+        if requested > physical_cap + 1e-9:
+            limited_indices.append(index)
+        if requested > ceiling + 1e-9:
+            unreachable_indices.append(index)
+            limited_indices.append(index)
+        if requested > ceiling:
+            bounded[index] = max(float(reserve_pct), ceiling)
     if limited_indices:
-        # A bridge requirement above the battery's physical capacity is not a
-        # reachable SOC target. Keep the hard technical reserve, stop battery
-        # export for this run, and let the energy balance expose residual
-        # native-load import instead of rejecting the whole plan.
-        bounded = list(recovery["required_soc_pcts"])
-        for index in limited_indices:
-            bounded[index] = max(0.0, min(physical_cap, float(reserve_pct)))
         recovery["required_soc_pcts"] = bounded
-        recovery["capacity_limited_indices"] = limited_indices
+        recovery["capacity_limited_indices"] = sorted(set(limited_indices))
+        recovery["unreachable_indices"] = sorted(set(unreachable_indices))
         recovery["disable_battery_sales"] = True
+        recovery["reachable_soc_ceiling_pcts"] = reachable
     else:
+        recovery["required_soc_pcts"] = bounded
         recovery["capacity_limited_indices"] = []
+        recovery["unreachable_indices"] = []
         recovery["disable_battery_sales"] = False
+        recovery["reachable_soc_ceiling_pcts"] = reachable
     return recovery
-
 
 def next_replenishment_prices(rows: list[dict]) -> list[float | None]:
     """Cheapest price in the nearest later contiguous battery BUY window."""
@@ -1742,7 +1819,10 @@ def build_planner(a: PlannerAdapters):
                 float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
                 eta_c, eta_d, max_kw, int(OPTIONS["slot_minutes"]), uncertainty_weight)
             recovery = validate_recoverable_soc_requirements(
-                horizon_rows, safety_required_soc, soc_now, reserve, target_cap)
+                horizon_rows, safety_required_soc, soc_now, reserve, target_cap,
+                capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
+                max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
+                soc_step_pct=0.10)
             safety_required_soc = recovery["required_soc_pcts"]
             if recovery["relaxed_indices"]:
                 record_event("soc_safety_bridge_recovery", "planner", {
@@ -1778,6 +1858,10 @@ def build_planner(a: PlannerAdapters):
             if recovery.get("capacity_limited_indices"):
                 record_event("soc_bridge_limited_to_physical_capacity", "planner", {
                     "physical_soc_cap_pct": 100.0,
+                    "limit_reason": ("UNREACHABLE_REQUIRED_SOC"
+                                     if recovery.get("unreachable_indices")
+                                     else "PHYSICAL_CAPACITY"),
+                    "unreachable_slot_count": len(recovery.get("unreachable_indices") or []),
                     "limited_slot_count": len(recovery["capacity_limited_indices"]),
                     "first_limited_slot": str(
                         horizon_rows[recovery["capacity_limited_indices"][0]]["slot_start"]),
