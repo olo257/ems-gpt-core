@@ -171,6 +171,24 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertEqual(result['required_soc_pcts'][0], 15.0)
         self.assertTrue(result['disable_battery_sales'])
 
+    def test_live_reachability_does_not_turn_over_100_bridge_into_buy_to_full(self):
+        rows = self.rows(3)
+        rows[0]['buy_window'] = True
+        result = validate_recoverable_soc_requirements(
+            rows, [105.0, 105.0, 17.0], 50.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
+        self.assertEqual(result['required_soc_pcts'], [15.0, 15.0, 17.0])
+        self.assertEqual(result['unreachable_indices'], [0, 1])
+        self.assertTrue(result['disable_battery_sales'])
+        plan = optimize_energy_horizon(
+            rows, 50.0, 15.0, 15.0, 0.9, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * len(rows), 15.0, 0.1, 100.0,
+            [15.0] * len(rows), set(), {0},
+            result['required_soc_pcts'], battery_sales_enabled=False)
+        self.assertAlmostEqual(plan['flows'][0]['grid_charge_kwh'], 0.0)
+        self.assertLess(max(flow['soc_end_pct'] for flow in plan['flows']), 100.0)
+
     def test_unreachable_floor_is_bounded_to_physical_reachability(self):
         rows = self.rows(4)
         rows[1].update(forecast_load_kwh=0.5, buy_window=False)
