@@ -52,7 +52,22 @@ class OfflineContractTests(unittest.TestCase):
                               ("planner README", PLANNER_README)):
             with self.subTest(document=label):
                 self.assertRegex(source, rf"(?<![0-9]){re.escape(version)}(?![0-9])")
+                self.assertIn(f"**{version}**", source)
         self.assertIn(f"## {version}", (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
+
+    def test_impossible_soc_bridge_never_becomes_full_purchase_target(self):
+        contract = PLANNER_CONTRACT
+        self.assertNotIn("Jeżeli wymaganie przekracza pojemność, target wynosi", contract)
+        self.assertIn("nie może zostać przekształcone w cel", contract)
+        self.assertIn("Target nie jest progiem sprzedaży", contract)
+        self.assertIn("nigdy nie przekracza 100%", contract)
+
+    def test_soc_target_limits_grid_only_and_pv_has_physical_priority(self):
+        contract = PLANNER_CONTRACT
+        self.assertIn("ogranicza wyłącznie energię ładowania z sieci", contract)
+        self.assertIn("ładowanie baterii PV do fizycznego maksimum 100%", contract)
+        self.assertIn("sprzedaż pozostałej nadwyżki PV wyłącznie przy cenie > 0 PLN/kWh", contract)
+        self.assertNotIn("ładowanie baterii do `soc_target`;\n3. CWU", contract)
 
     def test_internal_observer_remains_and_agent_worker_is_removed(self):
         observer = MODULE_SOURCES["observer_service.py"]
@@ -217,7 +232,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("`soc_target` jest zapotrzebowaniem energetycznym", PLANNER_CONTRACT)
         self.assertIn("`soc_floor` jest wyłącznie dolną granicą", PLANNER_CONTRACT)
         self.assertIn("PV + rozładowanie baterii + import", PLANNER_CONTRACT)
-        self.assertIn("ładowanie baterii do `soc_target`", PLANNER_CONTRACT)
+        self.assertIn("ogranicza wyłącznie energię ładowania z sieci", PLANNER_CONTRACT)
         self.assertIn("pozostawia ostatni poprawny plan", PLANNER_CONTRACT)
 
     def test_modular_runtime_boundaries(self):

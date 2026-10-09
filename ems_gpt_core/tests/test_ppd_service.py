@@ -160,6 +160,20 @@ class FlexiblePpdTests(unittest.TestCase):
         self.assertEqual(by_name["SELL_PV"][1:3], (True, "ALLOWED"))
         self.assertEqual(by_name["HP_HEAT_DHW"][1:3], (True, "ON"))
 
+    def test_ppd_rejects_battery_sale_when_policy_is_blocked(self):
+        with self.assertRaisesRegex(RuntimeError, "PPD_SELL_BAT_BLOCKED_PLAN"):
+            plan_bound_decisions({
+                "slot_start": datetime(2026, 9, 18, 10, 0),
+                "planned_buy_kwh": 0.0,
+                "planned_sell_kwh": 0.5,
+                "planned_pv_export_kwh": 0.0,
+                "price_sell_pln_kwh": 1.0,
+                "sell_bat_policy_allowed": 0,
+                "grid_policy_planned": "NEUTRAL",
+                "export_policy_planned": "SELL_BAT",
+                "heat_pump_window": 0,
+            }, 0.02)
+
     def test_ppd_does_not_recalculate_planner_owned_battery_economics(self):
         decisions = plan_bound_decisions({
             "planned_buy_kwh": 0.0,

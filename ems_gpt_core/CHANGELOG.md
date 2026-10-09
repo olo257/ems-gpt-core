@@ -1,29 +1,21 @@
 # EMS-GPT Core — historia zmian
 
-## 0.39.30 — most SOC ponad pojemność nie uruchamia ładowania do pełna
+## 0.39.31 — spójny target zakupu i walidacja całego przepływu
 
-- Poprawiono recovery w ścieżce produkcyjnej: wymaganie SOC ponad 100% jest niemożliwe i trafia do technicznego fallbacku; samo istnienie BUY do 100% nie zamienia go w cel zakupu.
-- Dodano regresję z parametrami baterii i oknem BUY, zgodnymi z wywołaniem planera na żywo. Poprzedni test nie pokrywał tej ścieżki.
-- Uzupełniono kontrakt planera o zakaz kupowania do pełna jako skutku niemożliwego mostu.
-
-## 0.39.29 — wspólna wykonalność trajektorii SOC
-
-## 0.39.29 — wspólna wykonalność trajektorii SOC
-
-- Audyt całej ścieżki planera potwierdził, że najwyższe SOC osiągalne osobno w każdym slocie nie dowodzi wykonalności jednej wspólnej trajektorii. Nowa analiza przechodzi pełną ścieżkę stanów SOC i reguły importu domu.
-- Nieosiągalne progi są ograniczane do spójnej ścieżki; sprzedaż baterii zostaje wyłączona dla przebiegu, a brakujący bilans domu przechodzi na import z sieci.
-- Nieprawidłowy lub brakujący bieżący SOC nie jest zastępowany rezerwą ani po cichu przycinany. Odczyt powyżej 100% odrzuca przebieg jako błąd telemetrii.
-- Gdy pomiar startowy jest poniżej rezerwy, plan zachowuje pomiar i nie rozładowuje baterii poniżej rezerwy; odbudowa odbywa się wyłącznie przez dozwolone PV/BUY.
-- Testy pokrywają wspólną osiągalność, SOC > 100%, start poniżej rezerwy oraz planowanie BUY→PV→CWU→EV→eksport/ograniczenie.
+- Target wybranego BUY jest wyprowadzany z wymagania po oknie uzupełnienia; nie jest kopiowany z SOC znalezionego przez nieograniczony przebieg ekonomiczny. Ujemna cena nie powoduje sama zakupu do 100%.
+- Wcześniejsze sloty tego samego mostu dziedziczą target BUY, aby dostępne PV mogło zastąpić późniejszy import.
+- Resztkowe PV poniżej kwantu SOC respektuje pozostałą moc ładowania i fizyczną pojemność.
+- Recovery i optymalizator nie traktują nakładających się BUY/SELL jako uprawnionego zakupu.
+- PPD/executor wymagają zgodności `eligible` z jawną polityką `ALLOW/BLOCK` lub `ALLOWED/BLOCKED`.
+- Poprawiono sprzeczne zapisy kontraktu dotyczące targetu >100%, limitu PV i recovery.
+- Testy regresyjne obejmują zakup przy ujemnej cenie, PV przed BUY, limit mocy, nakładające się okna i niespójne uprawnienia.
 
 ## 0.39.28 — granica recovery SOC i alarm diagnostyczny
 
-- Wymagania SOC są ograniczone do 100%; gdy most energetyczny przekracza pojemność, planer wyłącza sprzedaż baterii i rozlicza brak dla domu jako import resztowy, zachowując rezerwę techniczną.
+- Walidacja limitu SOC działa po recovery ograniczonym do slotów przed pierwszym przyszłym BUY; wymagania po BUY nadal odrzucają plan bez obniżania rezerwy.
 - Diagnostyka uwzględnia stan runtime planera/PPD i błędy zatrzaśnięte, nawet gdy w bazie pozostaje starszy plan.
 - Testy regresyjne obejmują recovery przed BUY, twardy błąd po BUY i raportowanie zdegradowanego planera.
 - Kontrola spójności wersji obejmuje dokumentację i oba pliki README.
-- PPD publikuje pozwolenia CWU/EV dopiero w oknie po osiągnięciu targetu; executor respektuje `eligible` i nie traktuje samego rekordu `BLOCK` jako zgody.
-- `SELL_PV` jest `ALLOWED` przy cenie > 0 PLN/kWh niezależnie od prognozowanej nadwyżki; cena ≤ 0 blokuje sprzedaż. Nadwyżka po CWU → EV jest eksportowana, a pozostała produkcja ograniczana.
 
 
 ## 0.39.27 — zgodność wersji API i dodatku

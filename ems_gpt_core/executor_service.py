@@ -68,11 +68,25 @@ def battery_import_guard_reason(live_soc, target, planned_buy, flow_threshold: f
     return None
 
 
+def process_decision_is_allowed(row: dict, process_name: str) -> bool:
+    """Require both PPD eligibility and its explicit policy decision."""
+    if not database_bool(row.get("eligible"), f"{process_name}.eligible"):
+        return False
+    expected = {
+        "BATTERY_IMPORT": "BUY_ALLOWED",
+        "SELL_BAT": "ALLOWED",
+        "PV_CWU": "ALLOW",
+        "PV_EV": "ALLOW",
+        "HP_HEAT_DHW": "ON",
+    }.get(process_name)
+    return expected is not None and str(row.get("decision") or "").upper() == expected
+
+
 def flexible_process_is_allowed(decision_rows: list[dict], process_name: str) -> bool:
-    """Honor the PPD's explicit ALLOW/BLOCK eligibility for a flexible load."""
+    """Honor the PPD's explicit ALLOW/BLOCK status and eligibility."""
     for row in decision_rows:
         if row.get("process_name") == process_name:
-            return database_bool(row.get("eligible"), f"{process_name}.eligible")
+            return process_decision_is_allowed(row, process_name)
     return False
 
 
@@ -696,7 +710,8 @@ def build_executor(a: ExecutorAdapters):
               (now - timedelta(seconds=max(30, int(OPTIONS.get(
                   "telemetry_degraded_seconds", 120)))),))
             live = cur.fetchone() or {}
-            planned = {str(row["process_name"]): database_bool(row["eligible"], "eligible")
+            planned = {str(row["process_name"]): process_decision_is_allowed(
+                           row, str(row["process_name"]))
                        for row in decision_rows}
             runtime_flexible = flexible_surplus_runtime_decisions(
                 pv_power_w=live.get("pv_power_w"),
@@ -723,7 +738,8 @@ def build_executor(a: ExecutorAdapters):
                     # Informational PPD decision. Surplus PV follows the
                     # inverter's native export path and has no HA script.
                     continue
-                planned_on = database_bool(row["eligible"], "eligible")
+                planned_on = process_decision_is_allowed(
+                    row, str(row["process_name"]))
                 if row["process_name"] == "HP_HEAT_DHW":
                     planner_window = database_bool(
                         row.get("planner_heat_pump_window"), "heat_pump_window")

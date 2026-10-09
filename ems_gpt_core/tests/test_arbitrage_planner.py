@@ -1138,6 +1138,104 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(flow["battery_to_load_kwh"], 0.0)
         self.assertLess(flow["soc_end_pct"], 40.0)
 
+    def test_selected_buy_target_is_available_to_displace_it_with_earlier_pv(self):
+        rows = [
+            {"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.3,
+             "buy_window": False, "sale_window": False,
+             "forecast_load_kwh": 0.0, "forecast_heat_pump_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.5, "slot_start": 0, "slot_end": 1},
+            {"price_buy_pln_kwh": 0.5, "price_sell_pln_kwh": 0.2,
+             "buy_window": True, "sale_window": False,
+             "forecast_load_kwh": 0.0, "forecast_heat_pump_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0, "slot_start": 1, "slot_end": 2},
+            {"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.0,
+             "buy_window": False, "sale_window": False,
+             "forecast_load_kwh": 0.8, "forecast_heat_pump_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0, "slot_start": 2, "slot_end": 3},
+        ]
+        flows = [
+            {"grid_charge_kwh": 0.0, "battery_to_load_kwh": 0.0,
+             "pv_to_bat_kwh": 0.0, "battery_sell_kwh": 0.0, "soc_end_pct": 20.0},
+            {"grid_charge_kwh": 0.5, "battery_to_load_kwh": 0.0,
+             "pv_to_bat_kwh": 0.0, "battery_sell_kwh": 0.0, "soc_end_pct": 23.0},
+            {"grid_charge_kwh": 0.0, "battery_to_load_kwh": 0.8,
+             "pv_to_bat_kwh": 0.0, "battery_sell_kwh": 0.0, "soc_end_pct": 17.0},
+        ]
+        contract = build_soc_contracts(
+            rows, flows, 15.0, 15.0, 0.90, 0.95, 0.0, 17.0, 100.0, 0.10)
+        self.assertEqual(contract["buy_due_indices"], {1})
+        self.assertEqual(contract["charge_targets"][0],
+                         contract["charge_targets"][1])
+        self.assertGreater(contract["charge_targets"][0], 15.0)
+
+    def test_disabled_sale_cannot_authorize_grid_import_for_native_load(self):
+        row = {"price_buy_pln_kwh": -1.0, "price_sell_pln_kwh": 0.0,
+               "buy_window": True, "sale_window": False,
+               "forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.0}
+        result = optimize_energy_horizon(
+            [row], 50.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 15.0, 0.10, 100.0,
+            battery_sales_enabled=False)
+        flow = result["flows"][0]
+        self.assertEqual(flow["grid_charge_kwh"], 0.0)
+        self.assertLessEqual(flow["grid_load_kwh"], 0.001)
+        self.assertGreater(flow["battery_to_load_kwh"], 0.0)
+
+    def test_overlapping_buy_and_sell_cannot_charge(self):
+        row = {"price_buy_pln_kwh": -1.0, "price_sell_pln_kwh": 1.0,
+               "buy_window": True, "sale_window": True,
+               "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0}
+        result = optimize_energy_horizon(
+            [row], 50.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 15.0, 0.10, 100.0)
+        self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
+
+    def test_negative_buy_does_not_turn_economic_full_soc_into_target(self):
+        rows = [{"price_buy_pln_kwh": -1.0, "price_sell_pln_kwh": 0.0,
+                 "buy_window": True, "sale_window": False,
+                 "forecast_load_kwh": 0.0, "forecast_heat_pump_load_kwh": 0.0,
+                 "forecast_pv_total_kwh": 0.0, "slot_start": i, "slot_end": i + 1}
+                for i in range(7)]
+        economic = optimize_energy_horizon(
+            rows, 50.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * len(rows), 15.0, 0.10, 100.0)
+        self.assertEqual(economic["flows"][-1]["soc_end_pct"], 100.0)
+        contract = build_soc_contracts(
+            rows, economic["flows"], 15.0, 15.0, 0.90, 0.95, 0.0,
+            15.0, 100.0, 0.10)
+        self.assertEqual(contract["charge_targets"], [15.0] * len(rows))
+        accepted = optimize_energy_horizon(
+            rows, 50.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * len(rows), 15.0, 0.10, 100.0,
+            contract["charge_targets"], set(), contract["buy_due_indices"],
+            contract["required"])
+        self.assertTrue(all(flow["grid_charge_kwh"] == 0.0
+                            for flow in accepted["flows"]))
+        self.assertEqual(accepted["flows"][0]["soc_end_pct"], 50.0)
+
+    def test_pv_can_charge_above_grid_target(self):
+        row = {"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.5,
+               "buy_window": False, "sale_window": False,
+               "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 2.0}
+        result = optimize_energy_horizon(
+            [row], 70.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 70.0, 0.10, 100.0, [70.0], set(), set(), [70.0])
+        flow = result["flows"][0]
+        self.assertGreater(flow["soc_end_pct"], 70.0)
+        self.assertGreater(flow["pv_to_bat_kwh"], 0.0)
+
+    def test_pv_substep_remainder_respects_charge_power_and_capacity(self):
+        row = {"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.5,
+               "buy_window": False, "sale_window": False,
+               "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 10.0}
+        result = optimize_energy_horizon(
+            [row], 50.0, 12.8, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 15.0, 0.10, 100.0, [100.0], set(), set(), [15.0])
+        flow = result["flows"][0]
+        self.assertLessEqual(flow["battery_charge_internal_kwh"], 5.0 * 0.25 * 0.90 + 1e-9)
+        self.assertLessEqual(flow["pv_to_bat_kwh"], 5.0 * 0.25 + 1e-9)
+        self.assertLessEqual(flow["soc_end_pct"], 100.0)
+
     def test_buy_target_is_a_hard_charge_ceiling(self):
         rows = [{"price_buy_pln_kwh": 0.5, "price_sell_pln_kwh": 0.0,
                  "sale_window": False, "buy_window": True,

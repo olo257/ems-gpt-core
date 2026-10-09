@@ -151,7 +151,9 @@ def recoverable_soc_requirements(rows: list[dict], required_soc_pcts: list[float
                 "recovery_buy_index": None}
     recovery_buy = next((i for i, row in enumerate(rows)
                          if strict_database_bool(row.get("buy_window", False),
-                                                 "buy_window")), None)
+                                                 "buy_window")
+                         and not strict_database_bool(
+                             row.get("sale_window", False), "sale_window")), None)
     if recovery_buy is None:
         return {"required_soc_pcts": required, "relaxed_indices": [],
                 "recovery_buy_index": None}
@@ -884,6 +886,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     costs = {start_unit: 0.0}
     buy_permissions = [
         strict_database_bool(row.get("buy_window", False), "buy_window")
+        and not strict_database_bool(row.get("sale_window", False), "sale_window")
         for row in rows
     ]
     buy_window_ends = {
@@ -911,7 +914,10 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         required_unit = int(math.ceil(required_pct / step - 1e-9))
         # MariaDB returns BOOL/TINYINT as 0/1 (and some drivers as Decimal),
         # so identity checks against False would incorrectly allow 0.
-        grid_charge_allowed = strict_database_bool(row.get("buy_window", True), "buy_window")
+        grid_charge_allowed = (
+            strict_database_bool(row.get("buy_window", True), "buy_window")
+            and not strict_database_bool(row.get("sale_window", False), "sale_window")
+        )
         battery_sale_allowed = (battery_sales_enabled and sell_price > 0.0
                                 and strict_database_bool(
                                     row.get("sale_window", False), "sale_window"))
@@ -967,11 +973,19 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     if (minimum_soc_targets is not None
                             and next_unit < last_unit
                             and pv_export > 1e-9):
-                        fractional_pv = pv_export
+                        remaining_charge_internal = max(
+                            0.0, max_internal_charge - battery_charge_internal)
+                        remaining_capacity_internal = max(
+                            0.0, capacity - current_energy - battery_charge_internal)
+                        fractional_pv = min(
+                            pv_export,
+                            remaining_charge_internal / eta_c,
+                            remaining_capacity_internal / eta_c,
+                        )
                         pv_to_bat += fractional_pv
                         battery_charge_internal += fractional_pv * eta_c
-                        pv_export = 0.0
-                        pv_curtail = 0.0
+                        pv_export = max(0.0, pv_export - fractional_pv)
+                        pv_curtail = max(0.0, surplus - pv_to_bat - pv_export)
                 else:
                     battery_discharge = -delta
                     delivered = battery_discharge * eta_d
@@ -1007,7 +1021,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # battery charge the planned battery input must be at least as
                 # large as the voluntary part of grid supply to the house.
                 if grid_charge > 1e-9:
-                    if voluntary_grid_load > grid_charge + 1e-9:
+                    permitted_grid_hold = grid_charge if battery_sales_enabled else 0.0
+                    if voluntary_grid_load > permitted_grid_hold + 1e-9:
                         continue
                 elif voluntary_grid_load > unit_kwh * eta_d + 1e-9:
                     continue
@@ -1063,6 +1078,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                         "battery_to_load_kwh": battery_to_load, "battery_sell_kwh": battery_sell,
                         "battery_discharge_internal_kwh": battery_discharge,
                         "battery_charge_internal_kwh": battery_charge_internal,
+                        "voluntary_grid_load_kwh": voluntary_grid_load,
                         "pv_export_kwh": pv_export, "pv_curtail_kwh": pv_curtail,
                         "slot_cost_pln": slot_cost})
         if not next_costs:
@@ -1375,6 +1391,7 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
     uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
     step = max(0.001, float(soc_step_pct))
     required = [reserve] * len(rows)
+    required_after_slot = [reserve] * len(rows)
     charge_targets = [reserve] * len(rows)
     due = [None] * len(rows)
     source = ["HORIZON"] * len(rows)
@@ -1398,6 +1415,7 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
                     cap, float(daily_terminal_soc_pcts[i]))) / 100.0,
             )
         raw_required_pct = required_after / capacity * 100.0
+        required_after_slot[i] = max(reserve, min(cap, raw_required_pct))
         flow = economic_flows[i]
         # The economic trajectory is a proven reachable path.  Add back only
         # its optional battery sale to obtain the highest no-sale SOC that is
@@ -1448,12 +1466,29 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
             next_due = row.get("slot_end") or row.get("slot_start")
             next_source = "PV"
 
-    for i, flow in enumerate(economic_flows):
-        economic_end = float(flow.get("soc_end_pct") or reserve)
-        if i in selected_buy:
-            charge_targets[i] = min(cap, max(required[i], economic_end))
-        else:
-            charge_targets[i] = required[i]
+    for i in range(len(rows)):
+        charge_targets[i] = required[i]
+    # A selected BUY window receives only the energy needed to reach the next
+    # replenishment/terminal requirement. Do not turn an unconstrained
+    # economic-path state (which can be 100% at a negative price) into a
+    # purchase target. The same ceiling applies to every slot in the selected
+    # contiguous purchase run so the optimizer may choose its cheapest slot.
+    for end in sorted(buy_due_indices):
+        start = end
+        while start - 1 in selected_buy:
+            start -= 1
+        window_target = max(
+            required_after_slot[end], max(required[start:end + 1], default=reserve))
+        window_target = min(cap, max(reserve, window_target))
+        for i in range(start, end + 1):
+            charge_targets[i] = window_target
+        # Carry the same BUY ceiling backward across its assigned energy bridge
+        # so an earlier PV surplus can replace part or all of the later import.
+        group_due = rows[start].get("slot_end") or rows[start].get("slot_start")
+        for i in range(start - 1, -1, -1):
+            if source[i] != "BUY" or due[i] != group_due:
+                break
+            charge_targets[i] = max(charge_targets[i], window_target)
     return {"required": required, "charge_targets": charge_targets,
             "due": due, "source": source, "reserved_pv_kwh": reserved_pv,
             "buy_due_indices": buy_due_indices,
@@ -2108,9 +2143,43 @@ def build_planner(a: PlannerAdapters):
                 optimization=optimize_remaining_pass(
                     "TARGET_COMMITMENT", optimized_floors, charge_targets, set(),
                     target_due_indices, required_soc)
-                if not any(float(flow.get("battery_sell_kwh") or 0.0) > flow_threshold
-                           for flow in optimization["flows"]):
+                sell_indices = {
+                    index for index, flow in enumerate(optimization["flows"])
+                    if float(flow.get("battery_sell_kwh") or 0.0) > flow_threshold
+                }
+                if not sell_indices:
+                    voluntary_import = any(
+                        float(flow.get("voluntary_grid_load_kwh") or 0.0)
+                        > technical_threshold
+                        for flow in optimization["flows"]
+                    )
+                    if voluntary_import and battery_sales_enabled:
+                        # A grid supplied native load is an allowed exception
+                        # only when it protects energy for a later sale. If the
+                        # selected route has no sale, replan with that exception
+                        # disabled instead of publishing a hidden house import.
+                        battery_sales_enabled = False
+                        economic_optimization = optimize_remaining_pass(
+                            "GRID_LOAD_WITHOUT_SALE_GUARD", optimized_floors,
+                            required_pcts=enforced_daily_required)
+                        ensure_deadline("GRID_LOAD_WITHOUT_SALE_GUARD")
+                        continue
+                    if voluntary_import:
+                        raise RuntimeError("VOLUNTARY_GRID_LOAD_WITHOUT_SALE")
                     break
+                voluntary_without_later_sale = any(
+                    float(flow.get("voluntary_grid_load_kwh") or 0.0)
+                    > technical_threshold
+                    and not any(sale_index > index for sale_index in sell_indices)
+                    for index, flow in enumerate(optimization["flows"])
+                )
+                if voluntary_without_later_sale:
+                    battery_sales_enabled = False
+                    economic_optimization = optimize_remaining_pass(
+                        "GRID_LOAD_AFTER_SALE_GUARD", optimized_floors,
+                        required_pcts=enforced_daily_required)
+                    ensure_deadline("GRID_LOAD_AFTER_SALE_GUARD")
+                    continue
                 try:
                     no_sale_optimization = optimize_energy_horizon(
                         horizon_rows, soc_now, capacity, reserve, eta_c, eta_d,
