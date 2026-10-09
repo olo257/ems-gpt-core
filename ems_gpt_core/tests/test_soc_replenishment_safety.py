@@ -7,7 +7,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from planner_service import (
     build_soc_contracts, daily_close_soc_requirements,
     end_of_day_soc_target, optimize_energy_horizon,
-    replenishment_soc_requirements, validate_recoverable_soc_requirements,
+    replenishment_soc_requirements, recoverable_soc_requirements,
+    validate_recoverable_soc_requirements,
 )
 
 
@@ -65,6 +66,15 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         without_buy = self.safety(rows)
         self.assertAlmostEqual(without_buy[0] - with_buy[0], 7.5)
         self.assertGreater(with_buy[0], 17.0)
+
+    def test_recovery_skips_overlapping_buy_and_sell_slot(self):
+        rows = self.rows(3)
+        rows[0].update(buy_window=True, sale_window=True)
+        rows[1].update(buy_window=True, sale_window=False)
+        result = recoverable_soc_requirements(
+            rows, [17.0, 17.0, 17.0], 13.0, 15.0)
+        self.assertEqual(result["recovery_buy_index"], 1)
+        self.assertEqual(result["relaxed_indices"], [0])
 
     def test_buy_in_sell_does_not_count_as_supply(self):
         rows = self.rows(3)

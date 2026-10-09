@@ -1,6 +1,6 @@
 # EMS-GPT Core
 
-Wersja wydania: **0.39.30**.
+Wersja wydania: **0.39.31**.
 
 Dokumenty obowiązujące:
 
@@ -14,8 +14,9 @@ i nie są bieżącą specyfikacją.
 
 Najważniejsze reguły wykonawcze:
 
-- energia PV jest przydzielana kolejno do: load domu wraz z HP, ładowania
-  baterii, `PV_CWU`, `PV_EV`, a dopiero potem do eksportu;
+- energia PV pokrywa najpierw load domu z HP i ładuje baterię do 100%;
+  `soc_target` ogranicza tylko import z sieci, nie ładowanie z PV; po target
+  obowiązuje kolejność CWU → EV → sprzedaż PV przy cenie dodatniej → curtailment;
 - `PV_CWU` i `PV_EV` są poza load i poza targetem SOC; w trybie `AUTO`
   wymagają świeżej telemetrii, osiągniętego targetu i rzeczywistej nadwyżki PV;
 - sprzedaż baterii wymaga dodatniej ceny sprzedaży oraz dodatniego wyniku

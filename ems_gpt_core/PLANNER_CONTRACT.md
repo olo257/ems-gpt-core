@@ -66,20 +66,16 @@ Każdy pakiet wykonuje etapy w tej kolejności:
 7. `DEFICIT` — niedobór energii do następnego wykonalnego uzupełnienia PV lub
    BUY oraz wybór ekonomicznych slotów zakupu.
 8. `SOC` — wynikowe `soc_target`, `soc_floor`, SOC przed i po slocie.
-9. `SURPLUS` — po autokonsumpcji i ładowaniu baterii do `soc_target`
-   planer przekazuje niezarezerwowaną nadwyżkę do PPD. PPD wyznacza `allowed`
-   dla CWU i EV; po CWU → EV dozwolona dodatnią ceną pozostałość jest
-   sprzedawana jako PV, a produkcja jest ograniczana na końcu.
+9. `SURPLUS` — PV pokrywa autokonsumpcję, następnie ładuje baterię do
+   fizycznego maksimum 100%, niezależnie od `soc_target`. Target ogranicza
+   wyłącznie import z sieci. Po osiągnięciu targetu PPD może dopuścić CWU,
+   potem EV; pozostała nadwyżka jest sprzedawana tylko przy cenie > 0 PLN/kWh,
+   a ograniczenie produkcji jest ostatnią możliwością.
 10. `PLAN DECISIONS` — planer zamraża rekomendowane przebiegi importu baterii,
     eksportu baterii i HP razem z ilościami użytymi w bilansie oraz target.
-11. `PPD` — osobny `ppd_service.py` publikuje rekomendacje baterii i HP
-   bez ich ponownego liczenia oraz wyznacza `allowed` dla `PV_CWU`, `PV_EV`
-   i `SELL_PV`. CWU/EV mają wspólne okno pozwolenia po target; wykonanie
-   sprawdza świeżą nadwyżkę i stosuje priorytet CWU → EV. `SELL_PV` ma
-   `ALLOWED` przy cenie > 0 PLN/kWh niezależnie od prognozowanej ilości,
-   natomiast ON/OFF wynika z pozostałej nadwyżki. Cena ≤ 0 daje BLOCKED.
-   Niezagospodarowana pozostałość jest ograniczana. Żadna decyzja PPD nie
-   wraca do targetu ani trajektorii SOC.
+11. `PPD` — osobny `ppd_service.py` publikuje te trzy rekomendacje bez ich
+    ponownego liczenia oraz tworzy ciągłe okna `PV_CWU` i `PV_EV` z zamrożonej
+    nadwyżki; nie zwraca żadnego wejścia do targetu.
 12. `VALIDATE` — kontrola całego horyzontu; dopiero potem atomowa publikacja.
 
 Planer może wykonywać wiele przebiegów po tej samej tabeli roboczej, ale każdy
@@ -129,21 +125,18 @@ SOC, sprawność i progi techniczne.
 wykonalnego źródła uzupełnienia: prognozowanego PV albo wybranego okna BUY.
 Jednocześnie jest sufitem ładowania z sieci w oknie BUY.
 
-Jeżeli ekonomiczny przebieg wybrał przyszłe okno BUY, jego wynikowy target jest
-również sufitem ładowania z PV w poprzedzającym odcinku prowadzącym do tego
-okna. Nie jest tam jeszcze obowiązkowym minimum SOC. Dzięki temu PV ma zawsze
-pierwszeństwo i może zmniejszyć albo całkowicie wyeliminować późniejszy zakup;
-obowiązek osiągnięcia targetu powstaje dopiero na końcu wybranego okna BUY.
-Wyzerowanie końcowego zakupu przez wcześniejsze PV nie usuwa samej granicy
-uzupełnienia w następnym przebiegu; okno i kupiona energia są odrębnymi polami
-kontraktu. Zapobiega to oscylacji ścieżki `BUY → PV → brak BUY → BUY`.
+Wybrane okno BUY ustala termin i sufit importu. Target tego okna wynika z
+wymagania po jego zamknięciu, a nie z końcowego SOC znalezionego przez
+nieograniczony przebieg ekonomiczny. Do targetu przypisanego do BUY należą też
+wcześniejsze sloty mostu, więc użyteczne PV może zmniejszyć albo wyeliminować
+późniejszy import. Sama dostępność taniego lub ujemnie wycenionego BUY nie
+uzasadnia zakupu energii ponad ten target.
 
-Ta sama zasada dotyczy całego ciągłego okna produkcji PV: największy wymagany
-target tego okna jest jego sufitem ładowania od pierwszego slotu z prognozowaną
-produkcją. Pierwsza dostępna nadwyżka PV ładuje baterię do tego targetu.
-Wybrany BUY rozdziela dwa mosty energetyczne. Planer nie może pozostawić
-lokalnego targetu na technicznym minimum i eksportować wcześniejszego PV w
-oczekiwaniu na późniejszy slot tego samego okna.
+`Soc_target` ogranicza ładowanie z sieci. Nie ogranicza ładowania z PV, które
+może uzupełniać baterię do fizycznego maksimum 100%. Po osiągnięciu targetu
+PPD może dopuścić CWU/EV na podstawie nadwyżki, a executor ponownie weryfikuje
+rzeczywisty SOC i moc PV. Jeżeli odbiornik działa, jego pobór naturalnie
+zmniejsza moc dostępną do dalszego ładowania baterii.
 
 Techniczne minimum SOC jest granicą awaryjną, nie celem operacyjnym. Planowana
 ścieżka nie może celowo sprowadzać baterii do tej wartości ani uzależniać
@@ -170,23 +163,9 @@ końcowe kontrakty SOC odejmują wyłącznie faktycznie przydzielone zakupy.
 
 Fallback najpierw usuwa SELL_BAT; może obniżyć niewykonalne wymaganie
 historyczne końca doby, ale nie może obniżyć niezależnej rezerwy bezpieczeństwa.
-Wymagane SOC, targety i wszystkie stany planu pozostają w fizycznym zakresie
-0–100%. Żaden odczyt ponad ten zakres lub brak odczytu bieżącego SOC nie jest
-po cichu zastępowany rezerwą: przebieg zostaje odrzucony jako błąd telemetrii.
-Dla każdego slotu wymagany próg musi być osiągalny w jednej wspólnej trajektorii
-od bieżącego SOC, przy rzeczywistych oknach BUY/PV, obciążeniu, sprawności,
-pojemności i mocy. Pułap liczony osobno dla slotów nie wystarcza. Jeżeli próg
-przekracza 100%, planer uznaje ten most za niemożliwy, obniża wymaganie do
-rezerwy technicznej i blokuje sprzedaż baterii. Istnienie okna BUY pozwalającego
-doładować do 100% nie może zamienić tego fallbacku w cel kupna energii. Dla
-progu do 100% nieosiągalnego w jednej trajektorii planer ogranicza go do spójnej
-ścieżki, blokuje sprzedaż baterii i zapisuje dotknięte sloty.
-Jeżeli zmierzony SOC już jest poniżej rezerwy technicznej, plan zachowuje
-zmierzony stan, nie rozładowuje baterii poniżej rezerwy, a odbudowa SOC może
-nastąpić wyłącznie przez dozwolone PV lub BUY. Do tego czasu niedobór domu
-pokrywa import z sieci. Rezerwa pozostaje twardą granicą rozładowania. Brak cen/prognoz poza
-horyzontem nie stanowi potwierdzenia bezpieczeństwa kolejnej nocy. Po
-rozszerzeniu horyzontu bilans musi być przeliczony.
+Niewykonalny bilans bezpieczeństwa powoduje jawny błąd i odrzucenie wariantu.
+Brak cen/prognoz poza horyzontem nie stanowi potwierdzenia bezpieczeństwa
+kolejnej nocy. Po rozszerzeniu horyzontu bilans musi być przeliczony.
 
 Target obejmuje:
 
@@ -198,9 +177,10 @@ Target obejmuje:
 - energię potrzebną do wykonania zaakceptowanej przyszłej sprzedaży baterii.
 
 Target nie jest progiem sprzedaży i nie może być kopiowany z floor. Powinien
-być zwykle wyższy od floor. Jeżeli wymaganie przekracza pojemność, target wynosi
-100%, a wcześniejsza sprzedaż lub obciążenie sterowalne musi zostać ograniczone
-do wykonalnego poziomu.
+być zwykle wyższy od floor i nigdy nie przekracza 100%. Wymaganie mostu ponad
+pojemność jest fizycznie niemożliwe i nie może zostać przekształcone w cel
+zakupu do 100%. Planer zachowuje techniczną rezerwę, wyłącza sprzedaż baterii,
+raportuje deficyt i pozwala sieci pokryć nieunikniony niedobór domu.
 
 Zakup energii służy ładowaniu baterii. Import pokrywający samodzielnie dom nie
 jest decyzją ekonomiczną planera. Wyjątek stanowi jawnie wykazana ochrona energii
@@ -230,27 +210,23 @@ pełnego cyklu wraz ze sprawnościami, degradacją i możliwością odtworzenia 
 Prognozowane i rzeczywiste PV jest alokowane w kolejności:
 
 1. autokonsumpcja odbiorników;
-2. ładowanie baterii do `soc_target`;
-3. CWU;
-4. EV;
-5. sprzedaż pozostałej nadwyżki PV;
-6. ograniczenie produkcji jako ostatnia możliwość.
+2. ładowanie baterii PV do fizycznego maksimum 100%;
+3. po osiągnięciu `soc_target`: CWU, następnie EV;
+4. sprzedaż pozostałej nadwyżki PV wyłącznie przy cenie > 0 PLN/kWh;
+5. ograniczenie produkcji jako ostatnia możliwość.
 
-CWU/EV lub sprzedaż PV nie mogą wystąpić, gdy ta sama energia jest potrzebna do
-osiągnięcia targetu. Dopuszczenie CWU/EV wymaga nadwyżki po target oraz spełnienia
-ich własnych progów. Cena eksportu PV nie może zmienić kolejności CWU → EV →
-sprzedaż pozostałości.
+`soc_target` ogranicza wyłącznie energię ładowania z sieci i nie może
+zablokować ładowania PV ponad target. CWU/EV wymagają zatwierdzenia PPD,
+osiągniętego targetu i świeżej, rzeczywistej nadwyżki. Pozostała nadwyżka PV
+jest sprzedawana tylko przy dodatniej cenie; cena nie zmienia kolejności
+CWU → EV → sprzedaż, a przy cenie niedodatniej nadwyżkę należy ograniczyć.
 
-Okno PPD publikuje jawne `allowed`; executor musi respektować wartość
-`eligible` z opublikowanej decyzji i nie może uznawać samej obecności rekordu
-za zgodę. PPD może otworzyć bieżące okno na podstawie świeżych danych, więc
-wykonawca nie musi obchodzić decyzji planera. W trybie AUTO wykonawca sprawdza
+Okno PPD jest wyłącznie pozwoleniem. W trybie AUTO wykonawca ponownie sprawdza
 świeżą telemetrię. Poniżej targetu blokuje odbiory elastyczne; po osiągnięciu
 targetu liczy nadwyżkę jako `PV - load`, dzięki czemu dalsze ładowanie baterii
-ponad target nie blokuje CWU/EV. CWU ma pierwszeństwo przed EV. Moc już
-pracujących odbiorników jest dodawana z powrotem wyłącznie dla histerezy.
-Odbiory te nie wracają do `load`, `soc_target`, `soc_required` ani
-planowanej trajektorii SOC.
+ponad target nie blokuje CWU/EV. Moc już pracujących CWU/EV jest dodawana
+z powrotem wyłącznie na potrzeby histerezy. Odbiory te nie wracają do `load`,
+`soc_target`, `soc_required` ani planowanej trajektorii SOC.
 
 ## 8. Ekonomiczne BUY i SELL
 
@@ -390,7 +366,9 @@ Każda zmiana planera musi obejmować co najmniej:
 - replan po zmianie SOC oraz prognoz PV/zużycia;
 - brak zakupu w SELL i brak zwykłego zakupu dla domu;
 - zakup rozłożony na wiele slotów przy limicie 5 kW;
-- ładowanie PV do targetu przed CWU, EV i sprzedażą nadwyżki;
+- ładowanie PV ponad `soc_target` aż do fizycznego maksimum 100%, przy czym
+  import z sieci kończy się na target; po nim obowiązuje kolejność CWU → EV →
+  sprzedaż PV przy cenie dodatniej → ograniczenie produkcji;
 - sprzedaż baterii bez naruszenia targetu i floor;
 - fizyczny bilans każdego slotu;
 - odrzucenie całego planu przy pojedynczym niewykonalnym slocie;
@@ -404,13 +382,13 @@ Każda zmiana planera musi obejmować co najmniej:
 
 ## 10. Granica recovery i diagnostyki runtime
 
-Jeżeli pomiar SOC jest już poniżej rezerwy, recovery zachowuje rzeczywisty
-stan początkowy zamiast podnosić go do rezerwy bez energii. Do czasu odbudowy
-rezerwy nie wolno rozładowywać ani sprzedawać energii z baterii; domowy deficyt
-jest bilansem sieciowym. Nieosiągalność progów jest oceniana dla całego
-horyzontu i wspólnej ścieżki, a nie niezależnie dla każdego slotu. Każde
-ograniczenie, lista slotów i wyłączenie sprzedaży są jawnie audytowane.
-Żaden wymagany SOC, target ani wynikowa trajektoria nie może przekroczyć 100%.
+Jeżeli bieżący SOC jest już niższy od wymaganego mostu albo sam most
+przekracza fizyczną pojemność, recovery może tymczasowo utrzymać wyłącznie
+techniczną rezerwę do pierwszego przyszłego, dozwolonego BUY. Slot BUY/SELL
+nigdy nie jest źródłem recovery. Sprzedaż baterii zostaje wyłączona, a
+niewykonalny nadmiar jest raportowany; nie wolno zamieniać go w zakup do 100%.
+Pomiar początkowy pozostaje niezmieniony, a każda osiągalna wymagana wartość
+SOC jest sprawdzana na jednej wspólnej trajektorii.
 
 Raport diagnostyczny musi uwzględniać bieżący stan modułów planera i PPD oraz
 ich zatrzaśnięte błędy. Starszy opublikowany plan nie oznacza zdrowego systemu,

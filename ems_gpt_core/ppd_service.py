@@ -219,6 +219,10 @@ def plan_bound_decisions(row: dict, threshold: float) -> tuple[tuple[str, bool, 
         raise RuntimeError(
             f"PPD_EXPORT_PLAN_MISMATCH:{row.get('slot_start')}:"
             f"planned_sell={sell:.6f}:export_policy={export_policy}")
+    if sell > threshold and not sell_bat_allowed:
+        raise RuntimeError(
+            f"PPD_SELL_BAT_BLOCKED_PLAN:{row.get('slot_start')}:"
+            f"planned_sell={sell:.6f}")
     return (
         ("BATTERY_IMPORT", buy > threshold, grid_policy,
          f"planner_bound; planned_buy={buy:.3f}"),

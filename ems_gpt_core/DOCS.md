@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja przygotowana: **0.39.30**.
+Status: obowiązująca. Wersja przygotowana: **0.39.31**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -131,15 +131,13 @@ targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
   skryptów baterii. `SELL_PV` opisuje wyłącznie sprzedaż pozostałej nadwyżki
   PV i nie tworzy polecenia rozładowania baterii.
 
-Obowiązująca kolejność wykorzystania bieżącej produkcji to:
-`PV → load (w tym HP) → bateria do targetu → PV_CWU → PV_EV → dalsze
-ładowanie baterii / eksport pozostałego PV`.
-Wartość możliwego eksportu PV nie może przestawić ani pominąć etapów CWU/EV.
-Przed osiągnięciem targetu cała dostępna produkcja pozostaje dla baterii.
-Po osiągnięciu targetu nadwyżka dla odbiorów elastycznych jest liczona jako
-`PV - load`; bieżące ładowanie baterii nie blokuje CWU/EV, lecz zostaje
-naturalnie zmniejszone po ich włączeniu. Moc już działających CWU/EV jest
-dodawana z powrotem wyłącznie do oceny histerezy.
+Obowiązująca kolejność wykorzystania bieżącej produkcji to: najpierw load domu
+(w tym HP), następnie ładowanie PV baterii do fizycznego maksimum 100%. Po
+osiągnięciu `soc_target` PPD może dopuścić CWU, następnie EV. Pozostała nadwyżka
+PV jest sprzedawana tylko przy cenie sprzedaży > 0 PLN/kWh; w przeciwnym razie
+produkcja jest ograniczana. Executor bazuje na świeżej telemetrii i po włączeniu
+CWU/EV uwzględnia ich pobór, przez co dalsze ładowanie baterii jest naturalnie
+zmniejszone. Możliwy przychód ze sprzedaży nie może pominąć CWU ani EV.
 
 Historyczne średnie końcowego SOC 7/14/28 dni są liczone niezależnie z pełnych,
 rzeczywiście zamkniętych dób. Doba z brakiem lub `MISSING_OUTAGE` nie jest

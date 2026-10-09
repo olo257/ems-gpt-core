@@ -24,11 +24,14 @@ from executor_service import (
 
 class ExecutorServiceTests(unittest.TestCase):
     def test_flexible_runtime_requires_explicit_planner_allow(self):
-        blocked = [{"process_name": "PV_CWU", "eligible": 0}]
-        allowed = [{"process_name": "PV_CWU", "eligible": 1}]
+        blocked = [{"process_name": "PV_CWU", "eligible": 0, "decision": "BLOCK"}]
+        allowed = [{"process_name": "PV_CWU", "eligible": 1, "decision": "ALLOW"}]
         self.assertFalse(flexible_process_is_allowed(blocked, "PV_CWU"))
         self.assertFalse(flexible_process_is_allowed(blocked, "PV_EV"))
         self.assertTrue(flexible_process_is_allowed(allowed, "PV_CWU"))
+        self.assertFalse(flexible_process_is_allowed(
+            [{"process_name": "PV_CWU", "eligible": 1, "decision": "BLOCK"}],
+            "PV_CWU"))
 
     def test_live_surplus_transition_key_is_stable_and_fits_database(self):
         value = flexible_command_plan_version(
