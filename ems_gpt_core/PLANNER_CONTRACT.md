@@ -165,8 +165,9 @@ końcowe kontrakty SOC odejmują wyłącznie faktycznie przydzielone zakupy.
 Fallback najpierw usuwa SELL_BAT; może obniżyć niewykonalne wymaganie
 historyczne końca doby, ale nie może obniżyć niezależnej rezerwy bezpieczeństwa.
 Wymagania SOC są ograniczone do fizycznego zakresu 0–100%. Jeżeli wymagany most
-przekracza pojemność, planer ogranicza wymaganie do osiągalnego zakresu, blokuje
-sprzedaż baterii w tym przebiegu i pokazuje nieunikniony import resztowy domu.
+przekracza pojemność, planer obniża wymóg mostu w dotkniętych slotach do
+rezerwy technicznej, blokuje sprzedaż baterii w tym przebiegu i pokazuje
+nieunikniony import resztowy domu.
 Rezerwa techniczna pozostaje twardą dolną granicą. Brak cen/prognoz poza
 horyzontem nie stanowi potwierdzenia bezpieczeństwa kolejnej nocy. Po
 rozszerzeniu horyzontu bilans musi być przeliczony.
