@@ -165,6 +165,39 @@ def recoverable_soc_requirements(rows: list[dict], required_soc_pcts: list[float
             "recovery_buy_index": recovery_buy}
 
 
+def validate_recoverable_soc_requirements(
+        rows: list[dict], required_soc_pcts: list[float], initial_soc_pct: float,
+        reserve_pct: float, target_cap_pct: float) -> dict:
+    """Recover a breached prefix and bound impossible bridges to physical SOC.
+
+    Requirements above 100% are not SOC targets. For those slots keep the
+    technical reserve as the hard floor, disable battery sales for the run, and
+    let residual native-load demand flow to the grid.
+    """
+    recovery = recoverable_soc_requirements(
+        rows, required_soc_pcts, initial_soc_pct, reserve_pct)
+    physical_cap = 100.0
+    limited_indices = [
+        index for index, safety_pct in enumerate(recovery["required_soc_pcts"])
+        if safety_pct > physical_cap + 1e-9
+    ]
+    if limited_indices:
+        # A bridge requirement above the battery's physical capacity is not a
+        # reachable SOC target. Keep the hard technical reserve, stop battery
+        # export for this run, and let the energy balance expose residual
+        # native-load import instead of rejecting the whole plan.
+        bounded = list(recovery["required_soc_pcts"])
+        for index in limited_indices:
+            bounded[index] = max(0.0, min(physical_cap, float(reserve_pct)))
+        recovery["required_soc_pcts"] = bounded
+        recovery["capacity_limited_indices"] = limited_indices
+        recovery["disable_battery_sales"] = True
+    else:
+        recovery["capacity_limited_indices"] = []
+        recovery["disable_battery_sales"] = False
+    return recovery
+
+
 def next_replenishment_prices(rows: list[dict]) -> list[float | None]:
     """Cheapest price in the nearest later contiguous battery BUY window."""
     result: list[float | None] = [None] * len(rows)
@@ -1708,11 +1741,8 @@ def build_planner(a: PlannerAdapters):
                 horizon_rows, capacity, reserve,
                 float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
                 eta_c, eta_d, max_kw, int(OPTIONS["slot_minutes"]), uncertainty_weight)
-            for index, safety_pct in enumerate(safety_required_soc):
-                if safety_pct > target_cap + 1e-9:
-                    raise RuntimeError(f"SOC_SAFETY_BRIDGE_EXCEEDS_CAP:{index}:{safety_pct:.3f}")
-            recovery = recoverable_soc_requirements(
-                horizon_rows, safety_required_soc, soc_now, reserve)
+            recovery = validate_recoverable_soc_requirements(
+                horizon_rows, safety_required_soc, soc_now, reserve, target_cap)
             safety_required_soc = recovery["required_soc_pcts"]
             if recovery["relaxed_indices"]:
                 record_event("soc_safety_bridge_recovery", "planner", {
@@ -1744,7 +1774,17 @@ def build_planner(a: PlannerAdapters):
             internal_soc_step=0.10
             enforced_daily_required = list(daily_required_soc)
             waived_daily_closes = set()
-            battery_sales_enabled = True
+            battery_sales_enabled = not bool(recovery.get("disable_battery_sales"))
+            if recovery.get("capacity_limited_indices"):
+                record_event("soc_bridge_limited_to_physical_capacity", "planner", {
+                    "physical_soc_cap_pct": 100.0,
+                    "limited_slot_count": len(recovery["capacity_limited_indices"]),
+                    "first_limited_slot": str(
+                        horizon_rows[recovery["capacity_limited_indices"][0]]["slot_start"]),
+                    "last_limited_slot": str(
+                        horizon_rows[recovery["capacity_limited_indices"][-1]]["slot_start"]),
+                    "action": "BATTERY_SALES_DISABLED_RESIDUAL_NATIVE_LOAD_TO_GRID",
+                }, "WARNING")
             terminal_shortfall_allowed = False
             while True:
                 try:

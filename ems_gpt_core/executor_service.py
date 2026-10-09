@@ -68,6 +68,14 @@ def battery_import_guard_reason(live_soc, target, planned_buy, flow_threshold: f
     return None
 
 
+def flexible_process_is_allowed(decision_rows: list[dict], process_name: str) -> bool:
+    """Honor the PPD's explicit ALLOW/BLOCK eligibility for a flexible load."""
+    for row in decision_rows:
+        if row.get("process_name") == process_name:
+            return database_bool(row.get("eligible"), f"{process_name}.eligible")
+    return False
+
+
 def flexible_surplus_runtime_decisions(
         *, pv_power_w, load_power_w, battery_charge_power_w, ev_power_w,
         pv_cwu_on, live_soc_pct, target_soc_pct, cwu_allowed: bool,
@@ -704,8 +712,8 @@ def build_executor(a: ExecutorAdapters):
                 # surplus above the live SOC target may open the current slot
                 # even when PV was significantly under-forecast. The runtime
                 # guard still checks SOC, telemetry age and each load threshold.
-                cwu_allowed="PV_CWU" in planned,
-                ev_allowed="PV_EV" in planned,
+                cwu_allowed=flexible_process_is_allowed(decision_rows, "PV_CWU"),
+                ev_allowed=flexible_process_is_allowed(decision_rows, "PV_EV"),
                 cwu_threshold_kw=float(OPTIONS.get("pv_cwu_min_surplus_kw", 2.0)),
                 ev_threshold_kw=float(OPTIONS.get("pv_ev_min_surplus_kw", 1.5)),
                 hysteresis_ratio=float(OPTIONS.get("pv_flexible_hysteresis_ratio", 0.80)),

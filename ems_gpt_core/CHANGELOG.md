@@ -1,5 +1,15 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.28 — granica recovery SOC i alarm diagnostyczny
+
+- Wymagania SOC są ograniczone do 100%; gdy most energetyczny przekracza pojemność, planer wyłącza sprzedaż baterii i rozlicza brak dla domu jako import resztowy, zachowując rezerwę techniczną.
+- Diagnostyka uwzględnia stan runtime planera/PPD i błędy zatrzaśnięte, nawet gdy w bazie pozostaje starszy plan.
+- Testy regresyjne obejmują recovery przed BUY, twardy błąd po BUY i raportowanie zdegradowanego planera.
+- Kontrola spójności wersji obejmuje dokumentację i oba pliki README.
+- PPD publikuje pozwolenia CWU/EV dopiero w oknie po osiągnięciu targetu; executor respektuje `eligible` i nie traktuje samego rekordu `BLOCK` jako zgody.
+- `SELL_PV` jest `ALLOWED` przy cenie > 0 PLN/kWh niezależnie od prognozowanej nadwyżki; cena ≤ 0 blokuje sprzedaż. Nadwyżka po CWU → EV jest eksportowana, a pozostała produkcja ograniczana.
+
+
 ## 0.39.27 — zgodność wersji API i dodatku
 
 - Ujednolicono wersję zgłaszaną przez API Core z wersją wydania dodatku.

@@ -7,7 +7,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from planner_service import (
     build_soc_contracts, daily_close_soc_requirements,
     end_of_day_soc_target, optimize_energy_horizon,
-    replenishment_soc_requirements,
+    replenishment_soc_requirements, validate_recoverable_soc_requirements,
 )
 
 
@@ -138,6 +138,29 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             row['forecast_load_kwh'] = 1.0
         with self.assertRaisesRegex(RuntimeError, 'No feasible SOC state'):
             self.optimize(rows, self.safety(rows), initial=20.0)
+
+    def test_over_capacity_bridge_is_bounded_and_disables_sales(self):
+        rows = self.rows(4)
+        rows[2]['buy_window'] = True
+        # Requirements above physical capacity never enter the optimizer as SOC.
+        result = validate_recoverable_soc_requirements(
+            rows, [105.0, 105.0, 17.0, 17.0], 13.0, 15.0, 100.0)
+        self.assertEqual(result['required_soc_pcts'], [15.0, 15.0, 17.0, 17.0])
+        self.assertEqual(result['capacity_limited_indices'], [])
+        # An over-cap bridge after BUY is bounded and disables battery export.
+        post_buy = validate_recoverable_soc_requirements(
+            rows, [17.0, 17.0, 105.0, 105.0], 50.0, 15.0, 100.0)
+        self.assertEqual(post_buy['required_soc_pcts'], [17.0, 17.0, 15.0, 15.0])
+        self.assertEqual(post_buy['capacity_limited_indices'], [2, 3])
+        self.assertTrue(post_buy['disable_battery_sales'])
+
+    def test_no_buy_over_capacity_bridge_uses_reserve_fallback(self):
+        rows = self.rows(3)
+        result = validate_recoverable_soc_requirements(
+            rows, [105.0, 17.0, 17.0], 13.0, 15.0, 100.0)
+        self.assertLessEqual(max(result['required_soc_pcts']), 100.0)
+        self.assertEqual(result['required_soc_pcts'][0], 15.0)
+        self.assertTrue(result['disable_battery_sales'])
 
     def test_requirements_do_not_clip_an_impossible_bridge(self):
         rows = self.rows(20)

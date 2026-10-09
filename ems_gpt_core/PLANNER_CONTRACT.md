@@ -66,14 +66,20 @@ Każdy pakiet wykonuje etapy w tej kolejności:
 7. `DEFICIT` — niedobór energii do następnego wykonalnego uzupełnienia PV lub
    BUY oraz wybór ekonomicznych slotów zakupu.
 8. `SOC` — wynikowe `soc_target`, `soc_floor`, SOC przed i po slocie.
-9. `SURPLUS` — nadwyżka PV w kolejności: autokonsumpcja, ładowanie baterii do
-   targetu, sprzedaż PV, a ograniczenie produkcji na końcu. Surowa elastyczna
-   nadwyżka pozostaje dostępna dla PPD.
+9. `SURPLUS` — po autokonsumpcji i ładowaniu baterii do `soc_target`
+   planer przekazuje niezarezerwowaną nadwyżkę do PPD. PPD wyznacza `allowed`
+   dla CWU i EV; po CWU → EV dozwolona dodatnią ceną pozostałość jest
+   sprzedawana jako PV, a produkcja jest ograniczana na końcu.
 10. `PLAN DECISIONS` — planer zamraża rekomendowane przebiegi importu baterii,
     eksportu baterii i HP razem z ilościami użytymi w bilansie oraz target.
-11. `PPD` — osobny `ppd_service.py` publikuje te trzy rekomendacje bez ich
-    ponownego liczenia oraz tworzy ciągłe okna `PV_CWU` i `PV_EV` z zamrożonej
-    nadwyżki; nie zwraca żadnego wejścia do targetu.
+11. `PPD` — osobny `ppd_service.py` publikuje rekomendacje baterii i HP
+   bez ich ponownego liczenia oraz wyznacza `allowed` dla `PV_CWU`, `PV_EV`
+   i `SELL_PV`. CWU/EV mają wspólne okno pozwolenia po target; wykonanie
+   sprawdza świeżą nadwyżkę i stosuje priorytet CWU → EV. `SELL_PV` ma
+   `ALLOWED` przy cenie > 0 PLN/kWh niezależnie od prognozowanej ilości,
+   natomiast ON/OFF wynika z pozostałej nadwyżki. Cena ≤ 0 daje BLOCKED.
+   Niezagospodarowana pozostałość jest ograniczana. Żadna decyzja PPD nie
+   wraca do targetu ani trajektorii SOC.
 12. `VALIDATE` — kontrola całego horyzontu; dopiero potem atomowa publikacja.
 
 Planer może wykonywać wiele przebiegów po tej samej tabeli roboczej, ale każdy
@@ -164,9 +170,13 @@ końcowe kontrakty SOC odejmują wyłącznie faktycznie przydzielone zakupy.
 
 Fallback najpierw usuwa SELL_BAT; może obniżyć niewykonalne wymaganie
 historyczne końca doby, ale nie może obniżyć niezależnej rezerwy bezpieczeństwa.
-Niewykonalny bilans bezpieczeństwa powoduje jawny błąd i odrzucenie wariantu.
-Brak cen/prognoz poza horyzontem nie stanowi potwierdzenia bezpieczeństwa
-kolejnej nocy. Po rozszerzeniu horyzontu bilans musi być przeliczony.
+Wymagania SOC są ograniczone do fizycznego zakresu 0–100%. Jeżeli wymagany most
+przekracza pojemność, planer obniża wymóg mostu w dotkniętych slotach do
+rezerwy technicznej, blokuje sprzedaż baterii w tym przebiegu i pokazuje
+nieunikniony import resztowy domu.
+Rezerwa techniczna pozostaje twardą dolną granicą. Brak cen/prognoz poza
+horyzontem nie stanowi potwierdzenia bezpieczeństwa kolejnej nocy. Po
+rozszerzeniu horyzontu bilans musi być przeliczony.
 
 Target obejmuje:
 
@@ -221,12 +231,16 @@ osiągnięcia targetu. Dopuszczenie CWU/EV wymaga nadwyżki po target oraz speł
 ich własnych progów. Cena eksportu PV nie może zmienić kolejności CWU → EV →
 sprzedaż pozostałości.
 
-Okno PPD jest wyłącznie pozwoleniem. W trybie AUTO wykonawca ponownie sprawdza
+Okno PPD publikuje jawne `allowed`; executor musi respektować wartość
+`eligible` z opublikowanej decyzji i nie może uznawać samej obecności rekordu
+za zgodę. PPD może otworzyć bieżące okno na podstawie świeżych danych, więc
+wykonawca nie musi obchodzić decyzji planera. W trybie AUTO wykonawca sprawdza
 świeżą telemetrię. Poniżej targetu blokuje odbiory elastyczne; po osiągnięciu
 targetu liczy nadwyżkę jako `PV - load`, dzięki czemu dalsze ładowanie baterii
-ponad target nie blokuje CWU/EV. Moc już pracujących CWU/EV jest dodawana
-z powrotem wyłącznie na potrzeby histerezy. Odbiory te nie
-wracają do `load`, `soc_target`, `soc_required` ani planowanej trajektorii SOC.
+ponad target nie blokuje CWU/EV. CWU ma pierwszeństwo przed EV. Moc już
+pracujących odbiorników jest dodawana z powrotem wyłącznie dla histerezy.
+Odbiory te nie wracają do `load`, `soc_target`, `soc_required` ani
+planowanej trajektorii SOC.
 
 ## 8. Ekonomiczne BUY i SELL
 
@@ -376,3 +390,19 @@ Każda zmiana planera musi obejmować co najmniej:
 - HP wyłączone przy niepełnej prognozie i temperaturze równej progowi;
 - brak HP przed 07:00, po 19:00 i w każdym slocie `SELL`;
 - publikację cen jednego slotu wyłącznie do dwóch kanonicznych helperów.
+
+
+## 10. Granica recovery i diagnostyki runtime
+
+Jeżeli bieżący SOC jest już niższy od wymaganego mostu, recovery może obniżyć
+wymagania wyłącznie przed pierwszym przyszłym, dozwolonym BUY i tylko do
+technicznej rezerwy. Żadne wymaganie ani cel SOC nie może przekroczyć 100%.
+Jeżeli wyliczony most wymaga więcej niż pojemność, planer ogranicza je do
+fizycznego zakresu, blokuje SELL_BAT dla przebiegu i pozwala bilansowi wykazać
+import resztowy domu po osiągnięciu rezerwy. BUY nadal występuje wyłącznie w
+dozwolonych oknach. Raport diagnostyczny zachowuje przyczynę ograniczenia, ale
+starszy opublikowany plan nie może ukryć zdegradowanego stanu planera.
+
+Raport diagnostyczny musi uwzględniać bieżący stan modułów planera i PPD oraz
+ich zatrzaśnięte błędy. Starszy opublikowany plan nie oznacza zdrowego systemu,
+gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.

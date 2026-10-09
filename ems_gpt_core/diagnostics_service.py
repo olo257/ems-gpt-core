@@ -6,11 +6,33 @@ import uuid
 from datetime import datetime, timedelta
 
 
-def generate_diagnostic_report(trigger_name: str = "scheduled", *, options, db, local_now, slot_start, canonical_slots_for_day, create_todo, reconcile_diagnostic_todos, record_event) -> dict:
+def runtime_module_health_check(runtime_state: dict | None) -> dict:
+    """Expose latched planner/PPD failures to diagnostics, including stale-plan cases."""
+    state = runtime_state or {}
+    modules = state.get("modules") or {}
+    planner = modules.get("planner", "UNKNOWN")
+    ppd = modules.get("ppd", "UNKNOWN")
+    planner_failure = state.get("planner_failure_latched")
+    ppd_failure = state.get("ppd_failure_latched")
+    bad = {"DEGRADED", "ERROR", "FAILED"}
+    ok = planner not in bad and ppd not in bad and not planner_failure and not ppd_failure
+    return {
+        "name": "planner_runtime_health",
+        "ok": ok,
+        "severity": "INFO" if ok else "ERROR",
+        "value": {
+            "planner": planner, "ppd": ppd,
+            "planner_failure": planner_failure, "ppd_failure": ppd_failure,
+        },
+        "expected": "no latched planner/PPD failure or degraded module",
+    }
+
+
+def generate_diagnostic_report(trigger_name: str = "scheduled", *, options, db, local_now, slot_start, canonical_slots_for_day, create_todo, reconcile_diagnostic_todos, record_event, runtime_state=None) -> dict:
     """Check freshness, completeness, stuck runs and module/database health without device writes."""
     report_id = str(uuid.uuid4())
     now = local_now().replace(tzinfo=None)
-    checks = []
+    checks = [runtime_module_health_check(runtime_state)]
     def add(name, ok, value, expected):
         checks.append({"name": name, "ok": bool(ok), "value": value, "expected": expected})
     with db() as conn, conn.cursor() as cur:
@@ -76,7 +98,8 @@ def generate_diagnostic_report(trigger_name: str = "scheduled", *, options, db, 
                 observer is not None and observer.get("source_ref") == analytics.get("run_id"),
                 None if not observer else observer.get("source_ref"), analytics.get("run_id"))
         alerts = [c for c in checks if not c["ok"]]
-        status = "OK" if not alerts else ("WARNING" if len(alerts) <= 2 else "ERROR")
+        critical_alert = any(alert.get("severity") == "ERROR" for alert in alerts)
+        status = "OK" if not alerts else ("ERROR" if critical_alert or len(alerts) > 2 else "WARNING")
         summary = "Wszystkie kontrole zakończone poprawnie" if not alerts else "; ".join(c["name"] for c in alerts)
         cur.execute("INSERT INTO ems_gpt_core_diagnostic_reports VALUES(%s,NOW(6),%s,%s,%s,%s,%s)",
                     (report_id, trigger_name, status, len(alerts), summary[:500], json.dumps(checks, ensure_ascii=False, default=str)))
@@ -84,6 +107,7 @@ def generate_diagnostic_report(trigger_name: str = "scheduled", *, options, db, 
     record_event("diagnostic_report", "diagnostics", result, "INFO" if not alerts else "WARNING")
     for alert in alerts:
         create_todo("diagnostics", f"Diagnostyka: {alert['name']}",
-                    json.dumps(alert, ensure_ascii=False, default=str), "WARNING", report_id)
+                    json.dumps(alert, ensure_ascii=False, default=str),
+                    alert.get("severity", "WARNING"), report_id)
     reconcile_diagnostic_todos([f"Diagnostyka: {alert['name']}" for alert in alerts])
     return result

@@ -14,6 +14,9 @@ WEBUI = (ROOT / "webui.html").read_text(encoding="utf-8")
 PYTHON_SOURCE = "\n".join([APP_SOURCE, *MODULE_SOURCES.values()])
 SOURCE = PYTHON_SOURCE + "\n" + WEBUI
 CONFIG = (ROOT / "config.yaml").read_text(encoding="utf-8")
+DOCS = (ROOT / "DOCS.md").read_text(encoding="utf-8")
+README = (ROOT.parent / "README.md").read_text(encoding="utf-8")
+PLANNER_README = (ROOT / "README.md").read_text(encoding="utf-8")
 PLANNER_CONTRACT = (ROOT / "PLANNER_CONTRACT.md").read_text(encoding="utf-8")
 
 
@@ -30,6 +33,12 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIsNotNone(app_version)
         self.assertIsNotNone(config_version)
         self.assertEqual(app_version.group(1), config_version.group(1))
+        version = app_version.group(1)
+        for label, source in (("DOCS", DOCS), ("README", README),
+                              ("planner README", PLANNER_README)):
+            with self.subTest(document=label):
+                self.assertRegex(source, rf"(?<![0-9]){re.escape(version)}(?![0-9])")
+        self.assertIn(f"## {version}", (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
 
     def test_internal_observer_remains_and_agent_worker_is_removed(self):
         observer = MODULE_SOURCES["observer_service.py"]
