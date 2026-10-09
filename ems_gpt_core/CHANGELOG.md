@@ -1,5 +1,17 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.26 — odzyskiwanie planu po naruszeniu bufora SOC
+
+- Jeżeli bieżący SOC jest już poniżej bufora bezpieczeństwa, planer utrzymuje
+  techniczną rezerwę do pierwszego przyszłego okna BUY zamiast odrzucać cały
+  przebieg jako `SOC_SAFETY_BRIDGE_UNREACHABLE`.
+- W pierwszym dostępnym oknie BUY przywraca pierwotne wymaganie SOC, aby
+  zaplanować możliwe uzupełnienie baterii. Planer zapisuje zakres odzyskiwania
+  w audycie.
+- Dodano regresję potwierdzającą, że plan z niskiego SOC zachowuje rezerwę i
+  uwzględnia zakup w najbliższym oknie BUY.
+
+
 Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są w `DOCS.md` i `PLANNER_CONTRACT.md`.
 
 ## 0.39.25 — widok wykonania slotów i usunięcie Agenta AI
