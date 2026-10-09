@@ -132,6 +132,39 @@ def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[
     return states, unknown
 
 
+def recoverable_soc_requirements(rows: list[dict], required_soc_pcts: list[float],
+                                  initial_soc_pct: float, reserve_pct: float) -> dict:
+    """Temporarily relax an already-missed SOC bridge until the next BUY slot.
+
+    A rolling plan cannot meet a safety buffer that was already breached before
+    the horizon began. Keep the technical reserve as a hard floor, then restore
+    the original bridge at the first permitted battery BUY opportunity so the
+    optimizer can schedule recovery there.
+    """
+    if len(rows) != len(required_soc_pcts):
+        raise ValueError("RECOVERY_SOC_REQUIREMENT_LENGTH_MISMATCH")
+    required = [float(value) for value in required_soc_pcts]
+    initial = float(initial_soc_pct)
+    reserve = max(0.0, min(100.0, float(reserve_pct)))
+    if not required or initial + 1e-9 >= required[0]:
+        return {"required_soc_pcts": required, "relaxed_indices": [],
+                "recovery_buy_index": None}
+    recovery_buy = next((i for i, row in enumerate(rows)
+                         if strict_database_bool(row.get("buy_window", False),
+                                                 "buy_window")), None)
+    if recovery_buy is None:
+        return {"required_soc_pcts": required, "relaxed_indices": [],
+                "recovery_buy_index": None}
+    recovery_floor = max(reserve, min(required[0], initial))
+    relaxed = []
+    for index in range(recovery_buy):
+        if required[index] > recovery_floor + 1e-9:
+            required[index] = recovery_floor
+            relaxed.append(index)
+    return {"required_soc_pcts": required, "relaxed_indices": relaxed,
+            "recovery_buy_index": recovery_buy}
+
+
 def next_replenishment_prices(rows: list[dict]) -> list[float | None]:
     """Cheapest price in the nearest later contiguous battery BUY window."""
     result: list[float | None] = [None] * len(rows)
@@ -1678,6 +1711,18 @@ def build_planner(a: PlannerAdapters):
             for index, safety_pct in enumerate(safety_required_soc):
                 if safety_pct > target_cap + 1e-9:
                     raise RuntimeError(f"SOC_SAFETY_BRIDGE_EXCEEDS_CAP:{index}:{safety_pct:.3f}")
+            recovery = recoverable_soc_requirements(
+                horizon_rows, safety_required_soc, soc_now, reserve)
+            safety_required_soc = recovery["required_soc_pcts"]
+            if recovery["relaxed_indices"]:
+                record_event("soc_safety_bridge_recovery", "planner", {
+                    "initial_soc_pct": round(float(soc_now), 3),
+                    "reserve_pct": round(float(reserve), 3),
+                    "recovery_buy_slot": str(
+                        horizon_rows[recovery["recovery_buy_index"]]["slot_start"]),
+                    "relaxed_slot_count": len(recovery["relaxed_indices"]),
+                    "relaxed_until_buy_indices": recovery["relaxed_indices"],
+                }, "WARNING")
             daily_required_soc, daily_close_indices = daily_close_soc_requirements(
                 horizon_rows, safety_required_soc, daily_terminal_soc)
             terminal_soc = max(terminal_soc, safety_required_soc[-1])
