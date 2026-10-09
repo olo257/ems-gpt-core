@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.27 — zgodność wersji API i dodatku
+
+- Ujednolicono wersję zgłaszaną przez API Core z wersją wydania dodatku.
+- Status i endpoint `/live` raportują teraz wersję 0.39.27.
+
+
 ## 0.39.26 — odzyskiwanie planu po naruszeniu bufora SOC
 
 - Jeżeli bieżący SOC jest już poniżej bufora bezpieczeństwa, planer utrzymuje
