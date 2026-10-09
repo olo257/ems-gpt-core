@@ -203,8 +203,11 @@ def plan_bound_decisions(row: dict, threshold: float) -> tuple[tuple[str, bool, 
     sell_price = float(row.get("price_sell_pln_kwh") or 0.0)
     sell_bat_allowed = _database_bool(
         row.get("sell_bat_policy_allowed") or 0, "sell_bat_policy_allowed")
-    sell_pv_allowed = _database_bool(
-        row.get("sell_pv_policy_allowed") or 0, "sell_pv_policy_allowed")
+    sell_pv_allowed = (
+        _database_bool(row.get("sell_pv_policy_allowed") or 0,
+                       "sell_pv_policy_allowed")
+        and sell_price > 0.0
+    )
     grid_policy = str(row.get("grid_policy_planned") or "NEUTRAL")
     export_policy = str(row.get("export_policy_planned") or "NEUTRAL")
     hp_window = _database_bool(row.get("heat_pump_window"), "heat_pump_window")
@@ -222,7 +225,9 @@ def plan_bound_decisions(row: dict, threshold: float) -> tuple[tuple[str, bool, 
         ("SELL_BAT", sell > threshold, "ALLOWED" if sell_bat_allowed else "BLOCKED",
          f"planner_bound; policy={'ALLOWED' if sell_bat_allowed else 'BLOCKED'}; "
          f"planned_sell={sell:.3f}"),
-        ("SELL_PV", pv_export > threshold and sell_pv_allowed,
+        # Permission is price/policy based. Forecast export is a separate
+        # ON/OFF flow; a fresh surplus can appear after this plan was published.
+        ("SELL_PV", sell_pv_allowed,
          "ALLOWED" if sell_pv_allowed else "BLOCKED",
          f"planner_bound; planned_pv_export={pv_export:.3f}; sell_price={sell_price:.3f}"),
         ("HP_HEAT_DHW", hp_window, "ON" if hp_window else "OFF",
