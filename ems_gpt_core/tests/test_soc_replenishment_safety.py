@@ -139,7 +139,7 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'No feasible SOC state'):
             self.optimize(rows, self.safety(rows), initial=20.0)
 
-    def test_recovery_runs_before_cap_validation_but_never_weakens_post_buy_bridge(self):
+    def test_over_capacity_bridge_is_bounded_and_disables_sales(self):
         rows = self.rows(4)
         rows[2]['buy_window'] = True
         # Requirements above physical capacity never enter the optimizer as SOC.
@@ -154,7 +154,7 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertEqual(post_buy['capacity_limited_indices'], [2, 3])
         self.assertTrue(post_buy['disable_battery_sales'])
 
-    def test_no_buy_does_not_relax_an_over_cap_bridge(self):
+    def test_no_buy_over_capacity_bridge_uses_reserve_fallback(self):
         rows = self.rows(3)
         result = validate_recoverable_soc_requirements(
             rows, [105.0, 17.0, 17.0], 13.0, 15.0, 100.0)
