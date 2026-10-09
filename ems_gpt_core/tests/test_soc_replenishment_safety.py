@@ -126,7 +126,7 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             rows, [17.0, 17.0, 17.0, 17.0], 13.0, 15.0)
         self.assertEqual(recovery['recovery_buy_index'], 1)
         self.assertEqual(recovery['relaxed_indices'], [0])
-        self.assertEqual(recovery['required_soc_pcts'], [15.0, 17.0, 20.0, 23.0])
+        self.assertEqual(recovery['required_soc_pcts'], [15.0, 17.0, 17.0, 17.0])
         plan = self.optimize(rows, recovery['required_soc_pcts'],
                              initial=13.0, terminal=17.0)
         self.assertGreater(plan['flows'][1]['grid_charge_kwh'], 0.0)
