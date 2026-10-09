@@ -162,7 +162,10 @@ Optymalizator wybiera ekonomicznie uzasadnione zakupy spełniające ten bilans;
 końcowe kontrakty SOC odejmują wyłącznie faktycznie przydzielone zakupy.
 
 Fallback najpierw usuwa SELL_BAT; może obniżyć niewykonalne wymaganie
-historyczne końca doby, ale nie może obniżyć niezależnej rezerwy bezpieczeństwa.
+historyczne końca doby, także na końcu pełnego horyzontu, ale nie może
+obniżyć niezależnej rezerwy bezpieczeństwa. Jeżeli po obniżeniu celu
+historycznego do wymagania bezpieczeństwa ten stan nadal jest nieosiągalny,
+planner odrzuca przebieg i zachowuje ostatni poprawny plan.
 Niewykonalny bilans bezpieczeństwa powoduje jawny błąd i odrzucenie wariantu.
 Brak cen/prognoz poza horyzontem nie stanowi potwierdzenia bezpieczeństwa
 kolejnej nocy. Po rozszerzeniu horyzontu bilans musi być przeliczony.
@@ -392,3 +395,4 @@ SOC jest sprawdzana na jednej wspólnej trajektorii.
 Raport diagnostyczny musi uwzględniać bieżący stan modułów planera i PPD oraz
 ich zatrzaśnięte błędy. Starszy opublikowany plan nie oznacza zdrowego systemu,
 gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
+
