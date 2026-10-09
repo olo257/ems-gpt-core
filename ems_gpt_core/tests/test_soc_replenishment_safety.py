@@ -118,6 +118,20 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         rows[4]['forecast_pv_total_kwh'] = 0.0
         self.assertGreater(self.safety(rows)[0], original)
 
+    def test_breached_safety_bridge_recovers_at_next_buy_window(self):
+        rows = self.rows(4)
+        rows[1]['buy_window'] = True
+        from planner_service import recoverable_soc_requirements
+        recovery = recoverable_soc_requirements(
+            rows, [17.0, 17.0, 20.0, 23.0], 13.0, 15.0)
+        self.assertEqual(recovery['recovery_buy_index'], 1)
+        self.assertEqual(recovery['relaxed_indices'], [0])
+        self.assertEqual(recovery['required_soc_pcts'], [15.0, 17.0, 20.0, 23.0])
+        plan = self.optimize(rows, recovery['required_soc_pcts'],
+                             initial=13.0, terminal=23.0)
+        self.assertGreater(plan['flows'][1]['grid_charge_kwh'], 0.0)
+        self.assertGreaterEqual(plan['flows'][0]['soc_end_pct'], 15.0)
+
     def test_insufficient_initial_soc_is_not_silently_waived(self):
         rows = self.rows(4)
         for row in rows[1:]:
