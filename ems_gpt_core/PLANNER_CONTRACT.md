@@ -378,16 +378,16 @@ Każda zmiana planera musi obejmować co najmniej:
 - publikację cen jednego slotu wyłącznie do dwóch kanonicznych helperów.
 
 
-## 10. Recovery boundary and runtime diagnosis
+## 10. Granica recovery i diagnostyki runtime
 
-When the current SOC is already below the first required bridge, recovery may
-relax only the slots before the first future permitted BUY, and only down to the
-technical reserve. The original safety requirement resumes at that BUY slot.
-An over-cap requirement at or after the first BUY remains a hard failure;
-without a future BUY, no recovery relaxation is allowed. The cap check must run
-after this narrowly scoped recovery so an impossible pre-BUY requirement is not
-mistaken for a post-BUY failure. Requirements are never clipped to 100%.
+Jeżeli bieżący SOC jest już niższy od wymaganego mostu, recovery może obniżyć
+wymagania wyłącznie w slotach przed pierwszym przyszłym, dozwolonym BUY i tylko
+do technicznej rezerwy. Pierwotne wymaganie wraca w slocie BUY. Wymaganie
+przekraczające limit w slocie BUY lub później pozostaje twardym błędem; bez
+przyszłego BUY nie wolno stosować recovery. Kontrola limitu musi następować po
+tym ograniczonym recovery, aby wykonalny wyjątek przed BUY nie został pomylony
+z błędem po BUY. Wymagań bezpieczeństwa nie wolno obcinać do 100%.
 
-A diagnostic report must include the live planner and PPD module health and
-their latched errors. A previously published plan does not make diagnostics
-healthy while the planner is degraded or a planner/PPD failure is latched.
+Raport diagnostyczny musi uwzględniać bieżący stan modułów planera i PPD oraz
+ich zatrzaśnięte błędy. Starszy opublikowany plan nie oznacza zdrowego systemu,
+gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
