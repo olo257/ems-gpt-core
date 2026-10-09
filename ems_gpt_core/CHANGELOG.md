@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.29 — wspólna wykonalność trajektorii SOC
+
+- Audyt całej ścieżki planera potwierdził, że najwyższe SOC osiągalne osobno w każdym slocie nie dowodzi wykonalności jednej wspólnej trajektorii. Nowa analiza przechodzi pełną ścieżkę stanów SOC i reguły importu domu.
+- Nieosiągalne progi są ograniczane do spójnej ścieżki; sprzedaż baterii zostaje wyłączona dla przebiegu, a brakujący bilans domu przechodzi na import z sieci.
+- Nieprawidłowy lub brakujący bieżący SOC nie jest zastępowany rezerwą ani po cichu przycinany. Odczyt powyżej 100% odrzuca przebieg jako błąd telemetrii.
+- Gdy pomiar startowy jest poniżej rezerwy, plan zachowuje pomiar i nie rozładowuje baterii poniżej rezerwy; odbudowa odbywa się wyłącznie przez dozwolone PV/BUY.
+- Testy pokrywają wspólną osiągalność, SOC > 100%, start poniżej rezerwy oraz planowanie BUY→PV→CWU→EV→eksport/ograniczenie.
+
 ## 0.39.28 — granica recovery SOC i alarm diagnostyczny
 
 - Wymagania SOC są ograniczone do 100%; gdy most energetyczny przekracza pojemność, planer wyłącza sprzedaż baterii i rozlicza brak dla domu jako import resztowy, zachowując rezerwę techniczną.

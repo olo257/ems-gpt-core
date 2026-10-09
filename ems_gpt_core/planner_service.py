@@ -165,38 +165,177 @@ def recoverable_soc_requirements(rows: list[dict], required_soc_pcts: list[float
             "recovery_buy_index": recovery_buy}
 
 
+def _soc_reachability_profile(
+        rows: list[dict], initial_soc_pct: float, capacity_kwh: float,
+        reserve_pct: float, eta_c: float, eta_d: float,
+        max_power_kw: float, slot_minutes: int, soc_step_pct: float = 0.10,
+        required_soc_pcts: list[float] | None = None,
+) -> dict:
+    """Return prefix reachability and a feasible path with minimum floor shortfall.
+
+    Transitions mirror the optimizer's physical limits and voluntary-grid-load
+    guard, with battery sales disabled. A per-slot maximum alone is not enough:
+    a high floor in one slot can make a later BUY floor unreachable. The DP
+    therefore scores complete paths against the whole required-floor sequence.
+    """
+    if required_soc_pcts is not None and len(rows) != len(required_soc_pcts):
+        raise ValueError("RECOVERY_SOC_REQUIREMENT_LENGTH_MISMATCH")
+    capacity = max(0.001, float(capacity_kwh))
+    reserve = max(0.0, min(100.0, float(reserve_pct)))
+    step = max(0.05, float(soc_step_pct))
+    unit_kwh = capacity * step / 100.0
+    first_unit = int(math.ceil(reserve / step - 1e-9))
+    last_unit = int(math.floor(100.0 / step + 1e-9))
+    initial_pct = float(initial_soc_pct)
+    if not math.isfinite(initial_pct) or not 0.0 <= initial_pct <= 100.0:
+        raise RuntimeError(f"INVALID_INITIAL_SOC:{initial_pct!r}")
+    current_unit = max(0, min(last_unit, int(math.floor(initial_pct / step + 1e-9))))
+    eta_charge = max(0.01, min(1.0, float(eta_c)))
+    eta_discharge = max(0.01, min(1.0, float(eta_d)))
+    max_internal_charge = max(0.0, float(max_power_kw)) * slot_minutes / 60.0 * eta_charge
+    max_internal_discharge = max(0.0, float(max_power_kw)) * slot_minutes / 60.0 / eta_discharge
+    max_up = int(math.floor(max_internal_charge / unit_kwh + 1e-9))
+    max_down = int(math.floor(max_internal_discharge / unit_kwh + 1e-9))
+    # Keep the minimum total squared floor shortfall for each reachable state;
+    # state alone determines future transitions, so dominated paths can drop.
+    scores = {current_unit: (0.0, -current_unit * step)}
+    predecessor_layers = []
+    ceilings = []
+    for index, row in enumerate(rows):
+        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
+        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
+                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+        deficit, surplus = max(0.0, load - pv), max(0.0, pv - load)
+        buy_allowed = (
+            strict_database_bool(row.get("buy_window", False), "buy_window")
+            and not strict_database_bool(row.get("sale_window", False), "sale_window")
+        )
+        next_scores = {}
+        next_predecessors = {}
+        for current, score in scores.items():
+            current_energy = current * unit_kwh
+            usable_internal = min(
+                max_internal_discharge,
+                max(0.0, current_energy - first_unit * unit_kwh),
+            )
+            unavoidable_grid_load = max(0.0, deficit - usable_internal * eta_discharge)
+            lower_state = current if current < first_unit else first_unit
+            for following in range(max(lower_state, current-max_down),
+                                    min(last_unit, current+max_up)+1):
+                delta = (following-current) * unit_kwh
+                if delta >= 0.0:
+                    charge_input = delta / eta_charge
+                    pv_to_bat = min(surplus, charge_input)
+                    grid_charge = max(0.0, charge_input-pv_to_bat)
+                    if grid_charge > 1e-9 and not buy_allowed:
+                        continue
+                    battery_to_load = 0.0
+                    grid_load = deficit
+                else:
+                    battery_discharge = -delta
+                    delivered = battery_discharge * eta_discharge
+                    battery_to_load = min(deficit, delivered)
+                    # Reachability deliberately excludes battery export.
+                    if delivered-battery_to_load > 1e-9:
+                        continue
+                    grid_charge = 0.0
+                    grid_load = max(0.0, deficit-battery_to_load)
+                voluntary_grid_load = max(0.0, grid_load-unavoidable_grid_load)
+                if grid_charge > 1e-9:
+                    if voluntary_grid_load > grid_charge + 1e-9:
+                        continue
+                elif voluntary_grid_load > unit_kwh * eta_discharge + 1e-9:
+                    continue
+                floor_shortfall = (0.0 if required_soc_pcts is None else
+                    max(0.0, float(required_soc_pcts[index]) - following * step))
+                candidate = (score[0] + floor_shortfall * floor_shortfall,
+                             score[1] - following * step)
+                previous = next_scores.get(following)
+                if previous is None or candidate < previous:
+                    next_scores[following] = candidate
+                    next_predecessors[following] = current
+        if not next_scores:
+            raise RuntimeError(f"SOC_NO_PHYSICALLY_REACHABLE_STATE:{index}")
+        scores = next_scores
+        predecessor_layers.append(next_predecessors)
+        ceilings.append(max(scores) * step)
+    terminal_unit = min(scores, key=lambda unit: (scores[unit][0], scores[unit][1], -unit))
+    path_units = [terminal_unit]
+    for layer in reversed(predecessor_layers[1:]):
+        path_units.append(layer[path_units[-1]])
+    path_units.reverse()
+    path = [unit * step for unit in path_units]
+    return {"reachable_soc_ceiling_pcts": ceilings, "feasible_soc_path_pcts": path}
+
+
+def reachable_soc_ceiling_pcts(
+        rows: list[dict], initial_soc_pct: float, capacity_kwh: float,
+        reserve_pct: float, eta_c: float, eta_d: float,
+        max_power_kw: float, slot_minutes: int, soc_step_pct: float = 0.10,
+) -> list[float]:
+    """Compute each slot's physical upper SOC bound with exact transitions."""
+    return _soc_reachability_profile(
+        rows, initial_soc_pct, capacity_kwh, reserve_pct, eta_c, eta_d,
+        max_power_kw, slot_minutes, soc_step_pct)["reachable_soc_ceiling_pcts"]
+
+
 def validate_recoverable_soc_requirements(
         rows: list[dict], required_soc_pcts: list[float], initial_soc_pct: float,
-        reserve_pct: float, target_cap_pct: float) -> dict:
-    """Recover a breached prefix and bound impossible bridges to physical SOC.
+        reserve_pct: float, target_cap_pct: float, *,
+        capacity_kwh: float | None = None, eta_c: float = 0.9,
+        eta_d: float = 0.95, max_power_kw: float = 5.0,
+        slot_minutes: int = 15, soc_step_pct: float = 0.10) -> dict:
+    """Recover missed bridges and bound every hard SOC floor to reachability.
 
-    Requirements above 100% are not SOC targets. For those slots keep the
-    technical reserve as the hard floor, disable battery sales for the run, and
-    let residual native-load demand flow to the grid.
+    A requirement above 100% or above the highest SOC physically reachable at
+    that slot is not an executable target. Preserve the technical reserve,
+    disable battery sales, and route unavoidable household demand to grid.
     """
     recovery = recoverable_soc_requirements(
         rows, required_soc_pcts, initial_soc_pct, reserve_pct)
+    required = list(recovery["required_soc_pcts"])
     physical_cap = 100.0
-    limited_indices = [
-        index for index, safety_pct in enumerate(recovery["required_soc_pcts"])
-        if safety_pct > physical_cap + 1e-9
-    ]
+    reachable = None
+    if capacity_kwh is not None:
+        profile = _soc_reachability_profile(
+            rows, initial_soc_pct, capacity_kwh, reserve_pct,
+            eta_c, eta_d, max_power_kw, slot_minutes, soc_step_pct, required)
+        reachable = profile["reachable_soc_ceiling_pcts"]
+        feasible_path = profile["feasible_soc_path_pcts"]
+        if len(reachable) != len(required):
+            raise ValueError("RECOVERY_SOC_REACHABILITY_LENGTH_MISMATCH")
+    limited_indices = []
+    unreachable_indices = []
+    bounded = list(required)
+    for index, requested in enumerate(required):
+        ceiling = physical_cap if reachable is None else min(physical_cap, reachable[index])
+        if requested > physical_cap + 1e-9:
+            limited_indices.append(index)
+        if requested > ceiling + 1e-9 or (
+                reachable is not None and requested > feasible_path[index] + 1e-9):
+            unreachable_indices.append(index)
+            limited_indices.append(index)
+        if requested > physical_cap + 1e-9 and reachable is None:
+            # Legacy callers without battery/power inputs retain the safe
+            # reserve fallback; live planner calls always provide reachability.
+            bounded[index] = max(0.0, min(100.0, float(reserve_pct)))
+        elif requested > ceiling:
+            bounded[index] = max(0.0, ceiling)
+        elif reachable is not None and requested > feasible_path[index]:
+            bounded[index] = max(0.0, feasible_path[index])
     if limited_indices:
-        # A bridge requirement above the battery's physical capacity is not a
-        # reachable SOC target. Keep the hard technical reserve, stop battery
-        # export for this run, and let the energy balance expose residual
-        # native-load import instead of rejecting the whole plan.
-        bounded = list(recovery["required_soc_pcts"])
-        for index in limited_indices:
-            bounded[index] = max(0.0, min(physical_cap, float(reserve_pct)))
         recovery["required_soc_pcts"] = bounded
-        recovery["capacity_limited_indices"] = limited_indices
+        recovery["capacity_limited_indices"] = sorted(set(limited_indices))
+        recovery["unreachable_indices"] = sorted(set(unreachable_indices))
         recovery["disable_battery_sales"] = True
+        recovery["reachable_soc_ceiling_pcts"] = reachable
     else:
+        recovery["required_soc_pcts"] = bounded
         recovery["capacity_limited_indices"] = []
+        recovery["unreachable_indices"] = []
         recovery["disable_battery_sales"] = False
+        recovery["reachable_soc_ceiling_pcts"] = reachable
     return recovery
-
 
 def next_replenishment_prices(rows: list[dict]) -> list[float | None]:
     """Cheapest price in the nearest later contiguous battery BUY window."""
@@ -730,7 +869,10 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     step = max(0.05, float(soc_step_pct))
     first_unit = int(math.ceil(reserve / step - 1e-9))
     last_unit = int(math.floor(min(100.0, max(reserve, float(max_soc_pct))) / step + 1e-9))
-    start_unit = max(first_unit, min(last_unit, int(round(float(initial_soc_pct) / step))))
+    initial_soc = float(initial_soc_pct)
+    if not math.isfinite(initial_soc) or not 0.0 <= initial_soc <= 100.0:
+        raise RuntimeError(f"INVALID_INITIAL_SOC:{initial_soc!r}")
+    start_unit = max(0, min(last_unit, int(math.floor(initial_soc / step + 1e-9))))
     terminal_unit = max(first_unit, min(last_unit, int(math.ceil(float(terminal_soc_pct) / step - 1e-9))))
     unit_kwh = capacity * step / 100.0
     max_internal_charge = max_power_kw * slot_minutes / 60.0 * eta_c
@@ -762,7 +904,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                           float(minimum_soc_targets[index]))))
         requested_target_unit = int(math.ceil(target_pct / step - 1e-9))
         required_pct = (reserve if required_soc_pcts is None else
-                        max(reserve, min(float(max_soc_pct),
+                        max(0.0, min(float(max_soc_pct),
                             float(required_soc_pcts[index]))))
         required_unit = int(math.ceil(required_pct / step - 1e-9))
         # MariaDB returns BOOL/TINYINT as 0/1 (and some drivers as Decimal),
@@ -792,7 +934,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         next_costs, next_predecessors = {}, {}
         for current_unit, accumulated in costs.items():
             current_energy = current_unit * unit_kwh
-            for next_unit in range(max(first_unit, current_unit-max_down),
+            lower_state = current_unit if current_unit < first_unit else first_unit
+            for next_unit in range(max(lower_state, current_unit-max_down),
                                    min(last_unit, current_unit+max_up)+1):
                 delta = (next_unit-current_unit) * unit_kwh
                 pv_to_bat = grid_charge = battery_to_load = battery_sell = 0.0
@@ -1458,7 +1601,9 @@ def build_planner(a: PlannerAdapters):
         cutoff = slot_start().replace(tzinfo=None) + timedelta(minutes=int(OPTIONS["slot_minutes"]))
         capacity = max(1.0, float(OPTIONS.get("battery_capacity_kwh", 15.0)))
         reserve = max(0.0, min(90.0, float(OPTIONS.get("battery_min_soc_pct", 15.0))))
-        soc_now = max(reserve, min(100.0, setting("sensor.inverter_battery", reserve)))
+        soc_now = setting("sensor.inverter_battery", math.nan)
+        if not math.isfinite(soc_now) or not 0.0 <= soc_now <= 100.0:
+            raise RuntimeError(f"INVALID_INITIAL_SOC:sensor.inverter_battery={soc_now!r}")
         eta_c = max(0.01, min(1.0, float(OPTIONS.get("battery_charge_efficiency", 0.90))))
         eta_d = max(0.01, min(1.0, float(OPTIONS.get("battery_discharge_efficiency", 0.95))))
         degradation = max(0.0, float(OPTIONS.get("battery_degradation_cost_pln_kwh", 0.08)))
@@ -1742,7 +1887,10 @@ def build_planner(a: PlannerAdapters):
                 float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
                 eta_c, eta_d, max_kw, int(OPTIONS["slot_minutes"]), uncertainty_weight)
             recovery = validate_recoverable_soc_requirements(
-                horizon_rows, safety_required_soc, soc_now, reserve, target_cap)
+                horizon_rows, safety_required_soc, soc_now, reserve, target_cap,
+                capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
+                max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
+                soc_step_pct=0.10)
             safety_required_soc = recovery["required_soc_pcts"]
             if recovery["relaxed_indices"]:
                 record_event("soc_safety_bridge_recovery", "planner", {
@@ -1778,6 +1926,10 @@ def build_planner(a: PlannerAdapters):
             if recovery.get("capacity_limited_indices"):
                 record_event("soc_bridge_limited_to_physical_capacity", "planner", {
                     "physical_soc_cap_pct": 100.0,
+                    "limit_reason": ("UNREACHABLE_REQUIRED_SOC"
+                                     if recovery.get("unreachable_indices")
+                                     else "PHYSICAL_CAPACITY"),
+                    "unreachable_slot_count": len(recovery.get("unreachable_indices") or []),
                     "limited_slot_count": len(recovery["capacity_limited_indices"]),
                     "first_limited_slot": str(
                         horizon_rows[recovery["capacity_limited_indices"][0]]["slot_start"]),
