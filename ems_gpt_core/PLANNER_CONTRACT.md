@@ -176,8 +176,11 @@ po cichu zastępowany rezerwą: przebieg zostaje odrzucony jako błąd telemetri
 Dla każdego slotu wymagany próg musi być osiągalny w jednej wspólnej trajektorii
 od bieżącego SOC, przy rzeczywistych oknach BUY/PV, obciążeniu, sprawności,
 pojemności i mocy. Pułap liczony osobno dla slotów nie wystarcza. Jeżeli próg
-jest nieosiągalny w tej trajektorii, planer ogranicza go do spójnej ścieżki,
-blokuje sprzedaż baterii dla przebiegu i zapisuje dotknięte sloty.
+przekracza 100%, planer uznaje ten most za niemożliwy, obniża wymaganie do
+rezerwy technicznej i blokuje sprzedaż baterii. Istnienie okna BUY pozwalającego
+doładować do 100% nie może zamienić tego fallbacku w cel kupna energii. Dla
+progu do 100% nieosiągalnego w jednej trajektorii planer ogranicza go do spójnej
+ścieżki, blokuje sprzedaż baterii i zapisuje dotknięte sloty.
 Jeżeli zmierzony SOC już jest poniżej rezerwy technicznej, plan zachowuje
 zmierzony stan, nie rozładowuje baterii poniżej rezerwy, a odbudowa SOC może
 nastąpić wyłącznie przez dozwolone PV lub BUY. Do tego czasu niedobór domu

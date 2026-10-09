@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.30 — most SOC ponad pojemność nie uruchamia ładowania do pełna
+
+- Poprawiono recovery w ścieżce produkcyjnej: wymaganie SOC ponad 100% jest niemożliwe i trafia do technicznego fallbacku; samo istnienie BUY do 100% nie zamienia go w cel zakupu.
+- Dodano regresję z parametrami baterii i oknem BUY, zgodnymi z wywołaniem planera na żywo. Poprzedni test nie pokrywał tej ścieżki.
+- Uzupełniono kontrakt planera o zakaz kupowania do pełna jako skutku niemożliwego mostu.
+
+## 0.39.29 — wspólna wykonalność trajektorii SOC
+
 ## 0.39.29 — wspólna wykonalność trajektorii SOC
 
 - Audyt całej ścieżki planera potwierdził, że najwyższe SOC osiągalne osobno w każdym slocie nie dowodzi wykonalności jednej wspólnej trajektorii. Nowa analiza przechodzi pełną ścieżkę stanów SOC i reguły importu domu.
