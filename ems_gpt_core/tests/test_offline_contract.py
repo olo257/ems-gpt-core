@@ -137,7 +137,8 @@ class OfflineContractTests(unittest.TestCase):
             "orphan_grid_hold",
         ):
             self.assertNotIn(obsolete, planner)
-        self.assertIn("if voluntary_grid_load > grid_charge + 1e-9:", planner)
+        self.assertIn("if voluntary_grid_load > permitted_grid_hold + 1e-9:", planner)
+        self.assertIn("if voluntary_grid_load > 1e-9:", planner)
         self.assertIn("elif voluntary_grid_load > unit_kwh * eta_d + 1e-9:", planner)
 
     def test_hourly_and_daily_soc_boundaries_are_continuous_actuals(self):
@@ -772,3 +773,4 @@ class OfflineContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

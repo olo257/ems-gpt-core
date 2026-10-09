@@ -1,6 +1,6 @@
 # EMS-GPT Core
 
-Wersja wydania: **0.39.32**.
+Wersja wydania: **0.39.33**.
 
 Dokumenty obowiązujące:
 
@@ -24,3 +24,4 @@ Najważniejsze reguły wykonawcze:
 - PPD publikuje osobno `SELL_BAT` i `SELL_PV`; niedodatnia cena eksportu
   ustawia `NO_SELL_PV` bez blokowania CWU/EV;
 - brak danych wykonawczych działa fail-safe i wyłącza odbiory elastyczne.
+
