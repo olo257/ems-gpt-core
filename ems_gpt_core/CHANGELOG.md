@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.39.28 — granica recovery SOC i alarm diagnostyczny
+
+- Walidacja limitu SOC działa po recovery ograniczonym do slotów przed pierwszym przyszłym BUY; wymagania po BUY nadal odrzucają plan bez obniżania rezerwy.
+- Diagnostyka uwzględnia stan runtime planera/PPD i błędy zatrzaśnięte, nawet gdy w bazie pozostaje starszy plan.
+- Testy regresyjne obejmują recovery przed BUY, twardy błąd po BUY i raportowanie zdegradowanego planera.
+- Kontrola spójności wersji obejmuje dokumentację i oba pliki README.
+
+
 ## 0.39.27 — zgodność wersji API i dodatku
 
 - Ujednolicono wersję zgłaszaną przez API Core z wersją wydania dodatku.
