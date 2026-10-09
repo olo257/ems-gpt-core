@@ -66,14 +66,20 @@ Każdy pakiet wykonuje etapy w tej kolejności:
 7. `DEFICIT` — niedobór energii do następnego wykonalnego uzupełnienia PV lub
    BUY oraz wybór ekonomicznych slotów zakupu.
 8. `SOC` — wynikowe `soc_target`, `soc_floor`, SOC przed i po slocie.
-9. `SURPLUS` — nadwyżka PV w kolejności: autokonsumpcja, ładowanie baterii do
-   targetu, sprzedaż PV, a ograniczenie produkcji na końcu. Surowa elastyczna
-   nadwyżka pozostaje dostępna dla PPD.
+9. `SURPLUS` — po autokonsumpcji i ładowaniu baterii do `soc_target`
+   planer przekazuje niezarezerwowaną nadwyżkę do PPD. PPD wyznacza `allowed`
+   dla CWU i EV; po CWU → EV dozwolona dodatnią ceną pozostałość jest
+   sprzedawana jako PV, a produkcja jest ograniczana na końcu.
 10. `PLAN DECISIONS` — planer zamraża rekomendowane przebiegi importu baterii,
     eksportu baterii i HP razem z ilościami użytymi w bilansie oraz target.
-11. `PPD` — osobny `ppd_service.py` publikuje te trzy rekomendacje bez ich
-    ponownego liczenia oraz tworzy ciągłe okna `PV_CWU` i `PV_EV` z zamrożonej
-    nadwyżki; nie zwraca żadnego wejścia do targetu.
+11. `PPD` — osobny `ppd_service.py` publikuje rekomendacje baterii i HP
+   bez ich ponownego liczenia oraz wyznacza `allowed` dla `PV_CWU`, `PV_EV`
+   i `SELL_PV`. CWU/EV mają wspólne okno pozwolenia po target; wykonanie
+   sprawdza świeżą nadwyżkę i stosuje priorytet CWU → EV. `SELL_PV` ma
+   `ALLOWED` przy cenie > 0 PLN/kWh niezależnie od prognozowanej ilości,
+   natomiast ON/OFF wynika z pozostałej nadwyżki. Cena ≤ 0 daje BLOCKED.
+   Niezagospodarowana pozostałość jest ograniczana. Żadna decyzja PPD nie
+   wraca do targetu ani trajektorii SOC.
 12. `VALIDATE` — kontrola całego horyzontu; dopiero potem atomowa publikacja.
 
 Planer może wykonywać wiele przebiegów po tej samej tabeli roboczej, ale każdy
@@ -225,12 +231,16 @@ osiągnięcia targetu. Dopuszczenie CWU/EV wymaga nadwyżki po target oraz speł
 ich własnych progów. Cena eksportu PV nie może zmienić kolejności CWU → EV →
 sprzedaż pozostałości.
 
-Okno PPD jest wyłącznie pozwoleniem. W trybie AUTO wykonawca ponownie sprawdza
+Okno PPD publikuje jawne `allowed`; executor musi respektować wartość
+`eligible` z opublikowanej decyzji i nie może uznawać samej obecności rekordu
+za zgodę. PPD może otworzyć bieżące okno na podstawie świeżych danych, więc
+wykonawca nie musi obchodzić decyzji planera. W trybie AUTO wykonawca sprawdza
 świeżą telemetrię. Poniżej targetu blokuje odbiory elastyczne; po osiągnięciu
 targetu liczy nadwyżkę jako `PV - load`, dzięki czemu dalsze ładowanie baterii
-ponad target nie blokuje CWU/EV. Moc już pracujących CWU/EV jest dodawana
-z powrotem wyłącznie na potrzeby histerezy. Odbiory te nie
-wracają do `load`, `soc_target`, `soc_required` ani planowanej trajektorii SOC.
+ponad target nie blokuje CWU/EV. CWU ma pierwszeństwo przed EV. Moc już
+pracujących odbiorników jest dodawana z powrotem wyłącznie dla histerezy.
+Odbiory te nie wracają do `load`, `soc_target`, `soc_required` ani
+planowanej trajektorii SOC.
 
 ## 8. Ekonomiczne BUY i SELL
 
