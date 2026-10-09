@@ -98,17 +98,18 @@ def flexible_surplus_runtime_decisions(
     """Gate flexible PV loads from live surplus without feeding SOC planning.
 
     PV_CWU and PV_EV remain outside native load and every SOC calculation.
-    The target is read only: it opens the surplus layer but is never changed
-    here. Existing flexible consumption is added back to inverter load before
+    Flexible PV loads open only at physical full SOC (100%); soc_target alone
+    is not sufficient. The target argument is retained for caller compatibility.
+    Existing flexible consumption is added back to inverter load before priority
     priority is reapplied, preventing immediate ON/OFF oscillation.
     """
     required = (pv_power_w, load_power_w, live_soc_pct, target_soc_pct)
     if any(value is None for value in required):
         return {"pv_cwu": False, "pv_ev": False,
                 "reason": "LIVE_SURPLUS_DATA_UNAVAILABLE", "surplus_kw": None}
-    if float(live_soc_pct) + 0.01 < float(target_soc_pct):
+    if float(live_soc_pct) + 0.01 < 100.0:
         return {"pv_cwu": False, "pv_ev": False,
-                "reason": "LIVE_SOC_BELOW_TARGET", "surplus_kw": None}
+                "reason": "LIVE_SOC_BELOW_100_PERCENT", "surplus_kw": None}
     ratio = max(0.0, min(1.0, float(hysteresis_ratio)))
     cwu_threshold = max(0.0, float(cwu_threshold_kw))
     ev_threshold = max(0.0, float(ev_threshold_kw))
@@ -116,9 +117,8 @@ def flexible_surplus_runtime_decisions(
     cwu_running = bool(pv_cwu_on)
     # inverter_load already contains running flexible consumers; add them back
     # to reconstruct the surplus which existed before CWU/EV allocation.
-    # Below target the gate above reserves all PV for the battery. Once target
-    # is reached, flexible consumers take priority over *additional* PV
-    # charging; enabling them naturally reduces inverter battery charge.
+    # Until full SOC the gate above reserves available PV for the battery.
+    # At 100%, flexible consumers take priority over PV export/curtailment.
     pre_flexible_kw = (
         float(pv_power_w) - float(load_power_w)
     ) / 1000.0 + ev_running_kw + (cwu_threshold if cwu_running else 0.0)

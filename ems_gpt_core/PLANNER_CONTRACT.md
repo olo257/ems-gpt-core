@@ -68,7 +68,7 @@ Każdy pakiet wykonuje etapy w tej kolejności:
 8. `SOC` — wynikowe `soc_target`, `soc_floor`, SOC przed i po slocie.
 9. `SURPLUS` — PV pokrywa autokonsumpcję, następnie ładuje baterię do
    fizycznego maksimum 100%, niezależnie od `soc_target`. Target ogranicza
-   wyłącznie import z sieci. Po osiągnięciu targetu PPD może dopuścić CWU,
+   wyłącznie import z sieci. Po osiągnięciu 100% SOC PPD może dopuścić CWU,
    potem EV; pozostała nadwyżka jest sprzedawana tylko przy cenie > 0 PLN/kWh,
    a ograniczenie produkcji jest ostatnią możliwością.
 10. `PLAN DECISIONS` — planer zamraża rekomendowane przebiegi importu baterii,
@@ -132,11 +132,11 @@ wcześniejsze sloty mostu, więc użyteczne PV może zmniejszyć albo wyeliminow
 późniejszy import. Sama dostępność taniego lub ujemnie wycenionego BUY nie
 uzasadnia zakupu energii ponad ten target.
 
-`Soc_target` ogranicza ładowanie z sieci. Nie ogranicza ładowania z PV, które
-może uzupełniać baterię do fizycznego maksimum 100%. Po osiągnięciu targetu
-PPD może dopuścić CWU/EV na podstawie nadwyżki, a executor ponownie weryfikuje
-rzeczywisty SOC i moc PV. Jeżeli odbiornik działa, jego pobór naturalnie
-zmniejsza moc dostępną do dalszego ładowania baterii.
+`soc_target` ogranicza ładowanie z sieci. Nie ogranicza ładowania z PV, które
+może uzupełniać baterię do fizycznego maksimum 100%. Dopiero po osiągnięciu
+100% SOC PPD może dopuścić CWU/EV na podstawie prognozowanej nadwyżki, a
+executor ponownie weryfikuje rzeczywisty SOC i moc PV. Jeżeli odbiornik działa,
+jego pobór naturalnie zmniejsza eksport albo ograniczenie produkcji.
 
 Techniczne minimum SOC jest granicą awaryjną, nie celem operacyjnym. Planowana
 ścieżka nie może celowo sprowadzać baterii do tej wartości ani uzależniać
@@ -211,20 +211,19 @@ Prognozowane i rzeczywiste PV jest alokowane w kolejności:
 
 1. autokonsumpcja odbiorników;
 2. ładowanie baterii PV do fizycznego maksimum 100%;
-3. po osiągnięciu `soc_target`: CWU, następnie EV;
+3. po osiągnięciu 100% SOC: CWU, następnie EV;
 4. sprzedaż pozostałej nadwyżki PV wyłącznie przy cenie > 0 PLN/kWh;
 5. ograniczenie produkcji jako ostatnia możliwość.
 
 `soc_target` ogranicza wyłącznie energię ładowania z sieci i nie może
 zablokować ładowania PV ponad target. CWU/EV wymagają zatwierdzenia PPD,
-osiągniętego targetu i świeżej, rzeczywistej nadwyżki. Pozostała nadwyżka PV
+osiągniętego fizycznego SOC 100% i świeżej, rzeczywistej nadwyżki. Pozostała nadwyżka PV
 jest sprzedawana tylko przy dodatniej cenie; cena nie zmienia kolejności
 CWU → EV → sprzedaż, a przy cenie niedodatniej nadwyżkę należy ograniczyć.
 
 Okno PPD jest wyłącznie pozwoleniem. W trybie AUTO wykonawca ponownie sprawdza
-świeżą telemetrię. Poniżej targetu blokuje odbiory elastyczne; po osiągnięciu
-targetu liczy nadwyżkę jako `PV - load`, dzięki czemu dalsze ładowanie baterii
-ponad target nie blokuje CWU/EV. Moc już pracujących CWU/EV jest dodawana
+świeżą telemetrię. Poniżej 100% SOC blokuje odbiory elastyczne; po osiągnięciu
+100% liczy nadwyżkę dostępną dla CWU/EV jako `PV - load`. Moc już pracujących CWU/EV jest dodawana
 z powrotem wyłącznie na potrzeby histerezy. Odbiory te nie wracają do `load`,
 `soc_target`, `soc_required` ani planowanej trajektorii SOC.
 
@@ -335,10 +334,10 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
   `ALLOWED + OFF`. Proces nie uruchamia skryptu sprzedaży baterii.
 - `PV_CWU` i `PV_EV` są jedynymi procesami, których okna PPD może wyliczyć po
   publikacji planu; nie zmieniają one targetu. Korzystają ze wspólnego okna
-  dopuszczenia od istotnej dodatniej nadwyżki planu po osiągnięciu targetu;
+  dopuszczenia od istotnej dodatniej nadwyżki planu po osiągnięciu 100% SOC;
   osobne progi mocy są stosowane dopiero przez runtime guard.
-- Ich wykonanie w `AUTO` wymaga świeżej telemetrii, SOC co najmniej równego
-  opublikowanemu targetowi i nadwyżki `PV - load`.
+- Ich wykonanie w `AUTO` wymaga świeżej telemetrii, SOC co najmniej 100%
+  i nadwyżki `PV - load`.
   CWU ma pierwszeństwo przed EV, a brak danych lub utrata nadwyżki wymusza OFF.
 - Executor nakłada override na decyzję planowaną i zapisuje osobno stan
   planowany, efektywny oraz obserwowany.
