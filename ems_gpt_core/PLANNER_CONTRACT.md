@@ -170,11 +170,18 @@ końcowe kontrakty SOC odejmują wyłącznie faktycznie przydzielone zakupy.
 
 Fallback najpierw usuwa SELL_BAT; może obniżyć niewykonalne wymaganie
 historyczne końca doby, ale nie może obniżyć niezależnej rezerwy bezpieczeństwa.
-Wymagania SOC są ograniczone do fizycznego zakresu 0–100%. Jeżeli wymagany most
-przekracza pojemność, planer obniża wymóg mostu w dotkniętych slotach do
-rezerwy technicznej, blokuje sprzedaż baterii w tym przebiegu i pokazuje
-nieunikniony import resztowy domu.
-Rezerwa techniczna pozostaje twardą dolną granicą. Brak cen/prognoz poza
+Wymagane SOC, targety i wszystkie stany planu pozostają w fizycznym zakresie
+0–100%. Żaden odczyt ponad ten zakres lub brak odczytu bieżącego SOC nie jest
+po cichu zastępowany rezerwą: przebieg zostaje odrzucony jako błąd telemetrii.
+Dla każdego slotu wymagany próg musi być osiągalny w jednej wspólnej trajektorii
+od bieżącego SOC, przy rzeczywistych oknach BUY/PV, obciążeniu, sprawności,
+pojemności i mocy. Pułap liczony osobno dla slotów nie wystarcza. Jeżeli próg
+jest nieosiągalny w tej trajektorii, planer ogranicza go do spójnej ścieżki,
+blokuje sprzedaż baterii dla przebiegu i zapisuje dotknięte sloty.
+Jeżeli zmierzony SOC już jest poniżej rezerwy technicznej, plan zachowuje
+zmierzony stan, nie rozładowuje baterii poniżej rezerwy, a odbudowa SOC może
+nastąpić wyłącznie przez dozwolone PV lub BUY. Do tego czasu niedobór domu
+pokrywa import z sieci. Rezerwa pozostaje twardą granicą rozładowania. Brak cen/prognoz poza
 horyzontem nie stanowi potwierdzenia bezpieczeństwa kolejnej nocy. Po
 rozszerzeniu horyzontu bilans musi być przeliczony.
 
@@ -394,14 +401,13 @@ Każda zmiana planera musi obejmować co najmniej:
 
 ## 10. Granica recovery i diagnostyki runtime
 
-Jeżeli bieżący SOC jest już niższy od wymaganego mostu, recovery może obniżyć
-wymagania wyłącznie przed pierwszym przyszłym, dozwolonym BUY i tylko do
-technicznej rezerwy. Żadne wymaganie ani cel SOC nie może przekroczyć 100%.
-Jeżeli wyliczony most wymaga więcej niż pojemność, planer ogranicza je do
-fizycznego zakresu, blokuje SELL_BAT dla przebiegu i pozwala bilansowi wykazać
-import resztowy domu po osiągnięciu rezerwy. BUY nadal występuje wyłącznie w
-dozwolonych oknach. Raport diagnostyczny zachowuje przyczynę ograniczenia, ale
-starszy opublikowany plan nie może ukryć zdegradowanego stanu planera.
+Jeżeli pomiar SOC jest już poniżej rezerwy, recovery zachowuje rzeczywisty
+stan początkowy zamiast podnosić go do rezerwy bez energii. Do czasu odbudowy
+rezerwy nie wolno rozładowywać ani sprzedawać energii z baterii; domowy deficyt
+jest bilansem sieciowym. Nieosiągalność progów jest oceniana dla całego
+horyzontu i wspólnej ścieżki, a nie niezależnie dla każdego slotu. Każde
+ograniczenie, lista slotów i wyłączenie sprzedaży są jawnie audytowane.
+Żaden wymagany SOC, target ani wynikowa trajektoria nie może przekroczyć 100%.
 
 Raport diagnostyczny musi uwzględniać bieżący stan modułów planera i PPD oraz
 ich zatrzaśnięte błędy. Starszy opublikowany plan nie oznacza zdrowego systemu,
