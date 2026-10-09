@@ -376,3 +376,18 @@ Każda zmiana planera musi obejmować co najmniej:
 - HP wyłączone przy niepełnej prognozie i temperaturze równej progowi;
 - brak HP przed 07:00, po 19:00 i w każdym slocie `SELL`;
 - publikację cen jednego slotu wyłącznie do dwóch kanonicznych helperów.
+
+
+## 10. Recovery boundary and runtime diagnosis
+
+When the current SOC is already below the first required bridge, recovery may
+relax only the slots before the first future permitted BUY, and only down to the
+technical reserve. The original safety requirement resumes at that BUY slot.
+An over-cap requirement at or after the first BUY remains a hard failure;
+without a future BUY, no recovery relaxation is allowed. The cap check must run
+after this narrowly scoped recovery so an impossible pre-BUY requirement is not
+mistaken for a post-BUY failure. Requirements are never clipped to 100%.
+
+A diagnostic report must include the live planner and PPD module health and
+their latched errors. A previously published plan does not make diagnostics
+healthy while the planner is degraded or a planner/PPD failure is latched.
