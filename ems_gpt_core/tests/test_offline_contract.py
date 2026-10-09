@@ -15,8 +15,8 @@ PYTHON_SOURCE = "\n".join([APP_SOURCE, *MODULE_SOURCES.values()])
 SOURCE = PYTHON_SOURCE + "\n" + WEBUI
 CONFIG = (ROOT / "config.yaml").read_text(encoding="utf-8")
 DOCS = (ROOT / "DOCS.md").read_text(encoding="utf-8")
-README = (ROOT / "README.md").read_text(encoding="utf-8")
-PLANNER_README = (ROOT / "ems_gpt_core" / "README.md").read_text(encoding="utf-8")
+README = (ROOT.parent / "README.md").read_text(encoding="utf-8")
+PLANNER_README = (ROOT / "README.md").read_text(encoding="utf-8")
 PLANNER_CONTRACT = (ROOT / "PLANNER_CONTRACT.md").read_text(encoding="utf-8")
 
 
