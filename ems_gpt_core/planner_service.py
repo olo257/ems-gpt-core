@@ -165,6 +165,23 @@ def recoverable_soc_requirements(rows: list[dict], required_soc_pcts: list[float
             "recovery_buy_index": recovery_buy}
 
 
+def validate_recoverable_soc_requirements(
+        rows: list[dict], required_soc_pcts: list[float], initial_soc_pct: float,
+        reserve_pct: float, target_cap_pct: float) -> dict:
+    """Apply only the documented pre-BUY recovery, then enforce the physical cap.
+
+    An already missed bridge may be relaxed up to the first future BUY. A
+    requirement at or after that replenishment remains hard and cannot be
+    clipped to the configured target cap.
+    """
+    recovery = recoverable_soc_requirements(
+        rows, required_soc_pcts, initial_soc_pct, reserve_pct)
+    for index, safety_pct in enumerate(recovery["required_soc_pcts"]):
+        if safety_pct > float(target_cap_pct) + 1e-9:
+            raise RuntimeError(f"SOC_SAFETY_BRIDGE_EXCEEDS_CAP:{index}:{safety_pct:.3f}")
+    return recovery
+
+
 def next_replenishment_prices(rows: list[dict]) -> list[float | None]:
     """Cheapest price in the nearest later contiguous battery BUY window."""
     result: list[float | None] = [None] * len(rows)
@@ -1708,11 +1725,8 @@ def build_planner(a: PlannerAdapters):
                 horizon_rows, capacity, reserve,
                 float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
                 eta_c, eta_d, max_kw, int(OPTIONS["slot_minutes"]), uncertainty_weight)
-            for index, safety_pct in enumerate(safety_required_soc):
-                if safety_pct > target_cap + 1e-9:
-                    raise RuntimeError(f"SOC_SAFETY_BRIDGE_EXCEEDS_CAP:{index}:{safety_pct:.3f}")
-            recovery = recoverable_soc_requirements(
-                horizon_rows, safety_required_soc, soc_now, reserve)
+            recovery = validate_recoverable_soc_requirements(
+                horizon_rows, safety_required_soc, soc_now, reserve, target_cap)
             safety_required_soc = recovery["required_soc_pcts"]
             if recovery["relaxed_indices"]:
                 record_event("soc_safety_bridge_recovery", "planner", {
