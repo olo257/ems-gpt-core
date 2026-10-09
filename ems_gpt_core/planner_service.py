@@ -310,19 +310,21 @@ def validate_recoverable_soc_requirements(
     for index, requested in enumerate(required):
         ceiling = physical_cap if reachable is None else min(physical_cap, reachable[index])
         if requested > physical_cap + 1e-9:
+            # An over-cap bridge is impossible, even when a BUY window could
+            # physically fill the battery to 100%. Do not turn an impossible
+            # safety requirement into a command to buy to full: relax it to
+            # the technical reserve and disable battery sales for this run.
             limited_indices.append(index)
-        if requested > ceiling + 1e-9 or (
+            unreachable_indices.append(index)
+            bounded[index] = max(0.0, min(100.0, float(reserve_pct)))
+        elif requested > ceiling + 1e-9 or (
                 reachable is not None and requested > feasible_path[index] + 1e-9):
             unreachable_indices.append(index)
             limited_indices.append(index)
-        if requested > physical_cap + 1e-9 and reachable is None:
-            # Legacy callers without battery/power inputs retain the safe
-            # reserve fallback; live planner calls always provide reachability.
-            bounded[index] = max(0.0, min(100.0, float(reserve_pct)))
-        elif requested > ceiling:
-            bounded[index] = max(0.0, ceiling)
-        elif reachable is not None and requested > feasible_path[index]:
-            bounded[index] = max(0.0, feasible_path[index])
+            if requested > ceiling:
+                bounded[index] = max(0.0, ceiling)
+            elif reachable is not None:
+                bounded[index] = max(0.0, feasible_path[index])
     if limited_indices:
         recovery["required_soc_pcts"] = bounded
         recovery["capacity_limited_indices"] = sorted(set(limited_indices))
