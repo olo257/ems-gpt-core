@@ -176,9 +176,25 @@ def validate_recoverable_soc_requirements(
     """
     recovery = recoverable_soc_requirements(
         rows, required_soc_pcts, initial_soc_pct, reserve_pct)
-    for index, safety_pct in enumerate(recovery["required_soc_pcts"]):
-        if safety_pct > float(target_cap_pct) + 1e-9:
-            raise RuntimeError(f"SOC_SAFETY_BRIDGE_EXCEEDS_CAP:{index}:{safety_pct:.3f}")
+    physical_cap = 100.0
+    limited_indices = [
+        index for index, safety_pct in enumerate(recovery["required_soc_pcts"])
+        if safety_pct > physical_cap + 1e-9
+    ]
+    if limited_indices:
+        # A bridge requirement above the battery's physical capacity is not a
+        # reachable SOC target. Keep the hard technical reserve, stop battery
+        # export for this run, and let the energy balance expose residual
+        # native-load import instead of rejecting the whole plan.
+        bounded = list(recovery["required_soc_pcts"])
+        for index in limited_indices:
+            bounded[index] = max(float(reserve_pct), min(physical_cap, float(target_cap_pct)))
+        recovery["required_soc_pcts"] = bounded
+        recovery["capacity_limited_indices"] = limited_indices
+        recovery["disable_battery_sales"] = True
+    else:
+        recovery["capacity_limited_indices"] = []
+        recovery["disable_battery_sales"] = False
     return recovery
 
 
@@ -1758,7 +1774,17 @@ def build_planner(a: PlannerAdapters):
             internal_soc_step=0.10
             enforced_daily_required = list(daily_required_soc)
             waived_daily_closes = set()
-            battery_sales_enabled = True
+            battery_sales_enabled = not bool(recovery.get("disable_battery_sales"))
+            if recovery.get("capacity_limited_indices"):
+                record_event("soc_bridge_limited_to_physical_capacity", "planner", {
+                    "physical_soc_cap_pct": 100.0,
+                    "limited_slot_count": len(recovery["capacity_limited_indices"]),
+                    "first_limited_slot": str(
+                        horizon_rows[recovery["capacity_limited_indices"][0]]["slot_start"]),
+                    "last_limited_slot": str(
+                        horizon_rows[recovery["capacity_limited_indices"][-1]]["slot_start"]),
+                    "action": "BATTERY_SALES_DISABLED_RESIDUAL_NATIVE_LOAD_TO_GRID",
+                }, "WARNING")
             terminal_shortfall_allowed = False
             while True:
                 try:
