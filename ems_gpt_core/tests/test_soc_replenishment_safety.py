@@ -73,6 +73,24 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertLessEqual(flow["grid_charge_kwh"] + flow["grid_load_kwh"], 3.0 + 1e-9)
         self.assertLessEqual(flow["grid_charge_kwh"] / 0.25, 5.0 + 1e-9)
 
+    def test_buy_combined_import_respects_12kw_grid_limit(self):
+        rows = self.rows(1, start=datetime(2026, 10, 10, 14, 0))
+        rows[0]["buy_window"] = True
+        rows[0]["forecast_load_kwh"] = 2.0
+        plan = optimize_energy_horizon(
+            rows, 69.0, 15.0, 17.0, 0.9, 0.95, 0.08, 0.05,
+            5.0, 15, [17.0], 17.0, 0.1, 100.0,
+            minimum_soc_targets=[100.0], hard_target_indices=set(),
+            target_due_indices={0}, required_soc_pcts=[17.0],
+            battery_sales_enabled=False, max_grid_import_kw=12.0)
+
+        flow = plan["flows"][0]
+        self.assertAlmostEqual(flow["grid_load_kwh"], 2.0)
+        self.assertAlmostEqual(flow["grid_charge_kwh"], 1.0)
+        self.assertAlmostEqual(flow["grid_load_kwh"] + flow["grid_charge_kwh"], 3.0)
+        self.assertLessEqual(flow["grid_charge_kwh"], 1.25)
+        self.assertAlmostEqual(flow["soc_end_pct"], 75.0)
+
     def test_unreachable_close_uses_best_reachable_soc_and_keeps_reserve(self):
         rows = self.rows(2)
         requested_close = 60.0
