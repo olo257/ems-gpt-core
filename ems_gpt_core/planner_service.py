@@ -1125,7 +1125,11 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
             "achieved_terminal_soc_pct": selected_terminal_unit*step,
             "terminal_shortfall_pct": max(
                 0.0, (terminal_unit-selected_terminal_unit)*step),
-            "effective_target_pcts": effective_target_pcts}
+            "effective_target_pcts": effective_target_pcts,
+            # Preserve the deadlines actually enforced by this optimizer pass.
+            # The caller may deliberately relax optional BUY deadlines after
+            # exhausting the target-commitment fallback levels.
+            "effective_target_due_indices": set(target_due_indices)}
 
 
 def derive_soc_commitments(flows: list[dict], capacity_kwh: float,
@@ -2203,6 +2207,11 @@ def build_planner(a: PlannerAdapters):
                         "shortfall_pct": result["terminal_shortfall_pct"],
                         "battery_sales_enabled": battery_sales_enabled,
                     }, "WARNING")
+                # The fallback can intentionally clear due_indices while
+                # preserving the independent required-SOC contract. Carry the
+                # final active set out of this scope so later validation does
+                # not reapply deadlines that this pass explicitly relaxed.
+                result["effective_target_due_indices"] = set(due_indices or ())
                 return result
             # Convert the immutable TOU baselines into sale-only safety floors.
             # Iterate once after applying them because a permitted 5/6 bridge
@@ -2319,6 +2328,8 @@ def build_planner(a: PlannerAdapters):
             else:
                 raise RuntimeError("SALE_GUARD_REPLAN_EXHAUSTED")
             targets=list(optimization.get("effective_target_pcts",charge_targets))
+            effective_target_due_indices = set(
+                optimization.get("effective_target_due_indices", target_due_indices))
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
             record_event("daily_plan_variant_selected","planner",{
@@ -2355,7 +2366,7 @@ def build_planner(a: PlannerAdapters):
                 if grid_charge > flow_threshold and soc_end > targets[index] + 0.01:
                     raise RuntimeError(
                         f"BUY_TARGET_EXCEEDED:{index}:{soc_end}>{targets[index]}")
-                if index in target_due_indices and soc_end + 0.01 < targets[index]:
+                if index in effective_target_due_indices and soc_end + 0.01 < targets[index]:
                     raise RuntimeError(
                         f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{targets[index]}")
                 if soc_end + 0.01 < required_soc[index]:
