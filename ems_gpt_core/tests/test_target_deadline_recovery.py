@@ -1,6 +1,9 @@
 import unittest
 
-from planner_service import active_soc_target_deadlines
+from planner_service import (
+    active_soc_target_deadlines,
+    validate_active_soc_target_deadlines,
+)
 
 
 class ActiveSocTargetDeadlineTests(unittest.TestCase):
@@ -26,6 +29,19 @@ class ActiveSocTargetDeadlineTests(unittest.TestCase):
             active_soc_target_deadlines(recovered_dispatch, original_buy_window_ends),
             {39},
         )
+
+    def test_final_soc_validation_uses_only_retained_buy_deadlines(self):
+        target = 23.8
+        result = {
+            "flows": [{"soc_end_pct": 19.0}],
+            "effective_target_due_indices": set(),
+        }
+
+        self.assertEqual(
+            validate_active_soc_target_deadlines(result, {0}, [target]), set())
+        result["effective_target_due_indices"] = {0}
+        with self.assertRaisesRegex(RuntimeError, "SOC_TARGET_NOT_REACHED"):
+            validate_active_soc_target_deadlines(result, {0}, [target])
 
     def test_legacy_results_preserve_requested_deadlines(self):
         self.assertEqual(
