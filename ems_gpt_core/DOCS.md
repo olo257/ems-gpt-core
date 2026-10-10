@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja przygotowana: **0.40.2**.
+Status: obowiązująca. Wersja produkcyjna: **0.40.4**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -27,7 +27,8 @@ dokumentu źródłowego.
 - `app.py` — kompozycja usług i cykl życia procesu;
 - `scheduler_service.py` — zegar, kolejność przebiegów i publikacja bieżących
   cen do Home Assistant;
-- `ingestion_service.py` — import RCE oraz prognoz PV i pogody;
+- `ingestion_service.py` — import RCE, jedyny właściciel okien BUY/SELL,
+  oraz prognozy PV i pogody;
 - `planner_service.py` — transakcyjny planer energii i profil pompy ciepła;
 - `ppd_service.py` — publikacja decyzji planera oraz niezależne okna PV→CWU/EV;
 - `executor_service.py` — realizacja zatwierdzonych decyzji i ręcznych
@@ -169,8 +170,11 @@ w górę do kroku SOC; potrzeby nocne mogą podnieść wymagane zamknięcie doby
 ## 6. RCE i bieżące ceny
 
 Import RCE zatwierdza dopiero kompletny zestaw ciągłych slotów. Brak ceny nie
-jest zastępowany zerem. Po zatwierdzeniu ceny planowanie może zakończyć się
-błędem bez usuwania poprawnie zaimportowanego RCE.
+jest zastępowany zerem. Moduł importu RCE jako jedyny wyznacza i zapisuje
+`buy_window`, `sale_window` oraz odpowiadające im `market_window` dla
+otwartego horyzontu. Planer tylko odczytuje i waliduje te wartości; nie może
+ich ponownie wyliczać ani zapisywać. Po zatwierdzeniu ceny planowanie może
+zakończyć się błędem bez usuwania poprawnie zaimportowanego RCE.
 
 Scheduler odczytuje zakup i sprzedaż z jednego aktywnego rekordu
 `ems_gpt_slots`, zaokrągla wartości do trzech miejsc i zapisuje je do dwóch

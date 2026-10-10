@@ -36,8 +36,11 @@ Import i planowanie są dwoma niezależnymi etapami.
 
 1. Pobrać ceny dla wskazanego dnia.
 2. Zweryfikować oczekiwaną liczbę ciągłych slotów i komplet obu cen.
-3. Dopiero kompletny zestaw zatwierdzić trwałym zdarzeniem RCE.
-4. Po zatwierdzeniu uruchomić pakiet planowania na pełnym ciągłym horyzoncie.
+3. Wyznaczyć okna BUY/SELL na pełnym, dostępnym horyzoncie cen i zatwierdzić
+   je razem z cenami jako wejście RCE. `ingestion_service.py` jest jedynym
+   właścicielem zapisów `buy_window`, `sale_window` i `market_window`.
+4. Dopiero kompletny zestaw zatwierdzić trwałym zdarzeniem RCE.
+5. Po zatwierdzeniu uruchomić pakiet planowania na pełnym ciągłym horyzoncie.
 
 Standardowy dzień ma 96 slotów. Dzień zmiany czasu ma liczbę wynikającą z osi
 czasu. `rows == expected` jest warunkiem zatwierdzenia; stała liczba 96 nie
@@ -59,8 +62,10 @@ Błąd prognozy lub planera po zatwierdzeniu cen:
 Każdy pakiet wykonuje etapy w tej kolejności:
 
 1. `RCE_RAW` — skopiowanie zatwierdzonych cen do tabeli roboczej.
-2. `WINDOWS` — oznaczenie każdego slotu dokładnie jednym stanem `BUY`, `SELL`
-   albo `NEUTRAL`; `BUY` i `SELL` nie mogą się nakładać.
+2. `WINDOWS` — walidacja okien BUY/SELL zapisanych przez import RCE.
+   Planer nie wyznacza ich ponownie ani nie zapisuje do `ems_gpt_slots`;
+   każdy slot musi mieć dokładnie jeden stan: `BUY`, `SELL` albo
+   `NEUTRAL`, bez nakładania BUY i SELL.
 3. `FORECAST_LOAD` — prognoza zużycia bazowego oraz sterowalnych odbiorników.
 4. `FORECAST_PV` — prognoza PV1, PV2 i sumy, z oddzielnymi korektami.
 5. `ENERGY_BALANCE` — bilans fizyczny każdego slotu.
@@ -82,7 +87,8 @@ Każdy pakiet wykonuje etapy w tej kolejności:
 12. `VALIDATE` — kontrola całego horyzontu; dopiero potem atomowa publikacja.
 
 Planer może wykonywać wiele przebiegów po tej samej tabeli roboczej, ale każdy
-etap modyfikuje wyłącznie pola należące do niego. Jeżeli walidacja jednego slotu
+etap modyfikuje wyłącznie pola należące do niego. Okna cenowe pozostają
+niezmiennym wejściem z importu RCE przez wszystkie przebiegi planera. Jeżeli walidacja jednego slotu
 nie przejdzie, kolejny przebieg może zmienić wybór przyszłego BUY/SELL lub
 alokację energii. Nie wolno naprawiać błędu przez kopiowanie `soc_floor` do
 `soc_target`, zakup poza BUY ani sprzedaż nadwyżki potrzebnej baterii.

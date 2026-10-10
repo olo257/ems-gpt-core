@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from typing import Callable
 
 from config_service import deye_program_soc_baselines
-from ingestion_service import derive_price_windows
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -112,6 +111,27 @@ def strict_database_bool(value, field: str) -> bool:
     if value == 1 or str(value).strip().lower() in {"1", "true"}:
         return True
     raise RuntimeError(f"INVALID_BOOLEAN:{field}:{value!r}")
+
+
+def validate_rce_market_window(row: dict) -> dict:
+    """Validate and consume the window assignment persisted by the RCE importer."""
+    if row.get("sale_window") is None or row.get("buy_window") is None:
+        raise RuntimeError(f"RCE_PRICE_WINDOW_MISSING:{row.get('slot_start')}")
+    sale = strict_database_bool(row.get("sale_window"), "sale_window")
+    buy = strict_database_bool(row.get("buy_window"), "buy_window")
+    if sale and buy:
+        raise RuntimeError(f"WINDOW_OVERLAP:{row.get('slot_start')}")
+    expected = "SELL" if sale else "BUY" if buy else "NEUTRAL"
+    persisted = row.get("market_window")
+    if persisted is not None and str(persisted).upper() != expected:
+        raise RuntimeError(
+            f"RCE_MARKET_WINDOW_MISMATCH:{row.get('slot_start')}:"
+            f"{persisted!r}!={expected}")
+    normalized = dict(row)
+    normalized["sale_window"] = sale
+    normalized["buy_window"] = buy
+    normalized["market_window"] = expected
+    return normalized
 
 
 def validate_pv_forecasts(rows: list[dict]) -> None:
@@ -1766,33 +1786,12 @@ def build_planner(a: PlannerAdapters):
                            "pse_prices": complete_prices, "per_day": per_day, "expected": "all contiguous available RCE slots"}
                 record_event("planner_waiting_for_inputs", "planner", details, "WARNING")
                 return {"status": "WAITING", **details}
-            # Re-evaluate durable window flags over the exact continuous
-            # horizon used by this run. This also repairs flags produced before
-            # the complete next-day RCE horizon was available.
-            terminal_baseline = max(
-                [float(program["soc"]) for program in tou_programs] or [reserve]
-            )
-            minimum_buy_slots = max(1, math.ceil(
-                capacity * max(0.0, terminal_baseline - reserve) / 100.0
-                / max(0.001, max_kw * int(OPTIONS["slot_minutes"]) / 60.0 * eta_c)
-            ))
-            price_windows = derive_price_windows(
-                [{"sell": row["price_sell_pln_kwh"],
-                  "buy": row["price_buy_pln_kwh"]} for row in source],
-                eta_c, eta_d, degradation, min_margin,
-                max(0.0, float(OPTIONS.get("buy_window_tolerance_pln_kwh", 0.05))),
-                minimum_buy_slots)
-            normalized_source = []
-            for row, (sale_window, buy_window) in zip(source, price_windows):
-                if bool(sale_window) and bool(buy_window):
-                    raise RuntimeError(f"WINDOW_OVERLAP:{row['slot_start']}")
-                work = dict(row)
-                work["sale_window"], work["buy_window"] = sale_window, buy_window
-                work["market_window"] = "SELL" if sale_window else ("BUY" if buy_window else "NEUTRAL")
-                normalized_source.append(work)
-                cur.execute("""UPDATE ems_gpt_slots SET sale_window=%s,buy_window=%s,market_window=%s
-                  WHERE slot_start=%s AND actual_recorded_at IS NULL""",
-                  (sale_window, buy_window, work["market_window"], row["slot_start"]))
+            # RCE import is the sole writer of durable BUY/SELL windows.
+            # Planner validates and consumes those flags; it never recalculates
+            # or updates the source permissions.
+            normalized_source = [
+                validate_rce_market_window(row) for row in source
+            ]
             source = normalized_source
             cur.execute("""INSERT INTO ems_gpt_plan_runs
               (run_id,plan_day,run_type,stage_version,expected_slots,status,current_stage,created_at,updated_at)
@@ -2593,7 +2592,6 @@ def build_planner(a: PlannerAdapters):
               p.soc_sale_floor_pct=s.soc_sale_floor_pct,
               p.soc_target_due=s.soc_target_due,p.soc_target_source=s.soc_target_source,
               p.soc_target_reserved_pv_kwh=s.soc_target_reserved_pv_kwh,
-              p.market_window=s.market_window,
               p.planned_buy_kwh=s.planned_buy_kwh,
               p.planned_sell_kwh=s.planned_sell_kwh,p.planned_pv_export_kwh=s.planned_pv_export_kwh,
               p.planned_battery_charge_kwh=s.planned_battery_charge_kwh,

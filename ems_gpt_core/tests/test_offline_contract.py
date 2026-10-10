@@ -495,6 +495,16 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("paired_arbitrage_buy_indices", MODULE_SOURCES["planner_service.py"])
         self.assertIn('audit_stage(cur,run_id,"REPLENISHMENT"', MODULE_SOURCES["planner_service.py"])
 
+    def test_rce_import_is_the_single_writer_of_price_windows(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        ingestion = MODULE_SOURCES["ingestion_service.py"]
+        self.assertNotIn("derive_price_windows", planner)
+        self.assertNotIn("UPDATE ems_gpt_slots SET sale_window", planner)
+        self.assertIn("validate_rce_market_window(row)", planner)
+        self.assertIn("market_window=IF(actual_recorded_at IS NULL,VALUES(market_window),market_window)", ingestion)
+        self.assertIn("SET sale_window=%s,buy_window=%s,market_window=%s", ingestion)
+        self.assertIn("właścicielem zapisów", PLANNER_CONTRACT)
+
     def test_operational_constants_are_panel_configurable(self):
         for setting in (
             "buy_window_tolerance_pln_kwh", "planned_flow_threshold_kwh",

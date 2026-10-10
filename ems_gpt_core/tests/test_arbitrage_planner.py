@@ -24,6 +24,7 @@ from planner_service import (
     next_replenishment_prices,
     planning_tou_programs,
     strict_database_bool,
+    validate_rce_market_window,
     historical_terminal_soc,
     terminal_soc_recovery,
     historical_hp_power_kw,
@@ -1494,6 +1495,43 @@ class TouStartupReadinessTests(unittest.TestCase):
             with self.subTest(unavailable=unavailable):
                 with self.assertRaisesRegex(RuntimeError, "TOU_PROGRAMS_UNAVAILABLE|TOU_PROGRAMS_INVALID"):
                     planning_tou_programs(unavailable, {"1": 10.0})
+
+
+
+class RcePriceWindowContractTests(unittest.TestCase):
+    def test_planner_uses_the_persisted_rce_windows(self):
+        row = {
+            "slot_start": datetime(2026, 10, 10, 12, 0),
+            "price_buy_pln_kwh": 1.0,
+            "price_sell_pln_kwh": 0.5,
+            "buy_window": 1,
+            "sale_window": 0,
+            "market_window": "BUY",
+        }
+
+        normalized = validate_rce_market_window(row)
+
+        self.assertEqual(normalized["market_window"], "BUY")
+        self.assertTrue(normalized["buy_window"])
+        self.assertFalse(normalized["sale_window"])
+        self.assertEqual(row["buy_window"], 1)
+
+    def test_planner_rejects_missing_or_overlapping_rce_windows(self):
+        base = {"slot_start": datetime(2026, 10, 10, 12, 0)}
+        with self.assertRaisesRegex(RuntimeError, "RCE_PRICE_WINDOW_MISSING"):
+            validate_rce_market_window(base)
+
+        with self.assertRaisesRegex(RuntimeError, "WINDOW_OVERLAP"):
+            validate_rce_market_window({
+                **base, "buy_window": 1, "sale_window": 1,
+            })
+
+    def test_planner_rejects_stale_rce_market_window_enum(self):
+        with self.assertRaisesRegex(RuntimeError, "RCE_MARKET_WINDOW_MISMATCH"):
+            validate_rce_market_window({
+                "slot_start": datetime(2026, 10, 10, 12, 0),
+                "buy_window": 1, "sale_window": 0, "market_window": "SELL",
+            })
 
 
 if __name__ == "__main__":
