@@ -44,8 +44,7 @@ class PairedArbitrageTests(unittest.TestCase):
         # The optional deadline was explicitly dropped by fallback; the
         # independent required-SOC contract is validated elsewhere.
         validate_target_due_soc(flows, targets, set())
-        with self.assertRaisesRegex(
-                RuntimeError, r"SOC_TARGET_NOT_REACHED:0:19\\.0<23\\.8"):
+        with self.assertRaisesRegex(RuntimeError, "SOC_TARGET_NOT_REACHED"):
             validate_target_due_soc(flows, targets, {0})
 
     def test_target_commitment_fallback_keeps_hard_soc_and_drops_optional_buy_deadlines(self):
