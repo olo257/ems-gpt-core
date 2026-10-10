@@ -676,9 +676,9 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
 
 def end_of_day_soc_target(historical_soc_pct: float, reserve_pct: float,
                           target_cap_pct: float) -> float:
-    """Five percentage points of tolerance apply only to the daily close."""
+    """Use the historical mean directly as the daily-close target."""
     return max(float(reserve_pct), min(float(target_cap_pct),
-                                       float(historical_soc_pct) - 5.0))
+                                       float(historical_soc_pct)))
 
 
 def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
@@ -1983,7 +1983,7 @@ def build_planner(a: PlannerAdapters):
                 record_event("historical_terminal_soc_forecast", "planner", {
                     "terminal_day": str(planning_day),
                     "terminal_soc_pct": round(daily_terminal_soc[planning_day], 3),
-                    "historical_tolerance_pp": 5.0,
+                    "historical_target_adjustment_pp": 0.0,
                     **terminal_history,
                 })
             terminal_soc = daily_terminal_soc[terminal_day]
