@@ -67,6 +67,43 @@ class PairedArbitrageTests(unittest.TestCase):
             if flow["grid_charge_kwh"] > 1e-9:
                 self.assertLessEqual(flow["soc_end_pct"], targets[index] + 1e-9)
 
+    def test_single_remaining_buy_window_preserves_high_charge_goal(self):
+        day = date(2026, 10, 10)
+        starts = [
+            datetime(2026, 10, 10, 12, 0),
+            datetime(2026, 10, 10, 12, 15),
+            datetime(2026, 10, 10, 12, 30),
+            datetime(2026, 10, 10, 12, 45),
+            datetime(2026, 10, 10, 13, 0),
+        ]
+        rows = [
+            {"slot_start": start, "local_day": day,
+             "buy_window": index in {1, 2}, "sale_window": False,
+             "forecast_load_kwh": 0.0, "forecast_heat_pump_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0}
+            for index, start in enumerate(starts)
+        ]
+        contract = deterministic_soc_target_contract(
+            rows, [15.0] * 5, [15.0, 15.0, 15.0, 15.0, 40.0],
+            15.0, 15.0, 0.90, 0.95, 5.0, 15, 0.0,
+            single_daily_buy_target_pct=95.0)
+        self.assertEqual(contract["buy_due_indices"], {2})
+        self.assertGreaterEqual(contract["required"][2], 95.0)
+
+        # A second remaining BUY window removes the one-window urgency rule.
+        rows[4]["buy_window"] = True
+        multiple = deterministic_soc_target_contract(
+            rows, [15.0] * 5, [15.0, 15.0, 15.0, 15.0, 40.0],
+            15.0, 15.0, 0.90, 0.95, 5.0, 15, 0.0,
+            single_daily_buy_target_pct=95.0)
+        self.assertLess(multiple["required"][2], 95.0)
+
+    def test_current_day_terminal_recovery_keeps_historical_goal(self):
+        action, target = terminal_soc_recovery(
+            42.0, 21.5, False, current_day=True)
+        self.assertEqual(action, "ALLOW_TERMINAL_SHORTFALL")
+        self.assertEqual(target, 42.0)
+
     def test_unreachable_future_historical_terminal_target_relaxes_to_safety_only(self):
         action, target = terminal_soc_recovery(42.0, 21.5, False)
         self.assertEqual(action, "RELAX_HISTORICAL_TARGET")
