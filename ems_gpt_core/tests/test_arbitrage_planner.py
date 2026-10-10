@@ -962,6 +962,40 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["battery_to_load_kwh"],0.0)
         self.assertLessEqual(result["flows"][0]["grid_load_kwh"],0.06)
 
+    def test_grid_supplies_native_load_to_preserve_reachable_soc_bridge(self):
+        rows = []
+        start = datetime(2026, 10, 10, 14, 15)
+        for index in range(42):
+            rows.append({
+                "slot_start": start + timedelta(minutes=15 * index),
+                "price_buy_pln_kwh": 0.85,
+                "price_sell_pln_kwh": 0.25,
+                "buy_window": index in {0, 41},
+                "sale_window": False,
+                "forecast_load_kwh": 0.70,
+                "forecast_pv_total_kwh": 0.0,
+            })
+        required = [17.0] * len(rows)
+        recovery = validate_recoverable_soc_requirements(
+            rows, required, 80.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.90, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, max_grid_import_kw=12.0)
+        self.assertEqual(recovery["unreachable_indices"], [])
+
+        result = optimize_energy_horizon(
+            rows, 80.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * len(rows), 17.0, 0.10, 100.0,
+            recovery["required_soc_pcts"], set(), {0, 41},
+            recovery["required_soc_pcts"], battery_sales_enabled=False,
+            max_grid_import_kw=12.0)
+
+        self.assertGreater(
+            sum(flow["grid_load_kwh"] for flow in result["flows"][1:41]), 0.0)
+        for flow in result["flows"]:
+            self.assertGreaterEqual(flow["soc_end_pct"] + 1e-9, 17.0)
+            self.assertLessEqual(
+                flow["grid_load_kwh"] + flow["grid_charge_kwh"], 3.0 + 1e-9)
+
     def test_minimum_soc_uses_only_unavoidable_grid_load_and_remains_feasible(self):
         rows = [{
             "price_buy_pln_kwh": 3.0,
@@ -1336,7 +1370,7 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(contract["charge_targets"][0], 15.0)
 
     def test_disabled_sale_cannot_authorize_grid_import_for_native_load(self):
-        row = {"price_buy_pln_kwh": -1.0, "price_sell_pln_kwh": 0.0,
+        row = {"price_buy_pln_kwh": 3.0, "price_sell_pln_kwh": 0.0,
                "buy_window": True, "sale_window": False,
                "forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.0}
         result = optimize_energy_horizon(
