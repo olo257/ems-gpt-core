@@ -76,7 +76,9 @@ do rezerwy.
 Recovery osiągalności może obniżyć wyłącznie pośrednie ograniczenia trajektorii;
 nie może zastąpić targetu zamknięcia doby ani sufitu BUY. Przy niewykonalnym
 zamknięciu plan zachowuje oryginalny target w audycie, wyłącza sprzedaż baterii
-i raportuje osiągalny SOC oraz różnicę do celu.
+i raportuje osiągalny SOC oraz różnicę do celu. Gdy nieosiągalny jest pośredni
+most SOC, wymóg wykonawczy może spaść wyłącznie do wyliczonej osiągalności i
+nie poniżej rezerwy technicznej; niedobór pozostaje widoczny w audycie.
 
 W prognozie bilansu obciążenie `HP_DHW` jest już zawarte w zużyciu bazowym.
 Dodatkowo uwzględniany jest zaplanowany cykl `HP_HEAT_DHW`; nie należy
