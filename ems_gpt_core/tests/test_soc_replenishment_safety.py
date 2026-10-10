@@ -8,6 +8,7 @@ from planner_service import (
     _soc_reachability_profile, build_soc_contracts, daily_close_soc_requirements,
     end_of_day_soc_target, optimize_energy_horizon,
     replenishment_soc_requirements, recoverable_soc_requirements,
+    target_commitment_required_fallback, effective_required_soc_for_dispatch,
     validate_recoverable_soc_requirements,
 )
 
@@ -160,6 +161,30 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertAlmostEqual(plan['flows'][0]['soc_end_pct'], 13.0)
         self.assertGreaterEqual(plan['flows'][1]['soc_end_pct'], 17.0)
 
+    def test_final_soc_check_uses_effective_fallback_and_keeps_safety_floor(self):
+        rows = self.rows(1)
+        rows[0]["forecast_load_kwh"] = 0.25
+        initial_soc = 26.0
+        reachability = validate_recoverable_soc_requirements(
+            rows, [26.75], initial_soc, 15.0, 100.0, capacity_kwh=15.0,
+            eta_c=0.9, eta_d=0.95, max_power_kw=5.0,
+            slot_minutes=15, soc_step_pct=0.1)
+        safety_floor = reachability["required_soc_pcts"]
+        dispatch_floor = target_commitment_required_fallback(safety_floor)
+        accepted_floor = effective_required_soc_for_dispatch(
+            safety_floor, dispatch_floor)
+        plan = self.optimize(
+            rows, dispatch_floor, initial=initial_soc, terminal=15.0,
+            battery_sales_enabled=False)
+        flow_end = plan["flows"][0]["soc_end_pct"]
+        self.assertLess(flow_end, 26.75)
+        self.assertGreaterEqual(flow_end + 0.01, accepted_floor[0])
+        self.assertGreaterEqual(accepted_floor[0], safety_floor[0])
+
+    def test_dispatch_required_floor_length_mismatch_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "DISPATCH_SOC_REQUIREMENT_LENGTH_MISMATCH"):
+            effective_required_soc_for_dispatch([15.0, 20.0], [15.0])
+
     def test_insufficient_initial_soc_is_not_silently_waived(self):
         rows = self.rows(4)
         for row in rows[1:]:
@@ -309,4 +334,3 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
