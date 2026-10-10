@@ -3,6 +3,7 @@
 ## 0.40.14 — rezerwacja SOC mostu z importem na obciążenie domu
 
 - Planer i walidator osiągalności traktują energię powyżej aktywnego wymogu SOC jako dostępną do rozładowania; import na dom jest konieczny, gdy rozładowanie naruszyłoby wymagany SOC.
+- Niedostępny cel SOC w oknie BUY jest ograniczany do osiągalnej wartości zamiast odrzucać wykonalny plan.
 - Pozwala to przejść przez długą przerwę do kolejnego okna BUY bez odrzucania całego planu, z zachowaniem rezerwy technicznej i limitu importu z sieci.
 - Dodano regresję dla 42 slotów, SOC startowego 80%, limitu sieci 12 kW i ładowania baterii 5 kW.
 
