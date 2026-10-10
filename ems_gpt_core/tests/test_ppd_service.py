@@ -1,7 +1,8 @@
 import unittest
 from datetime import datetime, timedelta
 
-from ppd_service import build_flexible_ppd, current_live_flexible_row, plan_bound_decisions
+from ppd_service import (build_flexible_ppd, current_live_flexible_row,
+                         plan_bound_decisions, planner_flexible_pv_remainder)
 
 
 def rows(soc=(60, 100, 100, 100, 80), pv=(0.1, 0.6, 0.1, 0.7, 0.0), target=70):
@@ -21,6 +22,19 @@ def rows(soc=(60, 100, 100, 100, 80), pv=(0.1, 0.6, 0.1, 0.7, 0.0), target=70):
 
 
 class FlexiblePpdTests(unittest.TestCase):
+    def test_flexible_remainder_uses_planner_physics_not_previous_ppd_allocations(self):
+        row = {
+            "forecast_pv_total_kwh": 1.0,
+            "forecast_load_kwh": 0.2,
+            "forecast_heat_pump_load_kwh": 0.1,
+            "planned_pv_to_bat_kwh": 0.2,
+            "planned_pv_to_cwu_kwh": 9.0,
+            "planned_pv_to_ev_kwh": 9.0,
+            "planned_pv_export_kwh": 9.0,
+            "planned_pv_curtail_kwh": 9.0,
+        }
+        self.assertAlmostEqual(planner_flexible_pv_remainder(row), 0.5)
+
     def test_live_surplus_opens_current_slot_despite_underforecast(self):
         source = rows(soc=(49, 53, 60, 60, 60), pv=(0, 0, 0.4, 0, 0), target=53)
         sample = {"captured_at": source[0]["slot_start"] + timedelta(seconds=30),
