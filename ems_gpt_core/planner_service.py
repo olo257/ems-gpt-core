@@ -1518,6 +1518,20 @@ def target_commitment_required_fallback(safety_required_soc_pcts: list[float]
     """Retain the independently validated replenishment and daily-close safety bridge."""
     return list(safety_required_soc_pcts)
 
+
+def effective_required_soc_for_dispatch(
+        safety_required_soc_pcts: list[float],
+        dispatch_required_soc_pcts: list[float]) -> list[float]:
+    """Validate against the effective optimizer floors without waiving safety."""
+    if len(safety_required_soc_pcts) != len(dispatch_required_soc_pcts):
+        raise ValueError("DISPATCH_SOC_REQUIREMENT_LENGTH_MISMATCH")
+    return [
+        max(float(safety), float(dispatch))
+        for safety, dispatch in zip(
+            safety_required_soc_pcts, dispatch_required_soc_pcts)
+    ]
+
+
 def active_soc_target_deadlines(result: dict,
                                 requested_due_indices: set[int]) -> set[int]:
     """Return only deadlines the successful dispatch pass actually enforced.
@@ -1681,13 +1695,14 @@ def build_planner(a: PlannerAdapters):
     tou_program_snapshot = a.tou_program_snapshot
     record_event = a.record_event
 
-    def run_planner(run_type: str = "scheduled") -> dict:
+    def _run_planner(run_type: str, attempt: dict) -> dict:
         """Run the V3 staged planner transactionally in the app-owned database."""
         started_monotonic = time.monotonic()
         planning_budget = max(10.0, min(600.0, float(
             OPTIONS.get("planner_deadline_seconds", 120.0))))
 
         def ensure_deadline(stage: str) -> None:
+            attempt["failed_stage"] = stage
             if time.monotonic() - started_monotonic > planning_budget:
                 raise RuntimeError(f"PLANNER_DEADLINE_EXCEEDED:{stage}:{planning_budget:.0f}s")
 
@@ -1712,6 +1727,9 @@ def build_planner(a: PlannerAdapters):
             flow_threshold, float(OPTIONS.get("technical_flow_threshold_kwh", 0.05)))
         max_kw = max(0.25, float(OPTIONS.get("battery_max_power_kw", 5.0)))
         run_id = str(uuid.uuid4())
+        attempt["planner_run_id"] = run_id
+        attempt["initial_soc_pct"] = float(soc_now)
+        attempt["failed_stage"] = "INPUTS"
         hp_shortfalls = []
         tou_programs = planning_tou_programs(
             tou_program_snapshot(), deye_program_soc_baselines(OPTIONS))
@@ -2230,6 +2248,9 @@ def build_planner(a: PlannerAdapters):
                 # the import cap; publishing against the original set would
                 # turn that deliberate recovery into SOC_TARGET_NOT_REACHED.
                 result["effective_target_due_indices"] = set(due_indices or ())
+                result["effective_required_soc_pcts"] = list(
+                    required_pcts if required_pcts is not None
+                    else [reserve] * len(horizon_rows))
                 return result
             # Convert the immutable TOU baselines into sale-only safety floors.
             # Iterate once after applying them because a permitted 5/6 bridge
@@ -2347,6 +2368,10 @@ def build_planner(a: PlannerAdapters):
                 ensure_deadline("SALE_GUARD_REPLAN")
             else:
                 raise RuntimeError("SALE_GUARD_REPLAN_EXHAUSTED")
+            effective_required = optimization.get("effective_required_soc_pcts")
+            if effective_required is not None:
+                required_soc = effective_required_soc_for_dispatch(
+                    enforced_daily_required, effective_required)
             targets=list(optimization.get("effective_target_pcts",charge_targets))
             target_due_indices = validate_active_soc_target_deadlines(
                 optimization, target_due_indices, targets)
@@ -2360,7 +2385,28 @@ def build_planner(a: PlannerAdapters):
             })
             ensure_deadline("TARGET_COMMITMENT")
             ensure_deadline("DISPATCH")
-            bridge_floors = [reserve] * len(horizon_rows)
+            attempt["candidate_rows"] = [
+                {
+                    "slot_start": horizon_rows[index].get("slot_start"),
+                    "market_window": horizon_rows[index].get("market_window"),
+                    "buy_window": horizon_rows[index].get("buy_window"),
+                    "sale_window": horizon_rows[index].get("sale_window"),
+                    "price_buy_pln_kwh": horizon_rows[index].get("price_buy_pln_kwh"),
+                    "price_sell_pln_kwh": horizon_rows[index].get("price_sell_pln_kwh"),
+                    "forecast_pv_total_kwh": horizon_rows[index].get("forecast_pv_total_kwh"),
+                    "forecast_load_kwh": horizon_rows[index].get("forecast_load_kwh"),
+                    "soc_start_plan_pct": flow.get("soc_start_pct"),
+                    "soc_end_plan_pct": flow.get("soc_end_pct"),
+                    "soc_required_pct": required_soc[index],
+                    "soc_charge_target_pct": targets[index],
+                    "planned_buy_kwh": flow.get("grid_charge_kwh"),
+                    "planned_sell_kwh": flow.get("battery_sell_kwh"),
+                    "planned_battery_discharge_kwh": flow.get("battery_discharge_internal_kwh"),
+                    "planned_grid_load_kwh": flow.get("grid_load_kwh"),
+                    "planned_pv_to_bat_kwh": flow.get("pv_to_bat_kwh"),
+                }
+                for index, flow in enumerate(optimization["flows"])
+            ]
             for index, flow in enumerate(optimization["flows"]):
                 row = horizon_rows[index]
                 battery_sell = float(flow.get("battery_sell_kwh") or 0.0)
@@ -2570,6 +2616,58 @@ def build_planner(a: PlannerAdapters):
         for shortfall in hp_shortfalls:
             record_event("hp_minimum_heating_shortfall", "planner", shortfall, "WARNING")
         return {"run_id":run_id,"rows":published}
+
+    def run_planner(run_type: str = "scheduled") -> dict:
+        attempt = {
+            "attempt_id": str(uuid.uuid4()),
+            "run_type": str(run_type)[:32],
+            "started_at": local_now().replace(tzinfo=None).isoformat(),
+            "failed_stage": "STARTUP",
+            "candidate_rows": [],
+        }
+        try:
+            return _run_planner(run_type, attempt)
+        except Exception as exc:
+            reason = str(exc)[:4000]
+            attempt["failure_reason"] = reason
+            attempt["status"] = "REJECTED"
+            tokens = reason.split(":")
+            failed_index = None
+            if len(tokens) > 1 and tokens[1].isdigit():
+                failed_index = int(tokens[1])
+            candidates = attempt.get("candidate_rows") or []
+            failed_slot = (
+                candidates[failed_index].get("slot_start")
+                if failed_index is not None and failed_index < len(candidates)
+                else None
+            )
+            try:
+                with db() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO ems_gpt_plan_attempts
+                          (attempt_id,run_id,run_type,status,attempted_at,failed_stage,
+                           failure_index,failed_slot,initial_soc_pct,failure_reason,
+                           candidate_rows_json)
+                          VALUES(%s,%s,%s,'REJECTED',NOW(6),%s,%s,%s,%s,%s,%s)""",
+                        (
+                            attempt["attempt_id"], attempt.get("planner_run_id"),
+                            attempt["run_type"], attempt.get("failed_stage"),
+                            failed_index, failed_slot, attempt.get("initial_soc_pct"),
+                            reason, json.dumps(candidates, ensure_ascii=False, default=str),
+                        ),
+                    )
+                    cur.execute(
+                        """DELETE FROM ems_gpt_plan_attempts
+                          WHERE attempted_at < NOW(6) - INTERVAL 90 DAY"""
+                    )
+            except Exception as persist_error:
+                record_event("planner_attempt_persist_failed", "planner", {
+                    "attempt_id": attempt["attempt_id"],
+                    "planner_run_id": attempt.get("planner_run_id"),
+                    "reason": str(persist_error)[:1000],
+                    "original_failure": reason[:1000],
+                }, "ERROR")
+            raise
 
     return SimpleNamespace(
         optimize_hp_heating_slots=optimize_hp_heating_slots,

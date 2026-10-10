@@ -1,5 +1,16 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.3 — walidacja fallbacku SOC i historia odrzuconych planów
+
+- Końcowa walidacja korzysta z wymagań SOC faktycznie egzekwowanych przez
+  ostatni dispatch; fallback może obniżyć opcjonalny, niewykonalny kontrakt
+  tylko do niezależnie zweryfikowanego minimum bezpieczeństwa.
+- Niezaakceptowany kandydat jest zapisywany po rollbacku w osobnej tabeli przez
+  90 dni i udostępniany w API oraz panelu w zakładce „Odrzucone plany”.
+  Nie trafia do planu zaakceptowanego, PPD ani wykonawcy.
+- Dodano regresje walidacji kontraktu i odczytu odrzuconego przebiegu.
+
+
 ## 0.40.2 — zachowanie historycznego SOC target
 
 - Usunięto stałe obniżenie historycznego SOC końca doby o 5 p.p.
@@ -1660,4 +1671,3 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
 - agregacja dobowa: OK;
 - restart wyłącznie aplikacji: OK, plan i baza zachowane;
 - brak poleceń do urządzeń: potwierdzony.
-

@@ -1,6 +1,6 @@
 # EMS-GPT Core
 
-Wersja wydania: **0.40.2**.
+Wersja wydania: **0.40.3**.
 
 Dokumenty obowiązujące:
 

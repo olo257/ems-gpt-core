@@ -102,6 +102,14 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
           slot_start DATETIME(6) NULL, input_watermark VARCHAR(80) NULL,
           output_version VARCHAR(80) NULL, reason TEXT NULL,
           INDEX ix_module_runs(module_name,started_at)) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS ems_gpt_plan_attempts (
+          attempt_id VARCHAR(36) PRIMARY KEY, run_id VARCHAR(36) NULL,
+          run_type VARCHAR(32) NOT NULL, status VARCHAR(24) NOT NULL,
+          attempted_at DATETIME(6) NOT NULL, failed_stage VARCHAR(48) NULL,
+          failure_index INT NULL, failed_slot DATETIME(6) NULL,
+          initial_soc_pct DOUBLE NULL, failure_reason TEXT NOT NULL,
+          candidate_rows_json LONGTEXT NULL,
+          INDEX ix_plan_attempts_time(attempted_at)) ENGINE=InnoDB""",
         """CREATE TABLE IF NOT EXISTS ems_gpt_telemetry_snapshots (
           captured_at DATETIME(6) PRIMARY KEY, slot_start DATETIME(6) NOT NULL,
           soc_pct DOUBLE NULL, pv_power_w DOUBLE NULL, load_power_w DOUBLE NULL,
