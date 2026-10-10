@@ -150,11 +150,12 @@ Techniczne minimum SOC jest granicą awaryjną, nie celem operacyjnym. Planowana
 wykonalności od idealnego rozpoczęcia prognozowanego PV. Target zawiera zapas
 wynikający z konserwatywnej korekty zużycia i PV.
 
-Na końcu każdej lokalnej doby obowiązuje dodatkowa minimalna granica:
-ważona średnia rzeczywistego SOC zamknięcia z okien 7/14/28 dni pomniejszona
-o 5 punktów procentowych, nie niższa niż techniczna rezerwa. Tolerancja
-nie oznacza mnożenia średniej przez 95%. Wymaganie historyczne dotyczy tylko
-końca doby; nie jest powtarzane przed porannym SELL.
+Na końcu każdej lokalnej doby obowiązuje dodatkowy cel równy ważonej średniej
+rzeczywistego SOC zamknięcia z okien 7/14/28 dni. Cel ogranicza techniczna
+rezerwa od dołu i skonfigurowany limit SOC od góry. Nie odejmuje się od niego
+5 punktów procentowych ani żadnej historycznej tolerancji. Wymaganie
+historyczne dotyczy wyłącznie końca doby; nie jest przenoszone na wcześniejsze
+sloty ani porównywane z porannym SOC.
 
 Niezależny bilans bezpieczeństwa wymaga co najmniej 15% (lub wyższego minimum
 konfiguracji) plus `soc_replenishment_buffer_pct` (domyślnie 2 p.p.) w każdym
