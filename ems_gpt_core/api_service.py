@@ -191,6 +191,37 @@ def build_handler(a: ApiAdapters):
                 return self.json({"range":chart_range,"unit":"PLN/kWh",
                                   "current_slot":slot_start().replace(tzinfo=None),
                                   "count":len(rows),"rows":rows})
+            if path.endswith("/api/rejected-plans") or path == "/api/rejected-plans":
+                try:
+                    with db() as conn, conn.cursor() as cur:
+                        cur.execute("""SELECT attempt_id,run_id,run_type,status,
+                          attempted_at,failed_stage,failure_index,failed_slot,
+                          initial_soc_pct,failure_reason,candidate_rows_json
+                          FROM ems_gpt_plan_attempts ORDER BY attempted_at DESC LIMIT 1""")
+                        attempt = cur.fetchone()
+                    if not attempt:
+                        return self.json({"view":"rejected-plans","count":0,"rows":[]})
+                    candidate_rows = json.loads(attempt.get("candidate_rows_json") or "[]")
+                    if not isinstance(candidate_rows, list) or not candidate_rows:
+                        candidate_rows = [{}]
+                    shared = {
+                        "attempt_id": attempt.get("attempt_id"),
+                        "run_id": attempt.get("run_id"),
+                        "run_type": attempt.get("run_type"),
+                        "status": attempt.get("status"),
+                        "attempted_at": attempt.get("attempted_at"),
+                        "failed_stage": attempt.get("failed_stage"),
+                        "failure_index": attempt.get("failure_index"),
+                        "failed_slot": attempt.get("failed_slot"),
+                        "initial_soc_pct": attempt.get("initial_soc_pct"),
+                        "failure_reason": attempt.get("failure_reason"),
+                    }
+                    rows = [{**shared, **row} for row in candidate_rows]
+                    return self.json({"view":"rejected-plans","count":len(rows),"rows":rows})
+                except Exception as exc:
+                    LOG.warning("rejected planner attempt unavailable: %s", type(exc).__name__)
+                    return self.json({"error":"rejected_planner_attempt_unavailable"},
+                                     HTTPStatus.SERVICE_UNAVAILABLE)
             if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","target-history","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs","appliances")):
                 name=path.rsplit("/",1)[-1]; params=parse_qs(urlparse(self.path).query); limit=min(500,max(1,int(params.get("limit",["96"])[0])))
                 if name == "plan":
