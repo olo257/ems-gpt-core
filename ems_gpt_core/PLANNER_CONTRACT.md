@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.4. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.5. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -59,6 +59,13 @@ Błąd prognozy lub planera po zatwierdzeniu cen:
 
 ## 3. Kolejność przebiegów planera
 
+Kontrakt wymaganej trajektorii SOC jest wyznaczany bez udziału wyniku
+optymalizacji ekonomicznej: najpierw obciążenie bazowe i HP, prognoza PV,
+sprawności, rezerwa oraz dopuszczone przez RCE okna BUY wyznaczają wymagane SOC
+i terminy uzupełnienia. Dopiero potem optymalizator wybiera przepływy i
+ekonomiczne wykorzystanie zakupów w granicach tego kontraktu. Przebieg
+ekonomiczny nie może obniżać ani tworzyć wymagań SOC.
+
 Każdy pakiet wykonuje etapy w tej kolejności:
 
 1. `RCE_RAW` — skopiowanie zatwierdzonych cen do tabeli roboczej.
@@ -79,15 +86,17 @@ Każdy pakiet wykonuje etapy w tej kolejności:
    wyłącznie import z sieci. Po osiągnięciu 100% SOC PPD może dopuścić CWU,
    potem EV; pozostała nadwyżka jest sprzedawana tylko przy cenie > 0 PLN/kWh,
    a ograniczenie produkcji jest ostatnią możliwością.
-10. `PLAN DECISIONS` — planer zamraża rekomendowane przebiegi importu baterii,
-    eksportu baterii i HP razem z ilościami użytymi w bilansie oraz target.
-11. `PPD` — osobny `ppd_service.py` publikuje te trzy rekomendacje bez ich
-    ponownego liczenia oraz tworzy ciągłe okna `PV_CWU` i `PV_EV` z zamrożonej
-    nadwyżki; nie zwraca żadnego wejścia do targetu.
+10. `PLAN DECISIONS` — planer publikuje trajektorię SOC, fizyczne przepływy,
+    ilości importu/eksportu baterii i polityki użyte w bilansie.
+11. `PPD` — osobny `ppd_service.py` odczytuje aktualny plan, wylicza wolny PV
+    z prognozy, obciążenia bazowego i HP oraz PV→baterii, zapisuje końcowy
+    podział CWU/EV/eksport/ograniczenie i tworzy okna procesów. Nie zwraca
+    żadnego wejścia do targetu.
 12. `VALIDATE` — kontrola całego horyzontu; dopiero potem atomowa publikacja.
 
 Planer może wykonywać wiele przebiegów po tej samej tabeli roboczej, ale każdy
-etap modyfikuje wyłącznie pola należące do niego. Okna cenowe pozostają
+etap modyfikuje wyłącznie pola należące do niego. Planer nie zapisuje końcowego
+podziału PV ani rekomendacji — te pola należą wyłącznie do PPD. Okna cenowe pozostają
 niezmiennym wejściem z importu RCE przez wszystkie przebiegi planera. Jeżeli walidacja jednego slotu
 nie przejdzie, kolejny przebieg może zmienić wybór przyszłego BUY/SELL lub
 alokację energii. Nie wolno naprawiać błędu przez kopiowanie `soc_floor` do
