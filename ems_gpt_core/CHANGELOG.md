@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.11 — recovery wykonalnego SOC
+
+- Gdy wymagany SOC mostu bezpieczeństwa jest fizycznie nieosiągalny, planer obniża wymóg wykonawczy wyłącznie do osiągalnego SOC, z zachowaniem rezerwy technicznej.
+- Oryginalny target dobowy i sufit ładowania pozostają w kontrakcie; niedobór jest jawnie rejestrowany. Sprzedaż baterii pozostaje wyłączona po wykryciu niewykonalnego mostu.
+- Dodano regresję dla nieosiągalnego zamknięcia doby.
+
+
 ## 0.40.10 — zachowanie targetu końca doby
 
 - Recovery osiągalności SOC nie obniża już targetu końca lokalnej doby ani sufitu ładowania wyznaczonego przez bilans dobowy.
