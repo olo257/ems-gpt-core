@@ -91,6 +91,24 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertLessEqual(flow["grid_charge_kwh"], 1.25)
         self.assertAlmostEqual(flow["soc_end_pct"], 75.0)
 
+    def test_reachability_matches_combined_grid_import_limit(self):
+        rows = self.rows(1, start=datetime(2026, 10, 10, 14, 0))
+        rows[0]["buy_window"] = True
+        rows[0]["forecast_load_kwh"] = 2.0
+
+        profile = _soc_reachability_profile(
+            rows, 69.0, 15.0, 17.0, 0.9, 0.95, 5.0, 15, 0.1,
+            [75.0], max_grid_import_kw=12.0)
+        self.assertAlmostEqual(profile["reachable_soc_ceiling_pcts"][0], 75.0)
+        self.assertAlmostEqual(profile["feasible_soc_path_pcts"][0], 75.0)
+
+        recovery = validate_recoverable_soc_requirements(
+            rows, [75.0], 69.0, 17.0, 100.0, capacity_kwh=15.0,
+            eta_c=0.9, eta_d=0.95, max_power_kw=5.0, slot_minutes=15,
+            soc_step_pct=0.1, max_grid_import_kw=12.0)
+        self.assertEqual(recovery["unreachable_indices"], [])
+        self.assertAlmostEqual(recovery["required_soc_pcts"][0], 75.0)
+
     def test_unreachable_close_uses_best_reachable_soc_and_keeps_reserve(self):
         rows = self.rows(2)
         requested_close = 60.0
@@ -290,13 +308,13 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'No feasible SOC state'):
             self.optimize(rows, self.safety(rows), initial=20.0)
 
-    def test_reachability_does_not_hide_house_import_inside_buy_charge(self):
+    def test_reachability_allows_house_import_inside_buy_charge(self):
         rows = self.rows(1)
         rows[0].update(forecast_load_kwh=0.5, buy_window=True)
         profile = _soc_reachability_profile(
             rows, 20.0, 15.0, 15.0, 0.98, 0.98, 5.0, 15, 0.1,
             [28.0])
-        self.assertLess(profile['feasible_soc_path_pcts'][0], 20.0)
+        self.assertGreater(profile['feasible_soc_path_pcts'][0], 20.0)
         validated = validate_recoverable_soc_requirements(
             rows, [28.0], 20.0, 15.0, 100.0, capacity_kwh=15.0,
             eta_c=0.98, eta_d=0.98, max_power_kw=5.0,
@@ -306,8 +324,11 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             5.0, 15, [15.0], 15.0, 0.1, 100.0,
             required_soc_pcts=validated['required_soc_pcts'],
             battery_sales_enabled=False)
-        self.assertAlmostEqual(plan['flows'][0]['grid_charge_kwh'], 0.0)
-        self.assertGreater(plan['flows'][0]['battery_discharge_internal_kwh'], 0.0)
+        flow = plan['flows'][0]
+        self.assertGreater(flow['grid_charge_kwh'], 0.0)
+        self.assertGreater(flow['grid_load_kwh'], 0.0)
+        self.assertAlmostEqual(flow['battery_discharge_internal_kwh'], 0.0)
+        self.assertLessEqual(flow['grid_charge_kwh'] + flow['grid_load_kwh'], 3.0 + 1e-9)
 
     def test_invalid_measured_soc_above_100_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'INVALID_INITIAL_SOC'):
@@ -384,11 +405,9 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             rows, requested, 85.4201, 15.0, 100.0,
             capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
             max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
-        self.assertEqual(result['unreachable_indices'], [4, 5])
-        self.assertLess(result['required_soc_pcts'][4], requested[4])
-        self.assertLess(result['required_soc_pcts'][4], 100.0)
-        self.assertLessEqual(result['required_soc_pcts'][4],
-                             result['reachable_soc_ceiling_pcts'][4])
+        self.assertEqual(result['unreachable_indices'], [])
+        self.assertEqual(result['required_soc_pcts'], requested)
+        self.assertGreaterEqual(result['reachable_soc_ceiling_pcts'][4], requested[4])
         plan = self.optimize(rows, result['required_soc_pcts'],
                              initial=85.4201, terminal=15.0,
                              battery_sales_enabled=False)

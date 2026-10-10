@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_12"
+PLANNER_VERSION = "CORE_0_40_13"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -215,6 +215,7 @@ def _soc_reachability_profile(
         reserve_pct: float, eta_c: float, eta_d: float,
         max_power_kw: float, slot_minutes: int, soc_step_pct: float = 0.10,
         required_soc_pcts: list[float] | None = None,
+        max_grid_import_kw: float = 12.0,
 ) -> dict:
     """Return prefix reachability and a feasible path with minimum floor shortfall.
 
@@ -235,6 +236,7 @@ def _soc_reachability_profile(
     if not math.isfinite(initial_pct) or not 0.0 <= initial_pct <= 100.0:
         raise RuntimeError(f"INVALID_INITIAL_SOC:{initial_pct!r}")
     current_unit = max(0, min(last_unit, int(math.floor(initial_pct / step + 1e-9))))
+    max_grid_slot_kwh = max(0.0, float(max_grid_import_kw)) * slot_minutes / 60.0
     eta_charge = max(0.01, min(1.0, float(eta_c)))
     eta_discharge = max(0.01, min(1.0, float(eta_d)))
     max_internal_charge = max(0.0, float(max_power_kw)) * slot_minutes / 60.0 * eta_charge
@@ -286,15 +288,14 @@ def _soc_reachability_profile(
                     grid_charge = 0.0
                     grid_load = max(0.0, deficit-battery_to_load)
                 voluntary_grid_load = max(0.0, grid_load-unavoidable_grid_load)
-                # Match optimize_energy_horizon's conservative retry with
-                # battery sales disabled: a BUY charge cannot be used to
-                # justify voluntary grid supply to the house. Otherwise this
-                # reachability pass can certify a SOC path which the planner
-                # later rejects as hidden household import during BUY.
-                if grid_charge > 1e-9:
-                    if voluntary_grid_load > 1e-9:
-                        continue
-                elif voluntary_grid_load > unit_kwh * eta_discharge + 1e-9:
+                # Match optimizer physics: in BUY, home load and battery
+                # charging may share the grid, within the connection limit.
+                # Without this check reachability overstates charge capacity;
+                # without allowing shared import it understates it.
+                if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
+                    continue
+                if (grid_charge <= 1e-9
+                        and voluntary_grid_load > unit_kwh * eta_discharge + 1e-9):
                     continue
                 floor_shortfall = (0.0 if required_soc_pcts is None else
                     max(0.0, float(required_soc_pcts[index]) - following * step))
@@ -322,11 +323,13 @@ def reachable_soc_ceiling_pcts(
         rows: list[dict], initial_soc_pct: float, capacity_kwh: float,
         reserve_pct: float, eta_c: float, eta_d: float,
         max_power_kw: float, slot_minutes: int, soc_step_pct: float = 0.10,
+        max_grid_import_kw: float = 12.0,
 ) -> list[float]:
     """Compute each slot's physical upper SOC bound with exact transitions."""
     return _soc_reachability_profile(
         rows, initial_soc_pct, capacity_kwh, reserve_pct, eta_c, eta_d,
-        max_power_kw, slot_minutes, soc_step_pct)["reachable_soc_ceiling_pcts"]
+        max_power_kw, slot_minutes, soc_step_pct,
+        max_grid_import_kw=max_grid_import_kw)["reachable_soc_ceiling_pcts"]
 
 
 def validate_recoverable_soc_requirements(
@@ -334,7 +337,8 @@ def validate_recoverable_soc_requirements(
         reserve_pct: float, target_cap_pct: float, *,
         capacity_kwh: float | None = None, eta_c: float = 0.9,
         eta_d: float = 0.95, max_power_kw: float = 5.0,
-        slot_minutes: int = 15, soc_step_pct: float = 0.10) -> dict:
+        slot_minutes: int = 15, soc_step_pct: float = 0.10,
+        max_grid_import_kw: float = 12.0) -> dict:
     """Recover missed bridges and bound every hard SOC floor to reachability.
 
     A requirement above 100% or above the highest SOC physically reachable at
@@ -349,7 +353,8 @@ def validate_recoverable_soc_requirements(
     if capacity_kwh is not None:
         profile = _soc_reachability_profile(
             rows, initial_soc_pct, capacity_kwh, reserve_pct,
-            eta_c, eta_d, max_power_kw, slot_minutes, soc_step_pct, required)
+            eta_c, eta_d, max_power_kw, slot_minutes, soc_step_pct, required,
+            max_grid_import_kw=max_grid_import_kw)
         reachable = profile["reachable_soc_ceiling_pcts"]
         feasible_path = profile["feasible_soc_path_pcts"]
         if len(reachable) != len(required):
@@ -2153,7 +2158,7 @@ def build_planner(a: PlannerAdapters):
                 horizon_rows, safety_required_soc, soc_now, reserve, target_cap,
                 capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
                 max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
-                soc_step_pct=0.10)
+                soc_step_pct=0.10, max_grid_import_kw=max_grid_import_kw)
             safety_required_soc = recovery["required_soc_pcts"]
             if recovery["relaxed_indices"]:
                 record_event("soc_safety_bridge_recovery", "planner", {
@@ -2174,7 +2179,7 @@ def build_planner(a: PlannerAdapters):
                 horizon_rows, target_contract["required"], soc_now, reserve,
                 target_cap, capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
                 max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
-                soc_step_pct=0.10)
+                soc_step_pct=0.10, max_grid_import_kw=max_grid_import_kw)
             target_contract = preserve_target_contract_after_reachability(
                 target_contract, target_recovery, daily_close_indices)
             if target_recovery.get("unreachable_indices"):
