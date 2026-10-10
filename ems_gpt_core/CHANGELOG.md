@@ -1,5 +1,10 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.9 — naprawa startu planera
+
+- Domknięto wywołanie `deterministic_soc_target_contract`, które powodowało `SyntaxError` i uniemożliwiało uruchomienie dodatku.
+- Bez zmian w logice targetu SOC wprowadzonej w 0.40.8.
+
 ## 0.40.8 — target zakupów z bilansu dobowego
 
 - Usunięto stały próg 95% dla pojedynczego pozostałego okna BUY. Target ładowania wynika z wymaganej średniej SOC na zamknięcie doby i bilansu prognozowanego obciążenia/PV z uwzględnieniem sprawności, rezerwy i fizycznej mocy ładowania.
