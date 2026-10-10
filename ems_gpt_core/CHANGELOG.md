@@ -1,5 +1,17 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.1 — walidacja aktywnych terminów BUY
+
+- Końcowa walidacja planu korzysta z terminów BUY faktycznie zachowanych przez
+  ostatni przebieg optymalizatora, także po fallbacku.
+- Terminy jawnie poluzowane podczas odzyskiwania nie blokują już publikacji
+  bezpiecznego planu; twardy wymagany SOC i limit importu pozostają sprawdzane.
+- Dodano regresję obejmującą jednocześnie termin poluzowany i nadal aktywny.
+- Wydanie poprawkowe do 0.40.0; bez zmian encji, helperów ani konfiguracji
+  sterowania.
+- Weryfikacja: 95 testów planera i terminów SOC zaliczone; kompilacja Python
+  poprawna.
+
 ## 0.40.0 — spójne odzyskiwanie terminów SOC
 
 - Po odrzuceniu niewykonalnych terminów opcjonalnego BUY końcowa kontrola SOC

@@ -1543,6 +1543,26 @@ def active_soc_target_deadlines(result: dict,
     return {int(index) for index in effective}
 
 
+def validate_active_soc_target_deadlines(result: dict,
+                                          requested_due_indices: set[int],
+                                          target_pcts: list[float],
+                                          tolerance_pct: float = 0.01
+                                          ) -> set[int]:
+    """Validate only BUY deadlines that survived the final planner fallback."""
+    flows = result.get("flows") or []
+    if len(flows) != len(target_pcts):
+        raise RuntimeError("SOC_TARGET_VALIDATION_LENGTH_MISMATCH")
+    effective_due_indices = active_soc_target_deadlines(
+        result, requested_due_indices)
+    for index in sorted(effective_due_indices):
+        soc_end = float(flows[index].get("soc_end_pct") or 0.0)
+        target = float(target_pcts[index])
+        if soc_end + float(tolerance_pct) < target:
+            raise RuntimeError(
+                f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{target}")
+    return effective_due_indices
+
+
 def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], required_slots: int,
                               min_cycle_slots: int, min_gap_slots: int,
                               max_gap_slots: int, planned_power_kw: float,
@@ -2339,6 +2359,8 @@ def build_planner(a: PlannerAdapters):
             else:
                 raise RuntimeError("SALE_GUARD_REPLAN_EXHAUSTED")
             targets=list(optimization.get("effective_target_pcts",charge_targets))
+            target_due_indices = validate_active_soc_target_deadlines(
+                optimization, target_due_indices, targets)
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
             record_event("daily_plan_variant_selected","planner",{
