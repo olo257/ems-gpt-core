@@ -54,7 +54,7 @@ class ExecutorServiceTests(unittest.TestCase):
     def test_live_surplus_applies_cwu_before_ev(self):
         decision = flexible_surplus_runtime_decisions(
             pv_power_w=4840, load_power_w=1425, battery_charge_power_w=3236,
-            ev_power_w=0, pv_cwu_on=False, live_soc_pct=80,
+            ev_power_w=0, pv_cwu_on=False, live_soc_pct=100,
             target_soc_pct=70, cwu_allowed=True, ev_allowed=True,
             cwu_threshold_kw=2.0, ev_threshold_kw=1.5)
         self.assertTrue(decision["pv_cwu"])

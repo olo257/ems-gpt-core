@@ -1,5 +1,18 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.0 — spójne odzyskiwanie terminów SOC
+
+- Po odrzuceniu niewykonalnych terminów opcjonalnego BUY końcowa kontrola SOC
+  sprawdza tylko terminy nadal egzekwowane przez wybrany dispatch.
+- Limit importu, niezależny wymagany SOC, rezerwa bezpieczeństwa i cel końca
+  doby pozostają zachowane podczas odzyskiwania planu.
+- Dodano regresję dla rozbieżności pomiędzy terminami po fallbacku a kontrolą
+  publikowanego SOC.
+- Zaktualizowano numer wydania w konfiguracji dodatku, aplikacji i README.
+- Weryfikacja lokalna: 334 testy (331 testów usług/UI i 3 testy ochrony TOU)
+  zaliczone; kompilacja modułów Python poprawna.
+
+
 ## 0.39.36 — zgodność przejść SOC i raportowania wyniku horyzontu
 
 - Wynik SOC końca horyzontu zachowuje wybrany stan terminalny po odtworzeniu

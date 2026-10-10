@@ -1529,6 +1529,19 @@ def target_commitment_required_fallback(safety_required_soc_pcts: list[float]
     """Retain the independently validated replenishment and daily-close safety bridge."""
     return list(safety_required_soc_pcts)
 
+def active_soc_target_deadlines(result: dict,
+                                requested_due_indices: set[int]) -> set[int]:
+    """Return only deadlines the successful dispatch pass actually enforced.
+
+    TARGET_COMMITMENT may drop optional BUY deadlines after proving they are
+    unreachable.  Its SOC target ceiling remains in force, but the caller must
+    not validate a dropped deadline as if it were still a hard minimum.
+    """
+    effective = result.get("effective_target_due_indices")
+    if effective is None:
+        return set(requested_due_indices)
+    return {int(index) for index in effective}
+
 
 def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], required_slots: int,
                               min_cycle_slots: int, min_gap_slots: int,
@@ -2203,6 +2216,11 @@ def build_planner(a: PlannerAdapters):
                         "shortfall_pct": result["terminal_shortfall_pct"],
                         "battery_sales_enabled": battery_sales_enabled,
                     }, "WARNING")
+                # Keep the post-dispatch assertions aligned with recovery.
+                # A retry can remove optional deadlines locally while keeping
+                # the import cap; publishing against the original set would
+                # turn that deliberate recovery into SOC_TARGET_NOT_REACHED.
+                result["effective_target_due_indices"] = set(due_indices or ())
                 return result
             # Convert the immutable TOU baselines into sale-only safety floors.
             # Iterate once after applying them because a permitted 5/6 bridge
@@ -2254,6 +2272,8 @@ def build_planner(a: PlannerAdapters):
                 optimization=optimize_remaining_pass(
                     "TARGET_COMMITMENT", optimized_floors, charge_targets, set(),
                     target_due_indices, required_soc)
+                target_due_indices = active_soc_target_deadlines(
+                    optimization, target_due_indices)
                 sell_indices = {
                     index for index, flow in enumerate(optimization["flows"])
                     if float(flow.get("battery_sell_kwh") or 0.0) > flow_threshold
