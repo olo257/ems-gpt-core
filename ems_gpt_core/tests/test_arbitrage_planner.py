@@ -74,6 +74,7 @@ class PairedArbitrageTests(unittest.TestCase):
             datetime(2026, 10, 10, 12, 15),
             datetime(2026, 10, 10, 12, 30),
             datetime(2026, 10, 10, 12, 45),
+            datetime(2026, 10, 10, 13, 0),
         ]
         rows = [
             {"slot_start": start, "local_day": day,
@@ -83,16 +84,16 @@ class PairedArbitrageTests(unittest.TestCase):
             for index, start in enumerate(starts)
         ]
         contract = deterministic_soc_target_contract(
-            rows, [15.0] * 4, [15.0, 15.0, 15.0, 40.0],
+            rows, [15.0] * 5, [15.0, 15.0, 15.0, 15.0, 40.0],
             15.0, 15.0, 0.90, 0.95, 5.0, 15, 0.0,
             single_daily_buy_target_pct=95.0)
         self.assertEqual(contract["buy_due_indices"], {2})
         self.assertGreaterEqual(contract["required"][2], 95.0)
 
         # A second remaining BUY window removes the one-window urgency rule.
-        rows[3]["buy_window"] = True
+        rows[4]["buy_window"] = True
         multiple = deterministic_soc_target_contract(
-            rows, [15.0] * 4, [15.0, 15.0, 15.0, 40.0],
+            rows, [15.0] * 5, [15.0, 15.0, 15.0, 15.0, 40.0],
             15.0, 15.0, 0.90, 0.95, 5.0, 15, 0.0,
             single_daily_buy_target_pct=95.0)
         self.assertLess(multiple["required"][2], 95.0)
