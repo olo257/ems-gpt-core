@@ -33,18 +33,20 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             required_soc_pcts=required,
             battery_sales_enabled=battery_sales_enabled)
 
-    def test_daily_tolerance_is_percentage_points(self):
-        self.assertAlmostEqual(end_of_day_soc_target(47.7, 15.0, 100.0), 42.7)
-        self.assertEqual(end_of_day_soc_target(17.0, 15.0, 100.0), 15.0)
+    def test_daily_historical_target_has_no_obsolete_five_point_discount(self):
+        self.assertAlmostEqual(end_of_day_soc_target(47.7, 15.0, 100.0), 47.7)
+        self.assertAlmostEqual(end_of_day_soc_target(47.7, 15.0, 40.0), 40.0)
+        self.assertEqual(end_of_day_soc_target(17.0, 15.0, 100.0), 17.0)
+        self.assertEqual(end_of_day_soc_target(12.0, 15.0, 100.0), 15.0)
 
     def test_history_applies_at_midnight_and_never_at_morning_sell(self):
         rows = self.rows(28)
         rows[25]['sale_window'] = True
         safety = self.safety(rows)
         required, closes = daily_close_soc_requirements(
-            rows, safety, {rows[0]['local_day']: 42.7, rows[-1]['local_day']: 42.7})
+            rows, safety, {rows[0]['local_day']: 47.7, rows[-1]['local_day']: 47.7})
         self.assertEqual(closes, {0, 27})
-        self.assertEqual(required[0], 42.7)
+        self.assertEqual(required[0], 47.7)
         self.assertEqual(required[24], 17.0)
         self.assertEqual(required[25], 17.0)
 
