@@ -297,17 +297,20 @@ def build_ingestion(a: IngestionAdapters):
         for s,(sale_window,buy_window) in zip(ordered,price_windows):
             unique[s]["sale_window"]=sale_window
             unique[s]["buy_window"]=buy_window
+            unique[s]["market_window"]=(
+                "SELL" if sale_window else "BUY" if buy_window else "NEUTRAL")
         with db() as conn,conn.cursor() as cur:
             for s,v in unique.items():
                 canonical=calendar_by_local.get(s)
                 cur.execute("""INSERT INTO ems_gpt_slots(slot_start,slot_end,price_sell_pln_kwh,price_buy_pln_kwh,
-                  sale_window,buy_window,price_source,price_fetched_at,price_publication_at,
+                  sale_window,buy_window,market_window,price_source,price_fetched_at,price_publication_at,
                   slot_id,slot_start_utc,slot_start_local,utc_offset_minutes,local_fold,local_day,slot_index_local)
-                  VALUES(%s,%s,%s,%s,%s,%s,'PSE_API',NOW(6),%s,%s,%s,%s,%s,%s,%s,%s)
+                  VALUES(%s,%s,%s,%s,%s,%s,%s,'PSE_API',NOW(6),%s,%s,%s,%s,%s,%s,%s,%s)
                   ON DUPLICATE KEY UPDATE price_sell_pln_kwh=IF(actual_recorded_at IS NULL,VALUES(price_sell_pln_kwh),price_sell_pln_kwh),
                   price_buy_pln_kwh=IF(actual_recorded_at IS NULL,VALUES(price_buy_pln_kwh),price_buy_pln_kwh),
                   sale_window=IF(actual_recorded_at IS NULL,VALUES(sale_window),sale_window),
                   buy_window=IF(actual_recorded_at IS NULL,VALUES(buy_window),buy_window),
+                  market_window=IF(actual_recorded_at IS NULL,VALUES(market_window),market_window),
                   price_fetched_at=IF(actual_recorded_at IS NULL,NOW(6),price_fetched_at),
                   price_publication_at=IF(actual_recorded_at IS NULL,VALUES(price_publication_at),price_publication_at),
                   price_source=IF(actual_recorded_at IS NULL,'PSE_API',price_source),
@@ -315,7 +318,7 @@ def build_ingestion(a: IngestionAdapters):
                   slot_start_local=COALESCE(slot_start_local,VALUES(slot_start_local)),
                   utc_offset_minutes=COALESCE(utc_offset_minutes,VALUES(utc_offset_minutes)),
                   local_day=COALESCE(local_day,VALUES(local_day)),slot_index_local=COALESCE(slot_index_local,VALUES(slot_index_local))""",
-                  (s,s+timedelta(minutes=15),v["sell"],v["buy"],v["sale_window"],v["buy_window"],v["publication"],
+                  (s,s+timedelta(minutes=15),v["sell"],v["buy"],v["sale_window"],v["buy_window"],v["market_window"],v["publication"],
                    canonical["slot_id"] if canonical else None,canonical["slot_start_utc"] if canonical else None,s,
                    canonical["utc_offset_minutes"] if canonical else None,canonical["local_fold"] if canonical else 0,
                    target,canonical["slot_index_local"] if canonical else None))
@@ -330,11 +333,14 @@ def build_ingestion(a: IngestionAdapters):
             open_windows = derive_price_windows(
                 [{"sell": row["price_sell_pln_kwh"], "buy": row["price_buy_pln_kwh"]}
                  for row in open_prices],
-                eta_c, eta_d, degradation, min_margin, buy_tolerance)
+                eta_c, eta_d, degradation, min_margin, buy_tolerance,
+                minimum_buy_slots)
             for row, (sale_window, buy_window) in zip(open_prices, open_windows):
-                cur.execute("""UPDATE ems_gpt_slots SET sale_window=%s,buy_window=%s
+                market_window = "SELL" if sale_window else "BUY" if buy_window else "NEUTRAL"
+                cur.execute("""UPDATE ems_gpt_slots
+                  SET sale_window=%s,buy_window=%s,market_window=%s
                   WHERE slot_start=%s AND actual_recorded_at IS NULL""",
-                  (sale_window, buy_window, row["slot_start"]))
+                  (sale_window, buy_window, market_window, row["slot_start"]))
         result={"day":str(target),"rows":len(unique),"expected":expected,
                 "status":"OK" if len(unique)==expected else "PARTIAL","margin":margin}
         record_event("rce_refreshed","core",result)

@@ -33,8 +33,10 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("toFixed(3)} PLN/kWh", HTML)
 
     def test_plan_view_requests_all_open_slots(self):
-        self.assertIn('if name == "plan":', API)
-        self.assertIn("limit = 500", API)
+        self.assertIn('params.get("limit",["96"])', API)
+        self.assertIn('"plan":("SELECT * FROM ems_gpt_slots', API)
+        self.assertIn('ORDER BY slot_start LIMIT %s', API)
+        self.assertNotIn('if name == "plan": limit = 500', API)
 
     def test_every_panel_request_disables_browser_cache(self):
         self.assertIn("window.fetch=(url,options={})=>nativeFetch(url,{cache:'no-store',...options})", HTML)
@@ -62,10 +64,10 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("ładowanie ${n(eb.battery_charge_input_kwh)}", HTML)
         self.assertIn("sprzedaż BAT ${n(eb.planned_sell_kwh)}", HTML)
         self.assertIn('payload["active_slot_balance"]', API)
-        self.assertIn('battery_output = values["planned_battery_discharge_kwh"] * eta_d', API)
-        self.assertNotIn("planned_pv_to_bat_kwh,grid_load_kwh", API)
-        self.assertIn('grid_load = max(0.0, values["forecast_load_kwh"]', API)
-        self.assertIn('"difference_kwh": round(supply - demand, 6)', API)
+        self.assertIn('calculate_slot_energy_balance(row, eta_c, eta_d)', API)
+        balance = (ROOT / "energy_balance_service.py").read_text(encoding="utf-8")
+        self.assertIn("forecast_heat_pump_load_kwh", balance)
+        self.assertIn('"difference_kwh": round(supply - demand, 6)', balance)
 
     def test_diagnostics_are_newest_first_and_show_refresh_time(self):
         self.assertIn("ems_gpt_core_diagnostic_reports ORDER BY created_at DESC", API)

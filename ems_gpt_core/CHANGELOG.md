@@ -1,5 +1,21 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.5 — rozdzielenie właścicieli planu i kontrola bilansu
+
+- Kontrakt SOC jest liczony bezpośrednio z prognozy obciążenia/PV, rezerwy i
+  fizycznej dostępności okien BUY, przed optymalizacją ekonomiczną. Dodano
+  regresję dla pełnego 48-godzinnego horyzontu.
+- Import RCE jest jedynym właścicielem okien BUY/SELL; planer je waliduje i nie
+  zapisuje ich ponownie.
+- Planer nie zapisuje kolumn końcowej alokacji PV i rekomendacji. PPD oblicza
+  nadwyżkę z prognozy, obciążenia HP i PV→baterii, a następnie publikuje swój
+  podział CWU/EV/eksport/ograniczenie i decyzje.
+- Bilans API i diagnostyki uwzględnia obciążenie HP, wylicza fizyczny pobór
+  sieci oraz sprawdza SOC i nadmierny nieplanowany import.
+- `/api/plan` honoruje parametr `limit`. Wersje usług planera/PPD są zgodne z
+  wydaniem.
+- Weryfikacja: pełny zestaw 347 testów zaliczony.
+
 ## 0.40.4 — propagacja targetu przez wieloslotowe okno BUY
 
 - Naprawiono dopasowanie terminu mostka SOC do końca całego okna BUY. Wcześniejsze

@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+PPD_VERSION = "CORE_0_40_5"
+
 
 @dataclass(frozen=True)
 class FlexiblePpdDecision:
@@ -238,12 +240,21 @@ def plan_bound_decisions(row: dict, threshold: float) -> tuple[tuple[str, bool, 
     )
 
 
+def planner_flexible_pv_remainder(row: dict) -> float:
+    """Compute physical PV remainder without reading PPD-owned allocations."""
+    pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
+    load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
+            + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+    pv_to_bat = max(0.0, float(row.get("planned_pv_to_bat_kwh") or 0.0))
+    return max(0.0, pv - load - pv_to_bat)
+
+
 def build_ppd_runner(a: PpdAdapters):
     """Create a read-plan/write-decisions PPD service.
 
     The service never updates SOC, target, price windows or core battery flows.
-    Its only slot writes are presentation/policy fields and allocation of the
-    already-published flexible PV remainder.
+    Its slot writes are process decisions and the final allocation of flexible
+    PV reconstructed from planner-owned physical inputs.
     """
     options, db = a.options, a.db
 
@@ -277,9 +288,8 @@ def build_ppd_runner(a: PpdAdapters):
                 raise RuntimeError(f"PPD_PLAN_ROWS_MISSING:{plan_run_id}")
             flexible_rows = []
             for index, row in enumerate(rows):
-                raw_flexible = sum(max(0.0, float(row.get(field) or 0.0)) for field in (
-                    "planned_pv_export_kwh", "planned_pv_to_cwu_kwh",
-                    "planned_pv_to_ev_kwh", "planned_pv_curtail_kwh"))
+                # Never read the previous PPD allocation that this run replaces.
+                raw_flexible = planner_flexible_pv_remainder(row)
                 sell_battery = float(row.get("planned_sell_kwh") or 0.0) > threshold
                 flexible_rows.append({
                     "slot_start": row["slot_start"], "local_day": row.get("local_day"),
@@ -339,10 +349,10 @@ def build_ppd_runner(a: PpdAdapters):
                 cur.execute("""UPDATE ems_gpt_slots SET planned_pv_to_cwu_kwh=%s,
                   planned_pv_to_ev_kwh=%s,planned_pv_export_kwh=%s,
                   planned_pv_curtail_kwh=%s,recommendation=%s,ppd_reason=%s,
-                  ppd_run_type=%s,ppd_version='CORE_0_36_11',ppd_locked_at=NOW(6)
+                  ppd_run_type=%s,ppd_version=%s,ppd_locked_at=NOW(6)
                   WHERE slot_start=%s AND plan_run_id=%s""",
                   (round(cwu, 6), round(ev, 6), round(pv_export, 6), round(curtail, 6),
-                   recommendation, reason, run_type,
+                   recommendation, reason, run_type, PPD_VERSION,
                    row["slot_start"], plan_run_id))
                 decision_row = dict(row)
                 decision_row["planned_pv_export_kwh"] = pv_export

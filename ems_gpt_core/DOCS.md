@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja przygotowana: **0.40.2**.
+Status: obowiązująca. Wersja wydania: **0.40.5**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -27,7 +27,8 @@ dokumentu źródłowego.
 - `app.py` — kompozycja usług i cykl życia procesu;
 - `scheduler_service.py` — zegar, kolejność przebiegów i publikacja bieżących
   cen do Home Assistant;
-- `ingestion_service.py` — import RCE oraz prognoz PV i pogody;
+- `ingestion_service.py` — import RCE, jedyny właściciel okien BUY/SELL,
+  oraz prognozy PV i pogody;
 - `planner_service.py` — transakcyjny planer energii i profil pompy ciepła;
 - `ppd_service.py` — publikacja decyzji planera oraz niezależne okna PV→CWU/EV;
 - `executor_service.py` — realizacja zatwierdzonych decyzji i ręcznych
@@ -39,6 +40,34 @@ dokumentu źródłowego.
 
 Usługi otrzymują zależności przez jawne adaptery. Aplikacja korzysta z osobnej
 bazy MariaDB `ems_gpt` i nie odczytuje bazy rekordera Home Assistant.
+
+### Jednoznaczni właściciele zapisu
+
+| Dane | Właściciel zapisu | Pozostali konsumenci |
+|---|---|---|
+| `buy_window`, `sale_window`, `market_window` | Import RCE (`ingestion_service.py`) | planer waliduje; PPD i wykonawca odczytują |
+| Prognozy, SOC, import/eksport baterii, przepływ PV do baterii i polityki planu | Planer (`planner_service.py`) | PPD i wykonawca odczytują |
+| Podział wolnego PV na CWU/EV/eksport/ograniczenie, rekomendacja i decyzje procesów | PPD (`ppd_service.py`) | API i wykonawca odczytują |
+| Polecenia i stan wykonania | Wykonawca (`executor_service.py`) | PPD i diagnostyka odczytują |
+
+PPD wylicza wolną nadwyżkę z prognozy PV, obciążenia bazowego i HP oraz
+przepływu PV do baterii. Nie używa poprzednich przydziałów PPD jako wejścia.
+Planer nie publikuje kolumn końcowego podziału PV ani rekomendacji; po atomowej
+publikacji planu PPD wykonuje własny przebieg. Wykonawca wymaga decyzji
+powiązanych z aktualnym `plan_run_id`, więc decyzje z poprzedniego planu nie
+autoryzują nowego planu.
+
+Zapisy importu RCE, prognoz PV/pogody i uczenia obciążenia używają wspólnej
+blokady ciężkich zadań wraz z planerem i PPD. Replan nie może czytać
+częściowo odświeżonego wejścia.
+
+### Kontrola działania
+
+Diagnostyka sprawdza bilans AC każdego otwartego slotu (w tym obciążenie HP),
+SOC wymagany przez kontrakt oraz istotny pobór z sieci, którego plan nie
+przewidział jako zakupu. `/api/status` udostępnia bilans aktywnego slotu,
+łącznie z obciążeniem HP i pozostałym poborem z sieci. Endpoint `/api/plan`
+honoruje jawny parametr `limit`.
 
 ## 3. Encje Home Assistant i ich właściciele
 
@@ -169,8 +198,11 @@ w górę do kroku SOC; potrzeby nocne mogą podnieść wymagane zamknięcie doby
 ## 6. RCE i bieżące ceny
 
 Import RCE zatwierdza dopiero kompletny zestaw ciągłych slotów. Brak ceny nie
-jest zastępowany zerem. Po zatwierdzeniu ceny planowanie może zakończyć się
-błędem bez usuwania poprawnie zaimportowanego RCE.
+jest zastępowany zerem. Moduł importu RCE jako jedyny wyznacza i zapisuje
+`buy_window`, `sale_window` oraz odpowiadające im `market_window` dla
+otwartego horyzontu. Planer tylko odczytuje i waliduje te wartości; nie może
+ich ponownie wyliczać ani zapisywać. Po zatwierdzeniu ceny planowanie może
+zakończyć się błędem bez usuwania poprawnie zaimportowanego RCE.
 
 Scheduler odczytuje zakup i sprzedaż z jednego aktywnego rekordu
 `ems_gpt_slots`, zaokrągla wartości do trzech miejsc i zapisuje je do dwóch
@@ -203,7 +235,7 @@ Przed scaleniem i publikacją wymagane są:
 2. pełny zestaw testów automatycznych;
 3. kontrola `git diff --check`;
 4. wyszukanie starych i zduplikowanych nazw encji poza archiwum;
-5. potwierdzenie wersji w `app.py`, `config.yaml` i changelogu;
+5. potwierdzenie wersji w `app.py`, `config.yaml`, README i changelogu;
 6. jawna zgoda operatora na publikację.
 
 Zmiana wersji w plikach nie oznacza publikacji. Dopiero scalone wydanie w

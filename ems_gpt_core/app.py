@@ -36,7 +36,7 @@ from telemetry_service import TelemetryAdapters, build_telemetry
 from time_service import TimeAdapters, build_time_service
 
 APP_NAME = "EMS-GPT Core"
-APP_VERSION = "0.40.4"
+APP_VERSION = "0.40.5"
 DATA_DIR = Path("/data")
 OPTIONS_PATH = DATA_DIR / "options.json"
 RUNTIME_SETTINGS_PATH = DATA_DIR / "runtime-settings.json"
@@ -275,7 +275,7 @@ close_finished_slots = _MATERIALIZATIONS.close_finished_slots
 backfill_execution_details = _MATERIALIZATIONS.backfill_execution_details
 aggregate_results = _MATERIALIZATIONS.aggregate_results
 rebuild_recovery_materializations = _MATERIALIZATIONS.rebuild_recovery_materializations
-learn_missing_load = _MATERIALIZATIONS.learn_missing_load
+_learn_missing_load = _MATERIALIZATIONS.learn_missing_load
 
 
 _INGESTION = build_ingestion(IngestionAdapters(
@@ -291,9 +291,20 @@ _INGESTION = build_ingestion(IngestionAdapters(
     ha_service_response=ha_service_response,
     record_event=record_event,
 ))
-refresh_pv_forecast = _INGESTION.refresh_pv_forecast
-refresh_weather_forecast = _INGESTION.refresh_weather_forecast
-refresh_rce = _INGESTION.refresh_rce
+def learn_missing_load() -> dict:
+    return run_serialized("load_learning", _learn_missing_load)
+
+
+def refresh_pv_forecast() -> dict:
+    return run_serialized("pv_forecast", _INGESTION.refresh_pv_forecast)
+
+
+def refresh_weather_forecast() -> dict:
+    return run_serialized("weather_forecast", _INGESTION.refresh_weather_forecast)
+
+
+def refresh_rce(target_day=None) -> dict:
+    return run_serialized("rce_import", _INGESTION.refresh_rce, target_day)
 
 
 _EXECUTOR = build_executor(ExecutorAdapters(

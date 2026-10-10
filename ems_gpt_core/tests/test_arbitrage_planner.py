@@ -13,6 +13,9 @@ from planner_service import (
     allocate_slot_discharge,
     backward_target_commitments,
     build_soc_contracts,
+    deterministic_soc_target_contract,
+    replenishment_soc_requirements,
+    validate_recoverable_soc_requirements,
     target_commitment_required_fallback,
     target_commitment_safety_fallback,
     battery_sale_economics,
@@ -24,6 +27,7 @@ from planner_service import (
     next_replenishment_prices,
     planning_tou_programs,
     strict_database_bool,
+    validate_rce_market_window,
     historical_terminal_soc,
     terminal_soc_recovery,
     historical_hp_power_kw,
@@ -374,17 +378,24 @@ class PairedArbitrageTests(unittest.TestCase):
                 "slot_start": index,
                 "slot_end": index + 1,
             })
-        economic = optimize_energy_horizon(
-            rows, 55.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * len(rows), 35.0, 0.10, 100.0)
-        contract = build_soc_contracts(
-            rows, economic["flows"], 15.0, 15.0, 0.90, 0.95,
-            0.0, 35.0, 100.0)
+        safety = replenishment_soc_requirements(
+            rows, 15.0, 15.0, 2.0, 0.90, 0.95, 5.0, 15, 0.0, 0.10)
+        daily_close = [15.0] * len(rows)
+        daily_close[95] = daily_close[191] = 35.0
+        contract = deterministic_soc_target_contract(
+            rows, safety, daily_close, 15.0, 15.0, 0.90, 0.95,
+            5.0, 15, 0.0, 0.10)
+        recovery = validate_recoverable_soc_requirements(
+            rows, contract["required"], 55.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.90, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.10)
+        contract["required"] = recovery["required_soc_pcts"]
+        contract["charge_targets"] = list(contract["required"])
         result = optimize_energy_horizon(
             rows, 55.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0] * len(rows), 35.0, 0.10, 100.0,
             contract["charge_targets"], set(), contract["buy_due_indices"],
-            contract["required"])
+            contract["required"], battery_sales_enabled=False)
 
         for index, (row, flow, required) in enumerate(
                 zip(rows, result["flows"], contract["required"])):
@@ -1494,6 +1505,43 @@ class TouStartupReadinessTests(unittest.TestCase):
             with self.subTest(unavailable=unavailable):
                 with self.assertRaisesRegex(RuntimeError, "TOU_PROGRAMS_UNAVAILABLE|TOU_PROGRAMS_INVALID"):
                     planning_tou_programs(unavailable, {"1": 10.0})
+
+
+
+class RcePriceWindowContractTests(unittest.TestCase):
+    def test_planner_uses_the_persisted_rce_windows(self):
+        row = {
+            "slot_start": datetime(2026, 10, 10, 12, 0),
+            "price_buy_pln_kwh": 1.0,
+            "price_sell_pln_kwh": 0.5,
+            "buy_window": 1,
+            "sale_window": 0,
+            "market_window": "BUY",
+        }
+
+        normalized = validate_rce_market_window(row)
+
+        self.assertEqual(normalized["market_window"], "BUY")
+        self.assertTrue(normalized["buy_window"])
+        self.assertFalse(normalized["sale_window"])
+        self.assertEqual(row["buy_window"], 1)
+
+    def test_planner_rejects_missing_or_overlapping_rce_windows(self):
+        base = {"slot_start": datetime(2026, 10, 10, 12, 0)}
+        with self.assertRaisesRegex(RuntimeError, "RCE_PRICE_WINDOW_MISSING"):
+            validate_rce_market_window(base)
+
+        with self.assertRaisesRegex(RuntimeError, "WINDOW_OVERLAP"):
+            validate_rce_market_window({
+                **base, "buy_window": 1, "sale_window": 1,
+            })
+
+    def test_planner_rejects_stale_rce_market_window_enum(self):
+        with self.assertRaisesRegex(RuntimeError, "RCE_MARKET_WINDOW_MISMATCH"):
+            validate_rce_market_window({
+                "slot_start": datetime(2026, 10, 10, 12, 0),
+                "buy_window": 1, "sale_window": 0, "market_window": "SELL",
+            })
 
 
 if __name__ == "__main__":

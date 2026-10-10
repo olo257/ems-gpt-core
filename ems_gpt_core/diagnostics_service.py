@@ -5,6 +5,8 @@ import json
 import uuid
 from datetime import datetime, timedelta
 
+from energy_balance_service import assess_published_plan
+
 
 def runtime_module_health_check(runtime_state: dict | None) -> dict:
     """Expose latched planner/PPD failures to diagnostics, including stale-plan cases."""
@@ -51,6 +53,31 @@ def generate_diagnostic_report(trigger_name: str = "scheduled", *, options, db, 
                                if cutoff <= item["slot_start_local"] < horizon_end)
         add("planner_horizon", int(horizon["n"] or 0) >= expected_horizon, int(horizon["n"] or 0), f">={expected_horizon}")
         add("pse_prices", int(horizon["prices"] or 0) >= expected_horizon, int(horizon["prices"] or 0), f">={expected_horizon}")
+        cur.execute("""SELECT slot_start,forecast_pv_total_kwh,forecast_load_kwh,
+          forecast_heat_pump_load_kwh,planned_battery_discharge_kwh,planned_buy_kwh,
+          planned_battery_charge_kwh,planned_sell_kwh,planned_pv_to_bat_kwh,
+          planned_pv_to_cwu_kwh,planned_pv_to_ev_kwh,planned_pv_export_kwh,
+          soc_end_plan_pct,soc_required_pct
+          FROM ems_gpt_slots WHERE plan_stage='PUBLISHED' AND actual_recorded_at IS NULL
+            AND slot_start>=%s ORDER BY slot_start LIMIT 96""", (cutoff,))
+        plan_integrity = assess_published_plan(
+            list(cur.fetchall()),
+            max(0.01, float(options.get("battery_charge_efficiency", 0.90))),
+            max(0.01, float(options.get("battery_discharge_efficiency", 0.95))))
+        add("published_plan_energy_balance", plan_integrity["row_count"] > 0
+            and plan_integrity["balance_violations"] == 0,
+            plan_integrity, "all checked open slots balance within 0.02 kWh")
+        add("unplanned_grid_load", plan_integrity["row_count"] > 0
+            and plan_integrity["unplanned_grid_load_violations"] == 0,
+            {"rows": plan_integrity["row_count"],
+             "violations": plan_integrity["unplanned_grid_load_violations"],
+             "tolerance_kwh": plan_integrity["unplanned_grid_load_tolerance_kwh"]},
+            "no open slot has over 0.05 kWh unplanned grid load")
+        add("published_plan_soc_contract", plan_integrity["row_count"] > 0
+            and plan_integrity["soc_required_shortfalls"] == 0,
+            {"rows": plan_integrity["row_count"],
+             "shortfalls": plan_integrity["soc_required_shortfalls"]},
+            "every open slot meets its required SOC")
         cur.execute("SELECT COUNT(*) n FROM ems_gpt_plan_runs WHERE status='RUNNING' AND updated_at<%s", (now-timedelta(minutes=10),))
         add("no_stuck_plan_runs", int(cur.fetchone()["n"] or 0) == 0, "checked", 0)
         cur.execute("SELECT COUNT(*) n FROM ems_gpt_slots WHERE actual_recorded_at IS NOT NULL AND slot_start>=%s", (now-timedelta(hours=24),))
