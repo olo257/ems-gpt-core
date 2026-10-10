@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.6**.
+Status: obowiązująca. Wersja wydania: **0.40.8**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -29,7 +29,7 @@ dokumentu źródłowego.
   cen do Home Assistant;
 - `ingestion_service.py` — import RCE, jedyny właściciel okien BUY/SELL,
   oraz prognozy PV i pogody;
-- `planner_service.py` — transakcyjny planer energii i profil pompy ciepła;
+- `planner_service.py` — transakcyjny planer energii i profil pompy ciepła; prognoza zużycia bazowego zawiera HP_DHW, a tylko zaplanowane HP_HEAT_DHW jest doliczane osobno do bilansu SOC.
 - `ppd_service.py` — publikacja decyzji planera oraz niezależne okna PV→CWU/EV;
 - `executor_service.py` — realizacja zatwierdzonych decyzji i ręcznych
   override'ów;
