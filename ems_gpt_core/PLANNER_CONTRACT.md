@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.3. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -49,7 +49,10 @@ Błąd prognozy lub planera po zatwierdzeniu cen:
 - nie powoduje ponownego pobierania ani częściowego nadpisania cen;
 - ma własny status i zdarzenie diagnostyczne;
 - pozostawia ostatni poprawny plan, a jeśli jest on nieaktualny — blokuje nowe
-  komendy wykonawcze.
+  komendy wykonawcze;
+- odrzucony kandydat pozostaje zapisany przez 90 dni w oddzielnej historii
+  prób planera i jest dostępny w API oraz panelu tylko do odczytu; nie może
+  zastąpić zaakceptowanego planu ani zasilać PPD lub wykonawcy.
 
 ## 3. Kolejność przebiegów planera
 
@@ -83,6 +86,14 @@ etap modyfikuje wyłącznie pola należące do niego. Jeżeli walidacja jednego 
 nie przejdzie, kolejny przebieg może zmienić wybór przyszłego BUY/SELL lub
 alokację energii. Nie wolno naprawiać błędu przez kopiowanie `soc_floor` do
 `soc_target`, zakup poza BUY ani sprzedaż nadwyżki potrzebnej baterii.
+
+### 3.1. Walidacja fallbacku kontraktu SOC
+
+Końcowy walidator używa wymagania SOC faktycznie egzekwowanego przez ostatni
+zakończony przebieg optymalizatora. Gdy fallback usuwa niewykonalny, opcjonalny
+kontrakt, walidator może zejść tylko do niezależnie obliczonego minimum
+bezpieczeństwa i aktywnego celu dobowego. Rezerwa techniczna, zakaz zakupu poza
+BUY, limity importu oraz zakaz sprzedaży poza SELL pozostają twarde.
 
 ## 4. Bilans energii slotu
 
@@ -402,4 +413,3 @@ SOC jest sprawdzana na jednej wspólnej trajektorii.
 Raport diagnostyczny musi uwzględniać bieżący stan modułów planera i PPD oraz
 ich zatrzaśnięte błędy. Starszy opublikowany plan nie oznacza zdrowego systemu,
 gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
-
