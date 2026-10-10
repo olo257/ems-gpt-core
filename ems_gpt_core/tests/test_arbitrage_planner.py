@@ -13,6 +13,9 @@ from planner_service import (
     allocate_slot_discharge,
     backward_target_commitments,
     build_soc_contracts,
+    deterministic_soc_target_contract,
+    replenishment_soc_requirements,
+    validate_recoverable_soc_requirements,
     target_commitment_required_fallback,
     target_commitment_safety_fallback,
     battery_sale_economics,
@@ -375,17 +378,24 @@ class PairedArbitrageTests(unittest.TestCase):
                 "slot_start": index,
                 "slot_end": index + 1,
             })
-        economic = optimize_energy_horizon(
-            rows, 55.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * len(rows), 35.0, 0.10, 100.0)
-        contract = build_soc_contracts(
-            rows, economic["flows"], 15.0, 15.0, 0.90, 0.95,
-            0.0, 35.0, 100.0)
+        safety = replenishment_soc_requirements(
+            rows, 15.0, 15.0, 2.0, 0.90, 0.95, 5.0, 15, 0.0, 0.10)
+        daily_close = [15.0] * len(rows)
+        daily_close[95] = daily_close[191] = 35.0
+        contract = deterministic_soc_target_contract(
+            rows, safety, daily_close, 15.0, 15.0, 0.90, 0.95,
+            5.0, 15, 0.0, 0.10)
+        recovery = validate_recoverable_soc_requirements(
+            rows, contract["required"], 55.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.90, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.10)
+        contract["required"] = recovery["required_soc_pcts"]
+        contract["charge_targets"] = list(contract["required"])
         result = optimize_energy_horizon(
             rows, 55.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0] * len(rows), 35.0, 0.10, 100.0,
             contract["charge_targets"], set(), contract["buy_due_indices"],
-            contract["required"])
+            contract["required"], battery_sales_enabled=False)
 
         for index, (row, flow, required) in enumerate(
                 zip(rows, result["flows"], contract["required"])):
