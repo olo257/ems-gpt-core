@@ -2106,8 +2106,7 @@ def build_planner(a: PlannerAdapters):
             target_contract = deterministic_soc_target_contract(
                 horizon_rows, safety_required_soc, daily_required_soc,
                 capacity, reserve, eta_c, eta_d, max_kw,
-                int(OPTIONS["slot_minutes"]), uncertainty_weight,
-
+                int(OPTIONS["slot_minutes"]), uncertainty_weight)
             target_recovery = validate_recoverable_soc_requirements(
                 horizon_rows, target_contract["required"], soc_now, reserve,
                 target_cap, capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
