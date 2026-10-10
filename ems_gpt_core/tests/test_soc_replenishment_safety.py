@@ -7,6 +7,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from planner_service import (
     _soc_reachability_profile, build_soc_contracts, daily_close_soc_requirements,
     end_of_day_soc_target, optimize_energy_horizon,
+    relax_soc_requirement_to_reachable,
+    current_soc_for_replan,
     deterministic_soc_target_contract, preserve_target_contract_after_reachability,
     replenishment_soc_requirements, recoverable_soc_requirements,
     target_commitment_required_fallback, effective_required_soc_for_dispatch,
@@ -34,6 +36,44 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             5.0, 15, [15.0]*len(rows), terminal, 0.1, 100.0,
             required_soc_pcts=required,
             battery_sales_enabled=battery_sales_enabled)
+
+    def test_replan_reads_fresh_soc_for_each_run(self):
+        live_states = iter([42.3, 66.0])
+
+        def setting(entity_id, default):
+            self.assertEqual(entity_id, "sensor.inverter_battery")
+            return next(live_states)
+
+        first_replan_soc = current_soc_for_replan(setting)
+        second_replan_soc = current_soc_for_replan(setting)
+        self.assertEqual(first_replan_soc, 42.3)
+        self.assertEqual(second_replan_soc, 66.0)
+
+    def test_unreachable_close_uses_best_reachable_soc_and_keeps_reserve(self):
+        rows = self.rows(2)
+        requested_close = 60.0
+        requested_contract = {
+            "required": [requested_close, requested_close],
+            "charge_targets": [requested_close, requested_close],
+        }
+        reachability = validate_recoverable_soc_requirements(
+            rows, requested_contract["required"], 20.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
+        contract = preserve_target_contract_after_reachability(
+            requested_contract, reachability, {0})
+        best_effort = relax_soc_requirement_to_reachable(
+            contract["required"][0], contract["reachable_required"][0], 15.0)
+
+        self.assertLess(contract["reachable_required"][0], requested_close)
+        self.assertEqual(contract["required"][0], requested_close)
+        self.assertEqual(contract["charge_targets"][0], requested_close)
+        self.assertLess(best_effort, requested_close)
+        self.assertGreaterEqual(best_effort, 15.0)
+        plan = self.optimize(
+            rows, [best_effort, best_effort], initial=20.0, terminal=17.0,
+            battery_sales_enabled=False)
+        self.assertGreaterEqual(plan["flows"][0]["soc_end_pct"] + 1e-9, best_effort)
 
     def test_reachability_does_not_lower_daily_close_or_buy_target(self):
         rows = self.rows(2)

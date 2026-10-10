@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_10"
+PLANNER_VERSION = "CORE_0_40_11"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -1641,6 +1641,24 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
             "selected_buy_indices": selected_buy}
 
 
+def current_soc_for_replan(setting: Callable) -> float:
+    """Read fresh battery SOC from Home Assistant for this planner invocation."""
+    soc = setting("sensor.inverter_battery", math.nan)
+    if not math.isfinite(soc) or not 0.0 <= soc <= 100.0:
+        raise RuntimeError(f"INVALID_INITIAL_SOC:sensor.inverter_battery={soc!r}")
+    return float(soc)
+
+
+def relax_soc_requirement_to_reachable(requested_soc_pct: float,
+                                        reachable_soc_pct: float,
+                                        reserve_pct: float) -> float:
+    """Return the best feasible floor without crossing the technical reserve."""
+    reserve = max(0.0, min(100.0, float(reserve_pct)))
+    requested = max(reserve, min(100.0, float(requested_soc_pct)))
+    reachable = max(reserve, min(100.0, float(reachable_soc_pct)))
+    return max(reserve, min(requested, reachable))
+
+
 def target_commitment_safety_fallback(minimum_targets: list[float] | None
                                       ) -> tuple[list[float] | None, set[int], set[int]]:
     """Drop optional BUY deadlines without changing the calculated import cap."""
@@ -1845,9 +1863,8 @@ def build_planner(a: PlannerAdapters):
         cutoff = slot_start().replace(tzinfo=None) + timedelta(minutes=int(OPTIONS["slot_minutes"]))
         capacity = max(1.0, float(OPTIONS.get("battery_capacity_kwh", 15.0)))
         reserve = max(0.0, min(90.0, float(OPTIONS.get("battery_min_soc_pct", 15.0))))
-        soc_now = setting("sensor.inverter_battery", math.nan)
-        if not math.isfinite(soc_now) or not 0.0 <= soc_now <= 100.0:
-            raise RuntimeError(f"INVALID_INITIAL_SOC:sensor.inverter_battery={soc_now!r}")
+        # Read the HA state anew for every replan; cutoff begins at the next open slot.
+        soc_now = current_soc_for_replan(setting)
         eta_c = max(0.01, min(1.0, float(OPTIONS.get("battery_charge_efficiency", 0.90))))
         eta_d = max(0.01, min(1.0, float(OPTIONS.get("battery_discharge_efficiency", 0.95))))
         degradation = max(0.0, float(OPTIONS.get("battery_degradation_cost_pln_kwh", 0.08)))
@@ -2267,21 +2284,24 @@ def build_planner(a: PlannerAdapters):
                             "reason": str(exc),
                         }, "WARNING")
                         continue
-                    if (failed_index not in daily_close_indices
-                            or enforced_daily_required[failed_index]
-                            <= safety_required_soc[failed_index] + 1e-9):
+                    requested_required = enforced_daily_required[failed_index]
+                    reachable_required = target_contract["reachable_required"][failed_index]
+                    recoverable_required = relax_soc_requirement_to_reachable(
+                        requested_required, reachable_required, reserve)
+                    if recoverable_required >= requested_required - 1e-9:
                         raise RuntimeError(f"SOC_SAFETY_BRIDGE_UNREACHABLE:{failed_index}") from exc
-                    enforced_daily_required[failed_index] = safety_required_soc[failed_index]
-                    daily_close_indices.remove(failed_index)
+                    enforced_daily_required[failed_index] = recoverable_required
+                    is_daily_close = failed_index in daily_close_indices
+                    daily_close_indices.discard(failed_index)
                     waived_daily_closes.add(failed_index)
-                    record_event("daily_terminal_soc_unreachable", "planner", {
+                    record_event("soc_bridge_requirement_unreachable", "planner", {
                         "slot_start": str(horizon_rows[failed_index]["slot_start"]),
-                        "requested_soc_pct": daily_required_soc[failed_index],
-                        "reachable_soc_pct": round(
-                            target_contract["reachable_required"][failed_index], 3),
+                        "requested_soc_pct": round(requested_required, 3),
+                        "safety_soc_pct": round(safety_required_soc[failed_index], 3),
+                        "reachable_soc_pct": round(recoverable_required, 3),
                         "shortfall_pct": round(max(
-                            0.0, daily_required_soc[failed_index]
-                            - target_contract["reachable_required"][failed_index]), 3),
+                            0.0, requested_required - recoverable_required), 3),
+                        "daily_close": is_daily_close,
                         "reason": str(exc),
                     }, "WARNING")
             if target_seed.get("terminal_shortfall_pct", 0.0) > 1e-9:
