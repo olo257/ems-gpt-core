@@ -1187,7 +1187,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # still allowing ordinary consumption below the unrelated
                 # sale floor. Inside BUY it becomes due at the window end.
                 if (minimum_soc_targets is not None and hard_target_indices is not None
-                        and index in hard_target_indices and next_unit < enforced_target_unit):
+                        and index in hard_target_indices and index not in target_due_indices
+                        and next_unit < requested_target_unit):
                     continue
                 # Usable PV fills all physically reachable battery capacity
                 # before any remaining PV surplus is exported. Grid power is
