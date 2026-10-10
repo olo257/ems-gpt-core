@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from energy_balance_service import calculate_slot_energy_balance
+
 
 @dataclass(frozen=True)
 class ApiAdapters:

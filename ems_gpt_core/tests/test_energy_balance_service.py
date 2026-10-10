@@ -25,6 +25,17 @@ class EnergyBalanceServiceTests(unittest.TestCase):
         self.assertGreater(result["grid_load_kwh"], 0.0)
         self.assertAlmostEqual(result["difference_kwh"], 0.0, places=6)
 
+    def test_pv_battery_allocation_is_counted_as_demand(self):
+        row = {
+            "forecast_pv_total_kwh": 1.0, "forecast_load_kwh": 0.5,
+            "forecast_heat_pump_load_kwh": 0.2,
+            "planned_battery_discharge_kwh": 0, "planned_buy_kwh": 0,
+            "planned_battery_charge_kwh": 0, "planned_sell_kwh": 0,
+            "planned_pv_to_bat_kwh": 0.3,
+        }
+        result = calculate_slot_energy_balance(row, 0.9, 0.98)
+        self.assertAlmostEqual(result["difference_kwh"], 0.0, places=6)
+
     def test_published_plan_fails_on_unbalanced_energy_or_soc_requirement(self):
         balanced = {
             "forecast_pv_total_kwh": 0.2, "forecast_load_kwh": 0.2,

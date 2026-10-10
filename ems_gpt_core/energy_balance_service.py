@@ -24,7 +24,7 @@ def calculate_slot_energy_balance(row: dict, eta_c: float, eta_d: float) -> dict
     grid_import = planned_buy + grid_load
     battery_charge_input = max(0.0, float(row.get("planned_battery_charge_kwh") or 0.0)) / charge_efficiency
     supply = pv_used + battery_output + grid_import
-    demand = load + battery_charge_input + battery_sell + flexible_pv
+    demand = load + pv_to_battery + battery_charge_input + battery_sell + flexible_pv
     return {
         "forecast_pv_total_kwh": round(pv, 6),
         "forecast_load_kwh": round(max(0.0, float(row.get("forecast_load_kwh") or 0.0)), 6),
