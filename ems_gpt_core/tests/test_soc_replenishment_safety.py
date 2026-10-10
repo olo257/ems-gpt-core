@@ -8,6 +8,7 @@ from planner_service import (
     _soc_reachability_profile, build_soc_contracts, daily_close_soc_requirements,
     end_of_day_soc_target, optimize_energy_horizon,
     relax_soc_requirement_to_reachable,
+    current_soc_for_replan,
     deterministic_soc_target_contract, preserve_target_contract_after_reachability,
     replenishment_soc_requirements, recoverable_soc_requirements,
     target_commitment_required_fallback, effective_required_soc_for_dispatch,
@@ -35,6 +36,18 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             5.0, 15, [15.0]*len(rows), terminal, 0.1, 100.0,
             required_soc_pcts=required,
             battery_sales_enabled=battery_sales_enabled)
+
+    def test_replan_reads_fresh_soc_for_each_run(self):
+        live_states = iter([42.3, 66.0])
+
+        def setting(entity_id, default):
+            self.assertEqual(entity_id, "sensor.inverter_battery")
+            return next(live_states)
+
+        first_replan_soc = current_soc_for_replan(setting)
+        second_replan_soc = current_soc_for_replan(setting)
+        self.assertEqual(first_replan_soc, 42.3)
+        self.assertEqual(second_replan_soc, 66.0)
 
     def test_unreachable_close_uses_best_reachable_soc_and_keeps_reserve(self):
         rows = self.rows(2)
