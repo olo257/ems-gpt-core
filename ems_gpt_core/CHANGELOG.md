@@ -7,6 +7,8 @@
 - Pozwala to przejść przez długą przerwę do kolejnego okna BUY bez odrzucania całego planu, z zachowaniem rezerwy technicznej i limitu importu z sieci.
 - Dodano regresję dla 42 slotów, SOC startowego 80%, limitu sieci 12 kW i ładowania baterii 5 kW.
 
+- Weryfikacja wdrożenia (10.10.2026, Europe/Warsaw): dodatek działa na 0.40.14 ze statusem `RUNNING` i gotowością `READY`; import RCE dla 2026-10-11 zakończony dla 96/96 slotów. Replan `CORE_0_40_14` opublikował 133 sloty ze statusem `ACCEPTED` (`OK`), obejmujące resztę 10.10 i całą dobę 11.10. Wykonawca pozostaje wyłączony.
+
 ## 0.40.13 — zgodność osiągalności SOC z limitem sieci
 
 - Walidacja osiągalności SOC stosuje te same zasady co optimizer: jednoczesny import na dom i baterię jest dozwolony w oknie BUY, ale łączny import nie przekracza ustawionego limitu sieci.
