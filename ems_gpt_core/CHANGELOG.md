@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.8 — target zakupów z bilansu dobowego
+
+- Usunięto stały próg 95% dla pojedynczego pozostałego okna BUY. Target ładowania wynika z wymaganej średniej SOC na zamknięcie doby i bilansu prognozowanego obciążenia/PV z uwzględnieniem sprawności, rezerwy i fizycznej mocy ładowania.
+- Horyzont obejmuje target zamknięcia następnej doby, gdy kompletne sloty RCE i prognozy są dostępne; każdy koniec doby pozostaje osobną granicą SOC.
+- W bilansie dodatkowym obciążeniem jest wyłącznie zaplanowany `HP_HEAT_DHW`; `HP_DHW` pozostaje w prognozie zużycia bazowego.
+- Dodano regresje dla wyliczanego targetu BUY, mostka na przyszłą dobę i dodatkowego obciążenia HP.
+
+
 ## 0.40.7 — zachowanie celu SOC doby i ostatniego BUY
 
 - Ostatnie pojedyncze okno BUY bieżącej doby podnosi cel ładowania do
