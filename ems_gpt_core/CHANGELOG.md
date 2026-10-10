@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.10 — zachowanie targetu końca doby
+
+- Recovery osiągalności SOC nie obniża już targetu końca lokalnej doby ani sufitu ładowania wyznaczonego przez bilans dobowy.
+- Gdy target jest fizycznie nieosiągalny, sprzedaż baterii jest wyłączana, a wymagany SOC, osiągalny SOC i niedobór są jawnie rejestrowane.
+- Dodano regresję, że ograniczenie osiągalności nie zastępuje targetu dobowego niższym SOC.
+
 ## 0.40.9 — naprawa startu planera
 
 - Domknięto wywołanie `deterministic_soc_target_contract`, które powodowało `SyntaxError` i uniemożliwiało uruchomienie dodatku.
