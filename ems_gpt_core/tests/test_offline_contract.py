@@ -142,6 +142,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("required_floor_unit", planner)
         self.assertIn("current_energy - max(first_unit, required_unit) * unit_kwh", planner)
         self.assertIn("max_grid_import_kw=max_grid_import_kw", planner)
+        self.assertNotIn("enforced_target_unit", planner)
 
     def test_hourly_and_daily_soc_boundaries_are_continuous_actuals(self):
         materialization = MODULE_SOURCES["materialization_service.py"]
