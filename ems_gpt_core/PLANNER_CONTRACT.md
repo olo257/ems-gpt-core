@@ -150,17 +150,17 @@ Techniczne minimum SOC jest granicą awaryjną, nie celem operacyjnym. Planowana
 wykonalności od idealnego rozpoczęcia prognozowanego PV. Target zawiera zapas
 wynikający z konserwatywnej korekty zużycia i PV.
 
-Na końcu każdej lokalnej doby obowiązuje dodatkowa minimalna granica:
-ważona średnia rzeczywistego SOC zamknięcia z okien 7/14/28 dni pomniejszona
-o 5 punktów procentowych, nie niższa niż techniczna rezerwa. Tolerancja
-nie oznacza mnożenia średniej przez 95%. Wymaganie historyczne dotyczy tylko
-końca doby; nie jest powtarzane przed porannym SELL.
+Na końcu każdej lokalnej doby historyczny punkt odniesienia stanowi
+ważona średnia rzeczywistego SOC zamknięcia z okien 7/14/28 dni, bez odjęcia
+stałej tolerancji. Wymaganie historyczne dotyczy wyłącznie zamknięcia doby;
+nie jest powtarzane przed porannym SELL. Bilans prognozowanego zużycia do
+najbliższego PV/BUY może wymagać wyższego SOC.
 
 Niezależny bilans bezpieczeństwa wymaga co najmniej 15% (lub wyższego minimum
 konfiguracji) plus `soc_replenishment_buffer_pct` (domyślnie 2 p.p.) w każdym
 slocie oraz energii na przyszły deficyt domu i HP. Uwzględnia sprawności i
-`forecast_uncertainty_weight`. Wymaganie końca doby jest maksimum celu
-historycznego minus 5 p.p. i tej rezerwy na noc w dostępnym horyzoncie.
+`forecast_uncertainty_weight`. Wymaganie końca doby jest maksimum historycznego punktu odniesienia
+i rezerwy wynikającej z bilansu nocnego w dostępnym horyzoncie.
 
 BUY odciąża wcześniejszy bilans wyłącznie o fizycznie dostępną moc i czas
 ładowania poza SELL. PV odciąża go tylko o nadwyżkę po odbiorach, ograniczoną
