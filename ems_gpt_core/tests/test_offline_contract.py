@@ -89,7 +89,9 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_soc_contracts_replace_pv_first_feedback_fallback(self):
         planner=MODULE_SOURCES["planner_service.py"]
-        self.assertIn("economic_optimization = optimize_energy_horizon",planner)
+        self.assertIn("target_contract = deterministic_soc_target_contract", planner)
+        self.assertNotIn("economic_optimization = optimize_energy_horizon", planner)
+        self.assertIn("battery_sales_enabled=False", planner)
         self.assertIn("required_soc_pcts",planner)
         self.assertNotIn("pv_first_exc",planner)
 
@@ -440,8 +442,9 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("Replan nie może kończyć się na granicy dnia", PLANNER_CONTRACT)
 
     def test_grid_supply_label_requires_a_physical_grid_flow(self):
-        planner = MODULE_SOURCES["planner_service.py"]
-        self.assertIn('"Zasilanie z sieci" if item["grid_load_kwh"]>technical_threshold else "Neutralny"', planner)
+        ppd = MODULE_SOURCES["ppd_service.py"]
+        self.assertIn('"Zasilanie z sieci" if grid_load > technical_threshold', ppd)
+        self.assertIn("grid_load = max(0.0, load - pv_to_load - battery_to_load)", ppd)
 
     def test_migration_audit_closure(self):
         self.assertIn('\"ai_observer\": \"SHADOW_READ_ONLY\"', SOURCE)
@@ -533,8 +536,24 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("market_window NOT IN ('BUY','SELL','NEUTRAL')", SOURCE)
         self.assertIn("planned_battery_charge_kwh>0.000001 AND planned_battery_discharge_kwh>0.000001", SOURCE)
         self.assertIn("heat_pump_window NOT IN (0,1)", SOURCE)
-        self.assertIn("CORE_0_33_0", SOURCE)
-        self.assertIn("reason[:255]", SOURCE)
+        self.assertIn("CORE_0_40_5", SOURCE)
+
+    def test_planner_and_ppd_have_separate_slot_write_ownership(self):
+        planner = MODULE_SOURCES["planner_service.py"]
+        ppd = MODULE_SOURCES["ppd_service.py"]
+        self.assertNotIn("p.planned_pv_to_cwu_kwh=", planner)
+        self.assertNotIn("p.planned_pv_to_ev_kwh=", planner)
+        self.assertNotIn("p.planned_pv_export_kwh=", planner)
+        self.assertNotIn("p.planned_pv_curtail_kwh=", planner)
+        self.assertNotIn("p.recommendation=", planner)
+        self.assertIn("return max(0.0, pv - load - pv_to_bat)", ppd)
+        self.assertIn("target_read_only", ppd)
+
+    def test_planner_input_writers_share_the_heavy_job_lock(self):
+        self.assertIn('run_serialized("load_learning", _learn_missing_load)', APP_SOURCE)
+        self.assertIn('run_serialized("pv_forecast", _INGESTION.refresh_pv_forecast)', APP_SOURCE)
+        self.assertIn('run_serialized("rce_import", _INGESTION.refresh_rce, target_day)', APP_SOURCE)
+        self.assertIn('run_serialized("planner", run_planner', APP_SOURCE)
 
     def test_executor_is_safe_by_default(self):
         self.assertIn("executor_enabled: false", CONFIG)
