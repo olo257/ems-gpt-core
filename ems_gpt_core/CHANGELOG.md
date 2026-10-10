@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.13 — zgodność osiągalności SOC z limitem sieci
+
+- Walidacja osiągalności SOC stosuje te same zasady co optimizer: jednoczesny import na dom i baterię jest dozwolony w oknie BUY, ale łączny import nie przekracza ustawionego limitu sieci.
+- Usunięto rozbieżność, która wyznaczała niewykonalne wymagania SOC i kończyła planowanie błędem `SOC_SAFETY_BRIDGE_UNREACHABLE`.
+- Wersja widoczna w statusie dodatku jest zgodna z wydaniem.
+- Dodano regresję dla limitu 12 kW i ładowania 1,25 kWh na slot.
+
+
 ## 0.40.12 — wspólny limit importu domu i baterii
 
 - Planer uwzględnia łączny limit importu z sieci dla zużycia domu i ładowania baterii; domyślnie 12 kW (3 kWh na slot 15-minutowy).
