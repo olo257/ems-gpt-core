@@ -1,5 +1,14 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.2 — zachowanie historycznego SOC target
+
+- Usunięto stałe obniżenie historycznego SOC końca doby o 5 p.p.
+- Kontrakt SOC nie jest już obcinany do trajektorii wcześniejszego przebiegu
+  ekonomicznego; wykonalność rozstrzyga przebieg ograniczony wraz z istniejącą
+  obsługą odzyskiwania.
+- Dodano regresje dla obu przypadków.
+- Wydanie nie zmienia rezerwacji bezpieczeństwa, helperów ani konfiguracji HA.
+
 ## 0.40.1 — walidacja aktywnych terminów BUY
 
 - Końcowa walidacja planu korzysta z terminów BUY faktycznie zachowanych przez
