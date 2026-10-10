@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_13"
+PLANNER_VERSION = "CORE_0_40_14"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -261,9 +261,14 @@ def _soc_reachability_profile(
         next_predecessors = {}
         for current, score in scores.items():
             current_energy = current * unit_kwh
+            required_floor_unit = (
+                first_unit if required_soc_pcts is None else
+                max(first_unit, int(math.ceil(
+                    float(required_soc_pcts[index]) / step - 1e-9)))
+            )
             usable_internal = min(
                 max_internal_discharge,
-                max(0.0, current_energy - first_unit * unit_kwh),
+                max(0.0, current_energy - required_floor_unit * unit_kwh),
             )
             unavoidable_grid_load = max(0.0, deficit - usable_internal * eta_discharge)
             lower_state = current if current < first_unit else first_unit
@@ -1137,9 +1142,12 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # battery energy.  This distinction keeps the horizon feasible
                 # when a replan starts at minimum SOC while preserving the
                 # contract that planned BUY exists only to charge the battery.
+                # Preserve the active SOC bridge as well as the inverter reserve.
+                # Grid supplied home load is unavoidable when battery discharge
+                # would cross this slot's required SOC floor.
                 usable_internal = min(
                     max_internal_discharge,
-                    max(0.0, current_energy - first_unit * unit_kwh),
+                    max(0.0, current_energy - max(first_unit, required_unit) * unit_kwh),
                 )
                 unavoidable_grid_load = max(
                     0.0, deficit - usable_internal * eta_d,
