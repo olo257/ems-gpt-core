@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.12 — wspólny limit importu domu i baterii
+
+- Planer uwzględnia łączny limit importu z sieci dla zużycia domu i ładowania baterii; domyślnie 12 kW (3 kWh na slot 15-minutowy).
+- W oknie BUY może zasilać dom z sieci równolegle z ładowaniem baterii, ograniczonym do 5 kW (1,25 kWh na slot 15-minutowy).
+- Osiągalność celu SOC na końcu okna BUY uwzględnia obciążenie domu w tym samym slocie; niemożliwy cel zapisuje niedobór zamiast przerywać planowanie.
+- Replan bierze świeży, bieżący SOC jako stan początkowy; dodano regresję dla połączonego importu domu i ładowania.
+
+
 ## 0.40.11 — recovery wykonalnego SOC
 
 - Gdy wymagany SOC mostu bezpieczeństwa jest fizycznie nieosiągalny, planer obniża wymóg wykonawczy wyłącznie do osiągalnego SOC, z zachowaniem rezerwy technicznej.
