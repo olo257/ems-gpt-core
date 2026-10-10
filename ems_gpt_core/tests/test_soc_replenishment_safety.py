@@ -331,6 +331,50 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         for flow, bound in zip(final['flows'], safety):
             self.assertGreaterEqual(flow['soc_end_pct'] + 1e-9, bound)
 
+    def test_multislot_buy_target_propagates_back_to_whole_bridge(self):
+        rows = self.rows(8)
+        for index in range(4):
+            rows[index].update(buy_window=True, price_buy_pln_kwh=0.1)
+        rows[4]['buy_window'] = True
+        rows[5]['buy_window'] = True
+        rows[4]['price_buy_pln_kwh'] = 1.0
+        rows[5]['price_buy_pln_kwh'] = 1.0
+        flows = [{
+            'battery_to_load_kwh': 0.0,
+            'pv_to_bat_kwh': 0.0,
+            'grid_charge_kwh': 0.5 if index in {4, 5} else 0.0,
+            'battery_sell_kwh': 0.0,
+        } for index in range(len(rows))]
+        daily_target = [15.0] * len(rows)
+        daily_target[-1] = 35.0
+
+        contracts = build_soc_contracts(
+            rows, flows, 15.0, 15.0, 0.9, 0.95, 0.0,
+            35.0, 100.0, 0.1, daily_target)
+
+        self.assertEqual(contracts['buy_due_indices'], {5})
+        self.assertLess(contracts['required'][0], 35.0)
+        self.assertEqual(contracts['charge_targets'][:4], [35.0] * 4)
+
+        # The second pass can now use the earlier, cheaper BUY slots to meet
+        # the exact daily amount instead of waiting for the late selected run.
+        daily_floor = [15.0] * len(rows)
+        daily_floor[-1] = 35.0
+        final = optimize_energy_horizon(
+            rows, 15.0, 15.0, 15.0, 0.9, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0] * len(rows), 35.0, 0.1, 100.0,
+            contracts['charge_targets'], set(),
+            contracts['buy_due_indices'], daily_floor,
+            battery_sales_enabled=False)
+        charged_early = sum(
+            flow['grid_charge_kwh'] for flow in final['flows'][:4])
+        charged_late = sum(
+            flow['grid_charge_kwh'] for flow in final['flows'][4:6])
+        self.assertGreater(charged_early, 0.0)
+        self.assertAlmostEqual(charged_late, 0.0, places=6)
+        self.assertAlmostEqual(charged_early, 15.0 * 0.20 / 0.9, places=5)
+        self.assertAlmostEqual(final['flows'][-1]['soc_end_pct'], 35.0)
+
 
 if __name__ == '__main__':
     unittest.main()

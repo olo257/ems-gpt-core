@@ -1495,7 +1495,12 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
             charge_targets[i] = window_target
         # Carry the same BUY ceiling backward across its assigned energy bridge
         # so an earlier PV surplus can replace part or all of the later import.
-        group_due = rows[start].get("slot_end") or rows[start].get("slot_start")
+        # ``due`` on bridge slots points to the end of the complete selected
+        # BUY run (the optimizer's deadline), not to the first slot in that
+        # run.  Matching the latter silently skipped target propagation for
+        # multi-slot BUY windows and left the whole preceding day on the lower
+        # safety trajectory until the final purchase slots.
+        group_due = rows[end].get("slot_end") or rows[end].get("slot_start")
         for i in range(start - 1, -1, -1):
             if source[i] != "BUY" or due[i] != group_due:
                 break
