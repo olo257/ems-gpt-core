@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.7. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.8. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -64,13 +64,19 @@ optymalizacji ekonomicznej: najpierw obciążenie bazowe i HP, prognoza PV,
 sprawności, rezerwa oraz dopuszczone przez RCE okna BUY wyznaczają wymagane SOC
 i terminy uzupełnienia. Dopiero potem optymalizator wybiera przepływy i
 ekonomiczne wykorzystanie zakupów w granicach tego kontraktu. Przebieg
-ekonomiczny nie może obniżać ani tworzyć wymagań SOC. Jeśli w pozostałej
-części bieżącej doby jest dokładnie jedno okno BUY, target na jego końcu
-wynosi co najmniej `soc_single_daily_buy_target_pct` (domyślnie 95%).
-Gdy tego targetu nie da się fizycznie osiągnąć, planer wyznacza najwyższe
-osiągalne SOC, wykorzystuje dostępną moc ładowania i jawnie raportuje różnicę.
-Średni target końca doby z 7/14/28 dni pozostaje celem; niewykonalność oznacza
-best-effort z raportowanym niedoborem, a nie ciche obniżenie celu do rezerwy.
+ekonomiczny nie może obniżać ani tworzyć wymagań SOC. Targetem końca każdej
+doby jest ważona średnia rzeczywistych zamknięć SOC z 7/14/28 dni. Wymagany
+SOC w slotach przed zamknięciem wynika z bilansu wstecznego: target zamknięcia,
+prognozowane zużycie i PV, sprawności, rezerwa oraz fizyczna dostępność
+ładowania w oknach BUY. Nie ma stałego progu SOC dla ostatniego okna BUY.
+Każde przyszłe okno doby (w tym jutro po 14:00) jest uwzględniane wyłącznie,
+gdy kompletne ceny RCE i prognozy znajdują się w ciągłym horyzoncie planu.
+Niewykonalność celu jest raportowana jako niedobór, bez cichego obniżenia celu
+do rezerwy.
+
+W prognozie bilansu obciążenie `HP_DHW` jest już zawarte w zużyciu bazowym.
+Dodatkowo uwzględniany jest zaplanowany cykl `HP_HEAT_DHW`; nie należy
+doliczać ponownie profilu `HP_DHW`.
 
 Każdy pakiet wykonuje etapy w tej kolejności:
 
