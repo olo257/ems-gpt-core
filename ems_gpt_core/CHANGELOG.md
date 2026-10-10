@@ -1,5 +1,16 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.7 — zachowanie celu SOC doby i ostatniego BUY
+
+- Ostatnie pojedyncze okno BUY bieżącej doby podnosi cel ładowania do
+  konfigurowalnego minimum 95% (maksymalnie do 100%); ograniczenie fizyczne
+  pozostaje jawne i planer wybiera najwyższy osiągalny poziom.
+- Cel końca doby oparty na średniej SOC 7/14/28 nie jest już po cichu
+  zastępowany rezerwą techniczną po nieudanym przebiegu. Plan zachowuje
+  osiągalny cel i raportuje shortfall.
+- Dodano testy regresyjne dla pojedynczego pozostałego okna BUY i recovery
+  targetu bieżącej doby.
+
 ## 0.40.6 — naprawa endpointu aktywnego bilansu
 
 - Przywrócono jawny import `calculate_slot_energy_balance` w API. Brak importu
