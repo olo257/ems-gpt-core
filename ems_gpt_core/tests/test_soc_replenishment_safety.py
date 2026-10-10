@@ -33,18 +33,29 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             required_soc_pcts=required,
             battery_sales_enabled=battery_sales_enabled)
 
-    def test_daily_tolerance_is_percentage_points(self):
-        self.assertAlmostEqual(end_of_day_soc_target(47.7, 15.0, 100.0), 42.7)
-        self.assertEqual(end_of_day_soc_target(17.0, 15.0, 100.0), 15.0)
+    def test_historical_terminal_soc_is_not_discounted(self):
+        self.assertAlmostEqual(end_of_day_soc_target(47.7, 15.0, 100.0), 47.7)
+        self.assertEqual(end_of_day_soc_target(17.0, 15.0, 100.0), 17.0)
+        self.assertEqual(end_of_day_soc_target(105.0, 15.0, 100.0), 100.0)
+
+    def test_contract_is_not_clamped_to_economic_path(self):
+        rows = self.rows(1)
+        contract = build_soc_contracts(
+            rows,
+            [{"soc_end_pct": 20.0, "battery_sell_kwh": 0.0,
+              "battery_to_load_kwh": 0.0, "pv_to_bat_kwh": 0.0,
+              "grid_charge_kwh": 0.0}],
+            15.0, 15.0, 0.9, 0.95, 0.0, 60.0, 100.0, 0.1)
+        self.assertEqual(contract["required"], [60.0])
 
     def test_history_applies_at_midnight_and_never_at_morning_sell(self):
         rows = self.rows(28)
         rows[25]['sale_window'] = True
         safety = self.safety(rows)
         required, closes = daily_close_soc_requirements(
-            rows, safety, {rows[0]['local_day']: 42.7, rows[-1]['local_day']: 42.7})
+            rows, safety, {rows[0]['local_day']: 47.7, rows[-1]['local_day']: 47.7})
         self.assertEqual(closes, {0, 27})
-        self.assertEqual(required[0], 42.7)
+        self.assertEqual(required[0], 47.7)
         self.assertEqual(required[24], 17.0)
         self.assertEqual(required[25], 17.0)
 
@@ -55,7 +66,7 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         safety = self.safety(rows)
         required, _ = daily_close_soc_requirements(
             rows, safety, {rows[0]['local_day']: 42.7, rows[-1]['local_day']: 42.7})
-        self.assertGreater(required[0], 42.7)
+        self.assertGreater(required[0], 47.7)
         self.assertAlmostEqual(required[0], 17.0 + 5.0/0.95/15.0*100.0)
 
     def test_short_buy_only_offsets_finite_capacity(self):
