@@ -11,6 +11,8 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
+PLANNER_VERSION = "CORE_0_40_5"
+
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
                             weights_pct: dict[int, float], fallback_pct: float) -> dict:
@@ -716,6 +718,82 @@ def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
             required[index] = max(safety_pcts[index], daily_terminal_soc[row_day])
             closes.add(index)
     return required, closes
+
+
+def deterministic_soc_target_contract(
+        rows: list[dict], safety_required_soc_pcts: list[float],
+        daily_required_soc_pcts: list[float], capacity_kwh: float,
+        reserve_pct: float, eta_c: float, eta_d: float,
+        max_power_kw: float, slot_minutes: int,
+        uncertainty_weight: float, soc_step_pct: float = 0.10) -> dict:
+    """Calculate required SOC from load/PV and fixed RCE permissions first.
+
+    No optimizer flow or price objective participates in target calculation.
+    BUY windows contribute only their physical slot capacity; PV contributes
+    surplus after native and HP load. Grid charging remains limited by RCE BUY.
+    """
+    if not (len(rows) == len(safety_required_soc_pcts)
+            == len(daily_required_soc_pcts)):
+        raise ValueError("DIRECT_SOC_CONTRACT_LENGTH_MISMATCH")
+    capacity = max(0.001, float(capacity_kwh))
+    reserve = max(15.0, float(reserve_pct))
+    base_kwh = capacity * reserve / 100.0
+    charge_efficiency = max(0.01, float(eta_c))
+    discharge_efficiency = max(0.01, float(eta_d))
+    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
+    max_charge = max(0.0, float(max_power_kw)) * slot_minutes / 60.0 * charge_efficiency
+    step = max(0.001, float(soc_step_pct))
+    quantum_kwh = capacity * step / 100.0
+    selected_buy = {
+        i for i, row in enumerate(rows)
+        if strict_database_bool(row.get("buy_window", False), "buy_window")
+        and not strict_database_bool(row.get("sale_window", False), "sale_window")
+    }
+    buy_due = {i for i in selected_buy
+               if i + 1 == len(rows) or i + 1 not in selected_buy}
+    required = [reserve] * len(rows)
+    next_requirement_kwh = base_kwh
+    for i in range(len(rows) - 1, -1, -1):
+        requested = max(float(safety_required_soc_pcts[i]),
+                        float(daily_required_soc_pcts[i]), reserve)
+        after_kwh = max(next_requirement_kwh,
+                        capacity * min(100.0, requested) / 100.0)
+        after_kwh = math.ceil(after_kwh / quantum_kwh - 1e-9) * quantum_kwh
+        required[i] = min(100.0, after_kwh / capacity * 100.0)
+        row = rows[i]
+        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
+                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
+        deficit = max(0.0, load - pv) / discharge_efficiency * (1.0 + uncertainty)
+        surplus = max(0.0, pv - load) * charge_efficiency * (1.0 - uncertainty)
+        buy_allowed = i in selected_buy
+        supply = max_charge if buy_allowed else min(max_charge, surplus)
+        supply = math.floor(supply / quantum_kwh + 1e-9) * quantum_kwh
+        next_requirement_kwh = max(base_kwh, after_kwh + deficit - supply)
+    due, source = [], []
+    for i in range(len(rows)):
+        future_buys = [j for j in buy_due if j >= i]
+        future_pv = [j for j in range(i, len(rows))
+                     if max(0.0, float(rows[j].get("forecast_pv_total_kwh") or 0.0))
+                     > max(0.0, float(rows[j].get("forecast_load_kwh") or 0.0))
+                     + max(0.0, float(rows[j].get("forecast_heat_pump_load_kwh") or 0.0))]
+        candidates = [(j, "BUY") for j in future_buys] + [(j, "PV") for j in future_pv]
+        if candidates:
+            event_index, event_source = min(candidates, key=lambda item: item[0])
+            due.append(rows[event_index].get("slot_end") or rows[event_index].get("slot_start"))
+            source.append(event_source)
+        else:
+            due.append(rows[-1].get("slot_end") or rows[-1].get("slot_start"))
+            source.append("HORIZON")
+    return {
+        "required": required,
+        "charge_targets": list(required),
+        "due": due,
+        "source": source,
+        "reserved_pv_kwh": [0.0] * len(rows),
+        "buy_due_indices": buy_due,
+        "selected_buy_indices": selected_buy,
+    }
 
 
 def replenishment_soc_requirements(rows: list[dict], capacity_kwh: float,
@@ -1796,7 +1874,7 @@ def build_planner(a: PlannerAdapters):
             cur.execute("""INSERT INTO ems_gpt_plan_runs
               (run_id,plan_day,run_type,stage_version,expected_slots,status,current_stage,created_at,updated_at)
               VALUES(%s,%s,%s,%s,%s,'RUNNING','RCE_RAW',NOW(6),NOW(6))""",
-              (run_id, cutoff.date(), run_type, "CORE_0_34_0", len(source)))
+              (run_id, cutoff.date(), run_type, PLANNER_VERSION, len(source)))
             stage_columns = [
                 "slot_start","slot_end","slot_id","slot_start_utc","slot_start_local","utc_offset_minutes",
                 "local_fold","local_day","slot_index_local","price_sell_pln_kwh","price_buy_pln_kwh","price_source",
@@ -2019,7 +2097,18 @@ def build_planner(a: PlannerAdapters):
                 }, "WARNING")
             daily_required_soc, daily_close_indices = daily_close_soc_requirements(
                 horizon_rows, safety_required_soc, daily_terminal_soc)
-            terminal_soc = max(terminal_soc, safety_required_soc[-1])
+            target_contract = deterministic_soc_target_contract(
+                horizon_rows, safety_required_soc, daily_required_soc,
+                capacity, reserve, eta_c, eta_d, max_kw,
+                int(OPTIONS["slot_minutes"]), uncertainty_weight)
+            target_recovery = validate_recoverable_soc_requirements(
+                horizon_rows, target_contract["required"], soc_now, reserve,
+                target_cap, capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
+                max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
+                soc_step_pct=0.10)
+            target_contract["required"] = target_recovery["required_soc_pcts"]
+            target_contract["charge_targets"] = list(target_contract["required"])
+            terminal_soc = max(terminal_soc, target_contract["required"][-1])
             record_event("replenishment_soc_safety", "planner", {
                 "minimum_soc_pct": max(15.0, reserve),
                 "buffer_pp": float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
@@ -2030,10 +2119,9 @@ def build_planner(a: PlannerAdapters):
             audit_stage(cur,run_id,"LOAD","OK",len(rows),"pass 2: native and controllable load")
             audit_stage(cur,run_id,"PV","OK",len(rows),"pass 3: corrected PV balance")
             ensure_deadline("PV")
-            # Pass 4: economics chooses exact grid-energy allocations.  Pass
-            # 5 converts those kWh into independent continuous SOC contracts
-            # and validates one constrained dispatch.  No BUY-path feedback
-            # loop is allowed to redefine or reset the energy bridge.
+            # Derive SOC requirements from load, PV and RCE windows before
+            # running any dispatch optimization. The seed below is constrained
+            # by that immutable contract and has battery sales disabled.
             optimized_floors = list(sale_constraints)
             internal_soc_step=0.10
             enforced_daily_required = list(daily_required_soc)
@@ -2054,14 +2142,20 @@ def build_planner(a: PlannerAdapters):
                     "action": "BATTERY_SALES_DISABLED_RESIDUAL_NATIVE_LOAD_TO_GRID",
                 }, "WARNING")
             terminal_shortfall_allowed = False
+            target_due_indices = set(target_contract["buy_due_indices"])
+            charge_targets = list(target_contract["charge_targets"])
+            enforced_daily_required = list(target_contract["required"])
             while True:
                 try:
-                    economic_optimization = optimize_energy_horizon(
+                    target_seed = optimize_energy_horizon(
                         horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,
                         degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
                         optimized_floors,terminal_soc,internal_soc_step,target_cap,
+                        minimum_soc_targets=charge_targets,
+                        hard_target_indices=set(),
+                        target_due_indices=target_due_indices,
                         required_soc_pcts=enforced_daily_required,
-                        battery_sales_enabled=battery_sales_enabled,
+                        battery_sales_enabled=False,
                         allow_terminal_shortfall=terminal_shortfall_allowed)
                     break
                 except RuntimeError as exc:
@@ -2121,14 +2215,14 @@ def build_planner(a: PlannerAdapters):
                         "requested_soc_pct": daily_required_soc[failed_index],
                         "reason": str(exc),
                     }, "WARNING")
-            if economic_optimization.get("terminal_shortfall_pct", 0.0) > 1e-9:
+            if target_seed.get("terminal_shortfall_pct", 0.0) > 1e-9:
                 requested_terminal_soc = terminal_soc
-                terminal_soc = float(economic_optimization["achieved_terminal_soc_pct"])
+                terminal_soc = float(target_seed["achieved_terminal_soc_pct"])
                 record_event("current_day_terminal_soc_unreachable", "planner", {
                     "terminal_day": str(terminal_day),
                     "requested_soc_pct": requested_terminal_soc,
                     "achieved_soc_pct": terminal_soc,
-                    "shortfall_pct": economic_optimization["terminal_shortfall_pct"],
+                    "shortfall_pct": target_seed["terminal_shortfall_pct"],
                     "battery_sales_enabled": battery_sales_enabled,
                 }, "WARNING")
 
@@ -2262,7 +2356,7 @@ def build_planner(a: PlannerAdapters):
             # near-term battery BUY.
             for _ in range(2):
                 guarded_floors = tou_sale_safety_floors(
-                    horizon_rows, tou_by_index, economic_optimization["flows"],
+                    horizon_rows, tou_by_index, target_seed["flows"],
                     capacity, reserve, eta_d, uncertainty_weight,
                     int(OPTIONS.get("tou_bridge_override_max_minutes", 180)),
                     int(OPTIONS["slot_minutes"]), enforced_daily_required)
@@ -2270,11 +2364,11 @@ def build_planner(a: PlannerAdapters):
                        for a, b in zip(guarded_floors, optimized_floors)):
                     break
                 optimized_floors = guarded_floors
-                economic_optimization = optimize_remaining_pass(
+                target_seed = optimize_remaining_pass(
                     "TOU_GUARD_ITERATION", optimized_floors,
                     required_pcts=enforced_daily_required)
             final_guarded = tou_sale_safety_floors(
-                horizon_rows, tou_by_index, economic_optimization["flows"],
+                horizon_rows, tou_by_index, target_seed["flows"],
                 capacity, reserve, eta_d, uncertainty_weight,
                 int(OPTIONS.get("tou_bridge_override_max_minutes", 180)),
                 int(OPTIONS["slot_minutes"]), enforced_daily_required)
@@ -2284,25 +2378,18 @@ def build_planner(a: PlannerAdapters):
                 # the two-pass result is not stable, retain the stricter floor.
                 optimized_floors = [max(a, b)
                                     for a, b in zip(final_guarded, optimized_floors)]
-                economic_optimization = optimize_remaining_pass(
+                target_seed = optimize_remaining_pass(
                     "TOU_GUARD_FINAL", optimized_floors,
                     required_pcts=enforced_daily_required)
             for sale_guard_attempt in range(2):
-                commitment=build_soc_contracts(
-                    horizon_rows,economic_optimization["flows"],capacity,reserve,
-                    eta_c,eta_d,uncertainty_weight,terminal_soc,target_cap,0.25,
-                    enforced_daily_required)
-                required_soc = [max(contract, safety)
-                                for contract, safety in zip(
-                                    commitment["required"], enforced_daily_required)]
-                charge_targets = [max(target, required)
-                                  for target, required in zip(
-                                      commitment["charge_targets"], required_soc)]
+                commitment = target_contract
+                required_soc = list(enforced_daily_required)
+                charge_targets = list(target_contract["charge_targets"])
                 for index in waived_daily_closes:
                     charge_targets[index] = max(
                         charge_targets[index], daily_required_soc[index])
-                target_due_indices=set(commitment["buy_due_indices"])
-                selected_buy_indices=set(commitment["selected_buy_indices"])
+                target_due_indices = set(target_contract["buy_due_indices"])
+                selected_buy_indices = set(target_contract["selected_buy_indices"])
                 optimization=optimize_remaining_pass(
                     "TARGET_COMMITMENT", optimized_floors, charge_targets, set(),
                     target_due_indices, required_soc)
@@ -2324,7 +2411,7 @@ def build_planner(a: PlannerAdapters):
                         # selected route has no sale, replan with that exception
                         # disabled instead of publishing a hidden house import.
                         battery_sales_enabled = False
-                        economic_optimization = optimize_remaining_pass(
+                        target_seed = optimize_remaining_pass(
                             "GRID_LOAD_WITHOUT_SALE_GUARD", optimized_floors,
                             required_pcts=enforced_daily_required)
                         ensure_deadline("GRID_LOAD_WITHOUT_SALE_GUARD")
@@ -2340,7 +2427,7 @@ def build_planner(a: PlannerAdapters):
                 )
                 if voluntary_without_later_sale:
                     battery_sales_enabled = False
-                    economic_optimization = optimize_remaining_pass(
+                    target_seed = optimize_remaining_pass(
                         "GRID_LOAD_AFTER_SALE_GUARD", optimized_floors,
                         required_pcts=enforced_daily_required)
                     ensure_deadline("GRID_LOAD_AFTER_SALE_GUARD")
@@ -2366,7 +2453,7 @@ def build_planner(a: PlannerAdapters):
                 if sale_assessment["eligible"]:
                     break
                 battery_sales_enabled = False
-                economic_optimization = optimize_remaining_pass(
+                target_seed = optimize_remaining_pass(
                     "SALE_GUARD_REPLAN", optimized_floors,
                     required_pcts=enforced_daily_required)
                 ensure_deadline("SALE_GUARD_REPLAN")
@@ -2384,8 +2471,9 @@ def build_planner(a: PlannerAdapters):
             record_event("daily_plan_variant_selected","planner",{
                 "run_id":run_id,"terminal_soc_pct":round(terminal_soc,3),
                 "selected":"DETERMINISTIC_SOC_CONTRACT_V4",
-                "economic_net_pln":-float(economic_optimization["objective_pln"]),
-                "constrained_net_pln":-float(optimization["objective_pln"]),
+                "target_seed_objective_pln":float(target_seed["objective_pln"]),
+                "final_dispatch_objective_pln":float(optimization["objective_pln"]),
+                "target_source":"FORECAST_LOAD_PV_AND_RCE_WINDOWS",
             })
             ensure_deadline("TARGET_COMMITMENT")
             ensure_deadline("DISPATCH")
@@ -2516,17 +2604,8 @@ def build_planner(a: PlannerAdapters):
                 paired_buy=buy>flow_threshold and any(float(previous["battery_sell_kwh"])>flow_threshold for previous in optimization["flows"][:i])
                 buy_purpose="POST_SALE_RECOVERY" if paired_buy else "FUTURE_LOAD_OR_SALE_PREPARATION" if buy>flow_threshold else "NONE"
                 no_sell_pv=sell_price<=0
-                raw_flexible=max(0.0,pv_flex+float(item.get("pv_curtail_kwh") or 0.0))
-                cwu_kwh=ev_kwh=0.0
-                pv_export_kwh=raw_flexible if sell_price>0 else 0.0
-                pv_curtail_kwh=raw_flexible-pv_export_kwh
-                item["pv_export"]=pv_export_kwh
                 grid_policy="BUY_ALLOWED" if buy>flow_threshold else ("NO_BUY" if sell_bat else "NEUTRAL")
-                export_policy="SELL_BAT" if sell_bat else ("NO_SELL_PV" if no_sell_pv else ("SELL_PV" if item["pv_export"]>flow_threshold else "NEUTRAL"))
-                recommendation=("Zakup ładowanie" if buy>flow_threshold else "Sprzedaż z baterii" if sell_bat else
-                    "Sprzedaż PV" if item["pv_export"]>flow_threshold else "Ładowanie PV" if item["charge"]>flow_threshold else
-                    "Autokonsumpcja PV" if pv>flow_threshold else "Autokonsumpcja z baterii" if item["battery_to_load_kwh"]>flow_threshold else
-                    "Zasilanie z sieci" if item["grid_load_kwh"]>technical_threshold else "Neutralny")
+                export_policy="SELL_BAT" if sell_bat else ("NO_SELL_PV" if no_sell_pv else "NEUTRAL")
                 reason=(f"optimizer=FULL_HORIZON; horizon_slots={len(base)}; objective_pln={optimization['objective_pln']:.3f}; "
                         f"slot_cost_pln={item['slot_cost_pln']:.3f}; grid={grid_policy}; export={export_policy}; "
                         f"soc={item['end']:.2f}; required={required:.2f}; floor={floor:.2f}; charge_target={target:.2f}; hp_load_kwh={hp_load:.3f}; "
@@ -2538,20 +2617,18 @@ def build_planner(a: PlannerAdapters):
                   soc_sale_floor_pct=%s,soc_floor_pct=%s,soc_target_pct=%s,
                   soc_target_due=%s,soc_target_source=%s,
                   soc_target_reserved_pv_kwh=%s,planned_buy_kwh=%s,planned_battery_charge_kwh=%s,
-                  planned_battery_discharge_kwh=%s,planned_sell_kwh=%s,planned_pv_export_kwh=%s,
-                  recommendation=%s,grid_policy_planned=%s,export_policy_planned=%s,
+                  planned_battery_discharge_kwh=%s,planned_sell_kwh=%s,
+                  grid_policy_planned=%s,export_policy_planned=%s,
                   sell_bat_policy_allowed=%s,sell_pv_policy_allowed=%s,
-                  planned_pv_to_bat_kwh=%s,planned_pv_to_cwu_kwh=%s,planned_pv_to_ev_kwh=%s,
-                  planned_pv_curtail_kwh=%s,ppd_reason=%s,soc_updated_at=NOW(6),ppd_updated_at=NOW(6)
+                  planned_pv_to_bat_kwh=%s,soc_updated_at=NOW(6)
                   WHERE run_id=%s AND slot_start=%s""",
                   (round(item["start"],2),round(item["end"],2),round(reserve,2),
                    round(required,2),round(target,2),round(floor,2),round(floor,2),round(target,2),
                    commitment["due"][i],commitment["source"][i],round(commitment["reserved_pv_kwh"][i],6),round(buy,6),
-                   round(item["charge"],6),round(item["discharge"],6),round(item["sell"],6),round(item["pv_export"],6),
-                   recommendation,grid_policy,export_policy,
+                   round(item["charge"],6),round(item["discharge"],6),round(item["sell"],6),
+                   grid_policy,export_policy,
                    int(bool(economics["eligible"])),int(sell_price>0.0),
-                   round(pv_to_bat,6),round(cwu_kwh,6),round(ev_kwh,6),
-                   round(pv_curtail_kwh,6),reason[:255],run_id,row["slot_start"]))
+                   round(pv_to_bat,6),run_id,row["slot_start"]))
                 hp_window = i in hp_selected_indices
                 cur.execute("""UPDATE ems_gpt_plan_stage_rows SET heat_pump_window=%s
                   WHERE run_id=%s AND slot_start=%s""", (hp_window,run_id,row["slot_start"]))
@@ -2593,23 +2670,19 @@ def build_planner(a: PlannerAdapters):
               p.soc_target_due=s.soc_target_due,p.soc_target_source=s.soc_target_source,
               p.soc_target_reserved_pv_kwh=s.soc_target_reserved_pv_kwh,
               p.planned_buy_kwh=s.planned_buy_kwh,
-              p.planned_sell_kwh=s.planned_sell_kwh,p.planned_pv_export_kwh=s.planned_pv_export_kwh,
+              p.planned_sell_kwh=s.planned_sell_kwh,
               p.planned_battery_charge_kwh=s.planned_battery_charge_kwh,
-              p.planned_battery_discharge_kwh=s.planned_battery_discharge_kwh,p.recommendation=s.recommendation,
+              p.planned_battery_discharge_kwh=s.planned_battery_discharge_kwh,
               p.grid_policy_planned=s.grid_policy_planned,p.export_policy_planned=s.export_policy_planned,
               p.sell_bat_policy_allowed=s.sell_bat_policy_allowed,
               p.sell_pv_policy_allowed=s.sell_pv_policy_allowed,
               p.planned_pv_to_bat_kwh=s.planned_pv_to_bat_kwh,
-              p.planned_pv_to_cwu_kwh=s.planned_pv_to_cwu_kwh,
-              p.planned_pv_to_ev_kwh=s.planned_pv_to_ev_kwh,
-              p.planned_pv_curtail_kwh=s.planned_pv_curtail_kwh,
               p.heat_pump_window=s.heat_pump_window,
-              p.ppd_reason=s.ppd_reason,p.ppd_run_type=%s,
-              p.ppd_version='CORE_0_34_0',p.ppd_locked_at=NOW(6),p.plan_run_id=%s,p.plan_stage='PUBLISHED',
-              p.plan_stage_version='CORE_0_34_0',p.plan_stage_updated_at=NOW(6),
+              p.plan_run_id=%s,p.plan_stage='PUBLISHED',
+              p.plan_stage_version=%s,p.plan_stage_updated_at=NOW(6),
               p.plan_validation_status='ACCEPTED',p.plan_validation_reason='OK',
               p.plan_published_at=NOW(6),p.plan_published=1 WHERE p.actual_recorded_at IS NULL AND p.slot_start>=%s""",
-              (run_id,run_type,run_id,cutoff))
+              (run_id,run_id,PLANNER_VERSION,cutoff))
             published=cur.rowcount
             cur.execute("""UPDATE ems_gpt_plan_runs SET status='PUBLISHED',current_stage='VALIDATE',
               validated_at=NOW(6),published_at=NOW(6),validation_status='ACCEPTED',
