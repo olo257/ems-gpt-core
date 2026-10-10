@@ -31,11 +31,23 @@ from planner_service import (
     bridge_soc_commitments,
     derive_soc_commitments,
     soc_bridge_envelopes,
+    validate_target_due_soc,
 )
 from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
+    def test_target_validation_obeys_effective_deadline_set(self):
+        flows = [{"soc_end_pct": 19.0}]
+        targets = [23.8]
+
+        # The optional deadline was explicitly dropped by fallback; the
+        # independent required-SOC contract is validated elsewhere.
+        validate_target_due_soc(flows, targets, set())
+        with self.assertRaisesRegex(
+                RuntimeError, r"SOC_TARGET_NOT_REACHED:0:19\\.0<23\\.8"):
+            validate_target_due_soc(flows, targets, {0})
+
     def test_target_commitment_fallback_keeps_hard_soc_and_drops_optional_buy_deadlines(self):
         import_caps = [35.0, 40.0, 40.0]
         safety_required = [30.0, 35.0, 35.0]
