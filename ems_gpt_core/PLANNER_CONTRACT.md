@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.10. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.11. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -29,6 +29,9 @@ może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
   poprawnego planu.
 - Aktualny, rozpoczęty slot nie jest ponownie planowany. Pierwszym zmienianym
   rekordem jest następny nieotwarty slot.
+- Każdy replan odczytuje bieżący SOC ponownie z `sensor.inverter_battery` i
+  używa go jako stanu początkowego pierwszego nieotwartego slotu. Nie wolno
+  używać SOC z poprzedniego planu ani historycznego zamknięcia doby.
 
 ## 2. Import RCE
 
