@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_11"
+PLANNER_VERSION = "CORE_0_40_12"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -1019,7 +1019,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             target_due_indices: set[int] | None = None,
                             required_soc_pcts: list[float] | None = None,
                             battery_sales_enabled: bool = True,
-                            allow_terminal_shortfall: bool = False) -> dict:
+                            allow_terminal_shortfall: bool = False,
+                            max_grid_import_kw: float = 12.0) -> dict:
     """Minimize total energy cost across every available slot and SOC state."""
     if not rows:
         return {"flows": [], "objective_pln": 0.0, "soc_step_pct": soc_step_pct}
@@ -1034,6 +1035,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     start_unit = max(0, min(last_unit, int(math.floor(initial_soc / step + 1e-9))))
     terminal_unit = max(first_unit, min(last_unit, int(math.ceil(float(terminal_soc_pct) / step - 1e-9))))
     unit_kwh = capacity * step / 100.0
+    max_grid_slot_kwh = max(0.0, float(max_grid_import_kw)) * slot_minutes / 60.0
     max_internal_charge = max_power_kw * slot_minutes / 60.0 * eta_c
     max_internal_discharge = max_power_kw * slot_minutes / 60.0 / eta_d
     max_up = int(math.floor(max_internal_charge / unit_kwh + 1e-9))
@@ -1080,20 +1082,6 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
             max_internal_charge,
             surplus * eta_c + (max_internal_charge if grid_charge_allowed else 0.0),
         )
-        reachable_up = int(math.floor(available_charge_internal / unit_kwh + 1e-9))
-        # A due target is an execution deadline, not permission to invent
-        # charging power.  A rolling replan can enter the final slot of a BUY
-        # or PV replenishment window with less SOC than the backward contract
-        # assumed.  Preserve the requested target as the grid-charge ceiling,
-        # but enforce and publish no more than the highest state reachable from
-        # the currently feasible frontier in this slot.
-        enforced_target_unit = requested_target_unit
-        if index in target_due_indices:
-            enforced_target_unit = min(
-                requested_target_unit,
-                min(last_unit, max(costs) + reachable_up),
-            )
-        effective_target_pcts.append(enforced_target_unit * step)
         next_costs, next_predecessors = {}, {}
         for current_unit, accumulated in costs.items():
             current_energy = current_unit * unit_kwh
@@ -1152,17 +1140,18 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     0.0, deficit - usable_internal * eta_d,
                 )
                 voluntary_grid_load = max(0.0, grid_load - unavoidable_grid_load)
-                # A single SOC quantum can leave a few Wh of numerical
-                # residual load: discharging one more step would become an
-                # illegal battery export. A token SOC step must never unlock
-                # a whole slot of grid-supplied native load. During a real
-                # battery charge the planned battery input must be at least as
-                # large as the voluntary part of grid supply to the house.
-                if grid_charge > 1e-9:
-                    permitted_grid_hold = grid_charge if battery_sales_enabled else 0.0
-                    if voluntary_grid_load > permitted_grid_hold + 1e-9:
-                        continue
-                elif voluntary_grid_load > unit_kwh * eta_d + 1e-9:
+                # The site's import limit applies to home load and battery
+                # charging together. During BUY, the home may be supplied by
+                # the grid while the battery charges, provided that combined
+                # input stays within the configured connection limit.
+                if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
+                    continue
+                # Outside deliberate charging, prefer the battery for native
+                # load when usable SOC is available. A single SOC quantum may
+                # leave a small numerical residual that cannot be discharged
+                # without violating the no-battery-export rule.
+                if (grid_charge <= 1e-9
+                        and voluntary_grid_load > unit_kwh * eta_d + 1e-9):
                     continue
                 # During deliberate export the complete slot, including the
                 # native load, must close at or above both independent
@@ -1199,9 +1188,6 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # At the end of a replenishment window the calculated energy
                 # requirement must be present. Earlier slots in the same window
                 # may share the charge according to price and power limits.
-                if (minimum_soc_targets is not None and index in target_due_indices
-                        and next_unit < enforced_target_unit):
-                    continue
                 slot_cost = ((grid_load+grid_charge)*buy_price
                              -(pv_export+battery_sell)*sell_price
                              +battery_to_load*degradation
@@ -1221,6 +1207,32 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                         "slot_cost_pln": slot_cost})
         if not next_costs:
             raise RuntimeError(f"No feasible SOC state at horizon slot {index}")
+        effective_target_unit = requested_target_unit
+        if minimum_soc_targets is not None and index in target_due_indices:
+            # Determine the due SOC from transitions that survived the full
+            # slot balance, including the energy needed by native loads.  A
+            # charge-only bound (max(frontier) + charge power) can overstate
+            # what remains after serving the house in this same slot and make
+            # every otherwise-feasible transition fail the due-target check.
+            due_candidates = [unit for unit in next_costs
+                              if unit >= requested_target_unit]
+            if due_candidates:
+                eligible = set(due_candidates)
+                next_costs = {unit: cost for unit, cost in next_costs.items()
+                              if unit in eligible}
+                next_predecessors = {
+                    unit: predecessor for unit, predecessor in next_predecessors.items()
+                    if unit in eligible}
+            else:
+                # The requested purchase target is a ceiling on import, not a
+                # reason to reject the whole plan when the slot's net physics
+                # cannot reach it. Retain the highest feasible SOC and expose
+                # that effective target to downstream validation/audit.
+                effective_target_unit = max(next_costs)
+                next_costs = {effective_target_unit: next_costs[effective_target_unit]}
+                next_predecessors = {
+                    effective_target_unit: next_predecessors[effective_target_unit]}
+        effective_target_pcts.append(effective_target_unit * step)
         costs, predecessors = next_costs, predecessors+[next_predecessors]
     candidates = [(cost, unit) for unit, cost in costs.items() if unit >= terminal_unit]
     if not candidates:
@@ -1255,7 +1267,12 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
             "achieved_terminal_soc_pct": selected_terminal_unit*step,
             "terminal_shortfall_pct": max(
                 0.0, (terminal_unit-selected_terminal_unit)*step),
-            "effective_target_pcts": effective_target_pcts}
+            "effective_target_pcts": effective_target_pcts,
+            "requested_target_pcts": [
+                (float(max_soc_pct) if minimum_soc_targets is None else
+                 max(reserve, min(float(max_soc_pct), float(target))))
+                for target in (minimum_soc_targets or [max_soc_pct] * len(rows))
+            ]}
 
 
 def derive_soc_commitments(flows: list[dict], capacity_kwh: float,
@@ -1878,6 +1895,7 @@ def build_planner(a: PlannerAdapters):
         technical_threshold = max(
             flow_threshold, float(OPTIONS.get("technical_flow_threshold_kwh", 0.05)))
         max_kw = max(0.25, float(OPTIONS.get("battery_max_power_kw", 5.0)))
+        max_grid_import_kw = max(0.0, float(OPTIONS.get("grid_import_limit_kw", 12.0)))
         run_id = str(uuid.uuid4())
         attempt["planner_run_id"] = run_id
         attempt["initial_soc_pct"] = float(soc_now)
@@ -2236,7 +2254,8 @@ def build_planner(a: PlannerAdapters):
                         target_due_indices=target_due_indices,
                         required_soc_pcts=enforced_daily_required,
                         battery_sales_enabled=False,
-                        allow_terminal_shortfall=terminal_shortfall_allowed)
+                        allow_terminal_shortfall=terminal_shortfall_allowed,
+                        max_grid_import_kw=max_grid_import_kw)
                     break
                 except RuntimeError as exc:
                     terminal_failure = (
@@ -2337,7 +2356,8 @@ def build_planner(a: PlannerAdapters):
                             floors,terminal_soc,internal_soc_step,target_cap,
                             minimum_targets,hard_indices,due_indices,required_pcts,
                             battery_sales_enabled=battery_sales_enabled,
-                            allow_terminal_shortfall=terminal_shortfall_allowed)
+                            allow_terminal_shortfall=terminal_shortfall_allowed,
+                            max_grid_import_kw=max_grid_import_kw)
                         break
                     except RuntimeError as exc:
                         slot_error_prefix = "No feasible SOC state at horizon slot "
@@ -2529,7 +2549,8 @@ def build_planner(a: PlannerAdapters):
                         optimized_floors, terminal_soc, internal_soc_step, target_cap,
                         charge_targets, set(), target_due_indices, required_soc,
                         battery_sales_enabled=False,
-                        allow_terminal_shortfall=terminal_shortfall_allowed)
+                        allow_terminal_shortfall=terminal_shortfall_allowed,
+                        max_grid_import_kw=max_grid_import_kw)
                     sale_assessment = assess_sale_plan_against_no_sale(
                         optimization, no_sale_optimization, horizon_rows,
                         min_margin, capacity, eta_c, technical_threshold,
@@ -2554,6 +2575,24 @@ def build_planner(a: PlannerAdapters):
                 required_soc = effective_required_soc_for_dispatch(
                     enforced_daily_required, effective_required)
             targets=list(optimization.get("effective_target_pcts",charge_targets))
+            unreachable_buy_targets = [
+                {
+                    "slot_start": str(horizon_rows[index]["slot_start"]),
+                    "requested_soc_pct": round(float(charge_targets[index]), 3),
+                    "achievable_soc_pct": round(float(targets[index]), 3),
+                    "shortfall_pct": round(max(
+                        0.0, float(charge_targets[index]) - float(targets[index])), 3),
+                    "planned_import_kwh": round(float(
+                        optimization["flows"][index].get("grid_charge_kwh") or 0.0), 3),
+                }
+                for index in sorted(target_due_indices)
+                if float(targets[index]) + 0.01 < float(charge_targets[index])
+            ]
+            if unreachable_buy_targets:
+                record_event("buy_soc_target_shortfall", "planner", {
+                    "slots": unreachable_buy_targets,
+                    "action": "PRESERVE_SLOT_BALANCE_AND_IMPORT_CAP",
+                }, "WARNING")
             target_due_indices = validate_active_soc_target_deadlines(
                 optimization, target_due_indices, targets)
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),

@@ -141,9 +141,12 @@ niedobór. Taki `grid_load_kwh` jest przepływem resztowym bilansu, a nie decyzj
 ekonomiczną `BUY` i nie tworzy okna zakupu.
 
 - `BUY` oznacza wyłącznie zaplanowane ładowanie baterii (`grid_charge_kwh > 0`);
-- planer nie może dobrowolnie zasilać domu z sieci, gdy bateria może pokryć
-  zużycie, z wyjątkiem jawnie ekonomicznej ochrony energii przed późniejszą
-  sprzedażą;
+- poza oknem BUY planer nie może dobrowolnie zasilać domu z sieci, gdy bateria
+  może pokryć zużycie, z wyjątkiem jawnie ekonomicznej ochrony energii przed
+  późniejszą sprzedażą;
+- w oknie BUY import może równolegle pokrywać zużycie domu i ładować baterię;
+  suma `grid_load_kwh + grid_charge_kwh` nie może przekroczyć
+  `grid_import_limit_kw × czas_slotu`;
 - osiągnięcie technicznego minimum SOC nie może uczynić horyzontu
   niewykonalnym — niepokryty przez PV i baterię dom przechodzi na sieć;
 - przepływ wymuszony nie podnosi `soc_target` i nie jest oznaczany jako zakup
@@ -163,8 +166,11 @@ baterii: nie tworzy długu energetycznego i nie zwiększa zakupu. Nadal pozostaj
 częścią fizycznego bilansu slotu i wyniku finansowego.
 
 W jednym slocie bateria nie może być jednocześnie ładowana i rozładowywana.
-Każdy przepływ musi spełniać limit mocy 5 kW, czas 0,25 h, dostępną pojemność,
-SOC, sprawność i progi techniczne.
+Ładowanie baterii podlega limitowi `battery_max_power_kw` (domyślnie 5 kW, czyli
+1,25 kWh na slot 15-minutowy). Łączny pobór domu i ładowania baterii podlega
+`grid_import_limit_kw` (domyślnie 12 kW, czyli 3 kWh na slot). Każdy przepływ
+musi też spełniać limit czasu 0,25 h, dostępną pojemność, SOC, sprawność i progi
+techniczne.
 
 Optymalizator używa dyskretnych stanów SOC. Zmiana energii wewnętrznej baterii
 w każdym slocie musi być równa różnicy SOC przed i po slocie pomnożonej przez
