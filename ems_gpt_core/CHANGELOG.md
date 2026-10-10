@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.4 — propagacja targetu przez wieloslotowe okno BUY
+
+- Naprawiono dopasowanie terminu mostka SOC do końca całego okna BUY. Wcześniejsze
+  sloty mostka odzyskują właściwy sufit targetu, zamiast pozostawać na niższym
+  poziomie bezpieczeństwa aż do końcowych slotów zakupu.
+- Dodano regresję dla targetu dobowego i wieloslotowego zakupu.
+
 ## 0.40.3 — walidacja fallbacku SOC i historia odrzuconych planów
 
 - Końcowa walidacja korzysta z wymagań SOC faktycznie egzekwowanych przez
