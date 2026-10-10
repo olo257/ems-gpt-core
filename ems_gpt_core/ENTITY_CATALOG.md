@@ -1,6 +1,6 @@
 # EMS-GPT Core — katalog helperów i encji Home Assistant
 
-Status: zaktualizowano dla kodu wersji 0.40.3. Ten katalog
+Status: zaktualizowano dla kodu wersji 0.40.4. Ten katalog
 opisuje faktyczne odczyty i zapisy. Core nie tworzy żadnej z wymienionych encji.
 
 ## 1. Helpery wymagane przez Core
