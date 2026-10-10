@@ -676,9 +676,9 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
 
 def end_of_day_soc_target(historical_soc_pct: float, reserve_pct: float,
                           target_cap_pct: float) -> float:
-    """Five percentage points of tolerance apply only to the daily close."""
+    """Use the weighted historical close directly, bounded by reserve and cap."""
     return max(float(reserve_pct), min(float(target_cap_pct),
-                                       float(historical_soc_pct) - 5.0))
+                                       float(historical_soc_pct)))
 
 
 def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
@@ -1439,22 +1439,11 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
         raw_required_pct = required_after / capacity * 100.0
         required_after_slot[i] = max(reserve, min(cap, raw_required_pct))
         flow = economic_flows[i]
-        # The economic trajectory is a proven reachable path.  Add back only
-        # its optional battery sale to obtain the highest no-sale SOC that is
-        # physically reachable at this point.  A backward contract may not
-        # demand more than that state; doing so would fail the constrained
-        # pass before the next BUY/PV opportunity could provide the energy.
-        feasible_no_sale_pct = min(
-            cap,
-            float(flow.get("soc_end_pct") or reserve)
-            + (max(0.0, float(flow.get("battery_sell_kwh") or 0.0))
-               / discharge_efficiency / capacity * 100.0),
-        )
+        # Keep the independently calculated balance contract intact.
+        # Feasibility is handled by the constrained optimization/recovery pass;
+        # an earlier economic trajectory must not lower the required SOC.
         rounded_required = math.ceil(raw_required_pct / step - 1e-9) * step
-        reachable_required = math.floor(
-            feasible_no_sale_pct / step + 1e-9) * step
-        required[i] = max(reserve, min(cap, rounded_required,
-                                       reachable_required))
+        required[i] = max(reserve, min(cap, rounded_required))
         due[i] = next_due
         source[i] = next_source
         row = rows[i]
