@@ -756,16 +756,23 @@ def deterministic_soc_target_contract(
     }
     buy_due = {i for i in selected_buy
                if i + 1 == len(rows) or i + 1 not in selected_buy}
-    first_day = rows[0].get("local_day") or rows[0]["slot_start"].date()
-    if isinstance(first_day, str):
-        first_day = datetime.strptime(first_day[:10], "%Y-%m-%d").date()
+    def planning_day(row):
+        value = row.get("local_day")
+        if isinstance(value, str):
+            return datetime.strptime(value[:10], "%Y-%m-%d").date()
+        if isinstance(value, datetime):
+            return value.date()
+        if value is not None:
+            return value
+        slot_start = row.get("slot_start")
+        return slot_start.date() if isinstance(slot_start, datetime) else None
+
+    first_day = planning_day(rows[0])
     first_day_buy_due = []
-    for index in buy_due:
-        row_day = rows[index].get("local_day") or rows[index]["slot_start"].date()
-        if isinstance(row_day, str):
-            row_day = datetime.strptime(row_day[:10], "%Y-%m-%d").date()
-        if row_day == first_day:
-            first_day_buy_due.append(index)
+    if first_day is not None:
+        for index in buy_due:
+            if planning_day(rows[index]) == first_day:
+                first_day_buy_due.append(index)
     single_daily_buy_due = (first_day_buy_due[0]
                             if len(first_day_buy_due) == 1 else None)
     single_buy_goal = max(reserve, min(100.0, float(single_daily_buy_target_pct)))
