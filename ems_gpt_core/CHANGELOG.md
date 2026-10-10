@@ -1,5 +1,15 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.2 — SOC target końca doby bez historycznego obniżenia
+
+- Usunięto nieaktualne obniżenie ważonej średniej SOC 7/14/28 o 5 p.p.
+- Średnia historyczna jest używana bezpośrednio jako cel SOC na zamknięcie
+  lokalnej doby, ograniczony rezerwą techniczną i limitem targetu.
+- Dodano regresje dla braku obniżenia, dolnego limitu rezerwy i górnego limitu.
+- Wcześniejsze targety slotowe nadal wynikają z bilansu energii i wykonalnych
+  okien PV/BUY; cel historyczny nie jest stosowany przed zamknięciem doby.
+- Wydanie nie dodaje helperów ani konfiguracji Home Assistant.
+
 ## 0.40.1 — walidacja aktywnych terminów BUY
 
 - Końcowa walidacja planu korzysta z terminów BUY faktycznie zachowanych przez
