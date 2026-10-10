@@ -1641,6 +1641,14 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
             "selected_buy_indices": selected_buy}
 
 
+def current_soc_for_replan(setting: Callable) -> float:
+    """Read fresh battery SOC from Home Assistant for this planner invocation."""
+    soc = setting("sensor.inverter_battery", math.nan)
+    if not math.isfinite(soc) or not 0.0 <= soc <= 100.0:
+        raise RuntimeError(f"INVALID_INITIAL_SOC:sensor.inverter_battery={soc!r}")
+    return float(soc)
+
+
 def relax_soc_requirement_to_reachable(requested_soc_pct: float,
                                         reachable_soc_pct: float,
                                         reserve_pct: float) -> float:
@@ -1855,9 +1863,8 @@ def build_planner(a: PlannerAdapters):
         cutoff = slot_start().replace(tzinfo=None) + timedelta(minutes=int(OPTIONS["slot_minutes"]))
         capacity = max(1.0, float(OPTIONS.get("battery_capacity_kwh", 15.0)))
         reserve = max(0.0, min(90.0, float(OPTIONS.get("battery_min_soc_pct", 15.0))))
-        soc_now = setting("sensor.inverter_battery", math.nan)
-        if not math.isfinite(soc_now) or not 0.0 <= soc_now <= 100.0:
-            raise RuntimeError(f"INVALID_INITIAL_SOC:sensor.inverter_battery={soc_now!r}")
+        # Read the HA state anew for every replan; cutoff begins at the next open slot.
+        soc_now = current_soc_for_replan(setting)
         eta_c = max(0.01, min(1.0, float(OPTIONS.get("battery_charge_efficiency", 0.90))))
         eta_d = max(0.01, min(1.0, float(OPTIONS.get("battery_discharge_efficiency", 0.95))))
         degradation = max(0.0, float(OPTIONS.get("battery_degradation_cost_pln_kwh", 0.08)))
