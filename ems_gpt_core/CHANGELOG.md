@@ -9,7 +9,7 @@
 - Dodano regresję obejmującą jednocześnie termin poluzowany i nadal aktywny.
 - Wydanie poprawkowe do 0.40.0; bez zmian encji, helperów ani konfiguracji
   sterowania.
-- Weryfikacja: 93 testy planera i terminów SOC zaliczone; kompilacja Python
+- Weryfikacja: 95 testów planera i terminów SOC zaliczone; kompilacja Python
   poprawna.
 
 ## 0.40.0 — spójne odzyskiwanie terminów SOC
