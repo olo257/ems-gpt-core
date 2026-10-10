@@ -139,9 +139,9 @@ class OfflineContractTests(unittest.TestCase):
             "orphan_grid_hold",
         ):
             self.assertNotIn(obsolete, planner)
-        self.assertIn("if voluntary_grid_load > permitted_grid_hold + 1e-9:", planner)
-        self.assertIn("if voluntary_grid_load > 1e-9:", planner)
-        self.assertIn("elif voluntary_grid_load > unit_kwh * eta_d + 1e-9:", planner)
+        self.assertIn("required_floor_unit", planner)
+        self.assertIn("current_energy - max(first_unit, required_unit) * unit_kwh", planner)
+        self.assertIn("max_grid_import_kw=max_grid_import_kw", planner)
 
     def test_hourly_and_daily_soc_boundaries_are_continuous_actuals(self):
         materialization = MODULE_SOURCES["materialization_service.py"]
