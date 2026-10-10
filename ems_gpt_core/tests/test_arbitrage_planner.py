@@ -58,6 +58,7 @@ class PairedArbitrageTests(unittest.TestCase):
             5.0, 15, [15.0] * 3, 35.0, 0.25, 100.0,
             targets, hard_indices, due_indices, safety_required,
             battery_sales_enabled=False)
+        self.assertEqual(result["effective_target_due_indices"], due_indices)
         for index, flow in enumerate(result["flows"]):
             self.assertGreaterEqual(flow["soc_end_pct"] + 1e-9, safety_required[index])
             if flow["grid_charge_kwh"] > 1e-9:
@@ -80,6 +81,7 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(result["flows"][-1]["soc_end_pct"], 30.0)
         self.assertEqual(result["achieved_terminal_soc_pct"], 30.0)
         self.assertEqual(result["terminal_shortfall_pct"], 0.0)
+        self.assertEqual(result["effective_target_due_indices"], {1})
 
     def test_substep_pv_is_not_counted_as_charge_without_soc_transition(self):
         rows = [{"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 1.0,
