@@ -67,36 +67,70 @@ class PairedArbitrageTests(unittest.TestCase):
             if flow["grid_charge_kwh"] > 1e-9:
                 self.assertLessEqual(flow["soc_end_pct"], targets[index] + 1e-9)
 
-    def test_single_remaining_buy_window_preserves_high_charge_goal(self):
+    def test_single_buy_target_is_derived_from_daily_close_and_remaining_load(self):
         day = date(2026, 10, 10)
-        starts = [
-            datetime(2026, 10, 10, 12, 0),
-            datetime(2026, 10, 10, 12, 15),
-            datetime(2026, 10, 10, 12, 30),
-            datetime(2026, 10, 10, 12, 45),
-            datetime(2026, 10, 10, 13, 0),
-        ]
+        starts = [datetime(2026, 10, 10, 12, 0) + timedelta(minutes=15*i)
+                  for i in range(4)]
         rows = [
             {"slot_start": start, "local_day": day,
-             "buy_window": index in {1, 2}, "sale_window": False,
-             "forecast_load_kwh": 0.0, "forecast_heat_pump_load_kwh": 0.0,
+             "buy_window": index in {0, 1}, "sale_window": False,
+             "forecast_load_kwh": 0.0 if index < 2 else 1.0,
+             "forecast_heat_pump_load_kwh": 0.0,
              "forecast_pv_total_kwh": 0.0}
             for index, start in enumerate(starts)
         ]
         contract = deterministic_soc_target_contract(
-            rows, [15.0] * 5, [15.0, 15.0, 15.0, 15.0, 40.0],
-            15.0, 15.0, 0.90, 0.95, 5.0, 15, 0.0,
-            single_daily_buy_target_pct=95.0)
-        self.assertEqual(contract["buy_due_indices"], {2})
-        self.assertGreaterEqual(contract["required"][2], 95.0)
+            rows, [15.0] * 4, [15.0, 15.0, 15.0, 40.0],
+            15.0, 15.0, 0.90, 0.95, 5.0, 15, 0.0)
+        self.assertEqual(contract["buy_due_indices"], {1})
+        # The BUY end target covers the 40% close plus remaining native load.
+        expected = 40.0 + (2.0 / 0.95 / 15.0 * 100.0)
+        self.assertGreaterEqual(contract["required"][1] + 1e-9, expected)
+        self.assertLess(contract["required"][1], expected + 0.3)
+        self.assertLess(contract["required"][1], 95.0)
 
-        # A second remaining BUY window removes the one-window urgency rule.
-        rows[4]["buy_window"] = True
-        multiple = deterministic_soc_target_contract(
-            rows, [15.0] * 5, [15.0, 15.0, 15.0, 15.0, 40.0],
-            15.0, 15.0, 0.90, 0.95, 5.0, 15, 0.0,
-            single_daily_buy_target_pct=95.0)
-        self.assertLess(multiple["required"][2], 95.0)
+    def test_buy_target_includes_only_additional_hp_heat_load(self):
+        rows = [
+            {"slot_start": datetime(2026, 10, 10, 12, 0),
+             "local_day": date(2026, 10, 10), "buy_window": False,
+             "sale_window": False, "forecast_load_kwh": 0.0,
+             "forecast_heat_pump_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0},
+            {"slot_start": datetime(2026, 10, 10, 12, 15),
+             "local_day": date(2026, 10, 10), "buy_window": False,
+             "sale_window": False, "forecast_load_kwh": 0.0,
+             "forecast_heat_pump_load_kwh": 1.5 * 0.25,
+             "forecast_pv_total_kwh": 0.0},
+        ]
+        safety = replenishment_soc_requirements(
+            rows, 15.0, 15.0, 0.0, 0.90, 0.95, 5.0, 15, 0.0)
+        self.assertGreater(safety[0], safety[1])
+
+    def test_two_day_contract_enforces_each_close_and_tomorrow_buy_bridge(self):
+        first_day = date(2026, 10, 10)
+        starts = [datetime(2026, 10, 10, 20, 0) + timedelta(minutes=15*i)
+                  for i in range(8)]
+        rows = [
+            {"slot_start": start,
+             "local_day": first_day if i < 4 else first_day + timedelta(days=1),
+             "buy_window": i in {0, 1, 4, 5}, "sale_window": False,
+             "forecast_load_kwh": 0.0 if i in {0, 1, 4, 5} else 0.5,
+             "forecast_heat_pump_load_kwh": 0.0,
+             "forecast_pv_total_kwh": 0.0}
+            for i, start in enumerate(starts)
+        ]
+        daily_close = [15.0, 15.0, 15.0, 40.0, 15.0, 15.0, 15.0, 45.0]
+        contract = deterministic_soc_target_contract(
+            rows, [15.0] * 8, daily_close, 15.0, 15.0,
+            0.90, 0.95, 5.0, 15, 0.0)
+
+        self.assertEqual(contract["buy_due_indices"], {1, 5})
+        self.assertGreaterEqual(contract["required"][3], 40.0)
+        self.assertGreaterEqual(contract["required"][7], 45.0)
+        # Tomorrow's final BUY covers the remaining forecast load to close.
+        self.assertGreaterEqual(
+            contract["required"][5],
+            45.0 + 1.0 / 0.95 / 15.0 * 100.0)
 
     def test_current_day_terminal_recovery_keeps_historical_goal(self):
         action, target = terminal_soc_recovery(
