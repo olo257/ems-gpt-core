@@ -7,6 +7,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from planner_service import (
     _soc_reachability_profile, build_soc_contracts, daily_close_soc_requirements,
     end_of_day_soc_target, optimize_energy_horizon,
+    deterministic_soc_target_contract, preserve_target_contract_after_reachability,
     replenishment_soc_requirements, recoverable_soc_requirements,
     target_commitment_required_fallback, effective_required_soc_for_dispatch,
     validate_recoverable_soc_requirements,
@@ -33,6 +34,21 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             5.0, 15, [15.0]*len(rows), terminal, 0.1, 100.0,
             required_soc_pcts=required,
             battery_sales_enabled=battery_sales_enabled)
+
+    def test_reachability_does_not_lower_daily_close_or_buy_target(self):
+        rows = self.rows(2)
+        requested = deterministic_soc_target_contract(
+            rows, [17.0, 17.0], [17.0, 60.0], 15.0, 15.0,
+            0.9, 0.95, 5.0, 15, 0.0)
+        recovery = validate_recoverable_soc_requirements(
+            rows, requested["required"], 20.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
+        reconciled = preserve_target_contract_after_reachability(
+            requested, recovery, {1})
+        self.assertLess(reconciled["reachable_required"][1], 60.0)
+        self.assertEqual(reconciled["required"][1], 60.0)
+        self.assertEqual(reconciled["charge_targets"], requested["charge_targets"])
 
     def test_historical_terminal_soc_is_not_discounted(self):
         self.assertAlmostEqual(end_of_day_soc_target(47.7, 15.0, 100.0), 47.7)

@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_9"
+PLANNER_VERSION = "CORE_0_40_10"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -799,6 +799,34 @@ def deterministic_soc_target_contract(
         "selected_buy_indices": selected_buy,
     }
 
+
+
+def preserve_target_contract_after_reachability(
+        target_contract: dict, recovery: dict,
+        daily_close_indices: set[int]) -> dict:
+    """Keep daily close goals and BUY ceilings separate from reachable SOC floors.
+
+    Reachability may relax intermediate hard floors so a rolling plan can still
+    start from measured SOC. It must not lower the requested charge ceiling or
+    erase the original target at a local-day close.
+    """
+    requested = list(target_contract.get("required", []))
+    reachable = list(recovery.get("required_soc_pcts", []))
+    if len(requested) != len(reachable):
+        raise ValueError("TARGET_RECOVERY_LENGTH_MISMATCH")
+    required = list(reachable)
+    for index in daily_close_indices:
+        if not 0 <= index < len(required):
+            raise ValueError("TARGET_RECOVERY_CLOSE_INDEX_INVALID")
+        required[index] = max(required[index], requested[index])
+    result = dict(target_contract)
+    result["requested_required"] = requested
+    result["reachable_required"] = reachable
+    result["required"] = required
+    result["charge_targets"] = list(target_contract.get("charge_targets", requested))
+    result["unreachable_indices"] = list(recovery.get("unreachable_indices") or [])
+    result["capacity_limited_indices"] = list(recovery.get("capacity_limited_indices") or [])
+    return result
 
 def replenishment_soc_requirements(rows: list[dict], capacity_kwh: float,
                                    reserve_pct: float, buffer_pct: float,
@@ -2112,8 +2140,33 @@ def build_planner(a: PlannerAdapters):
                 target_cap, capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
                 max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
                 soc_step_pct=0.10)
-            target_contract["required"] = target_recovery["required_soc_pcts"]
-            target_contract["charge_targets"] = list(target_contract["required"])
+            target_contract = preserve_target_contract_after_reachability(
+                target_contract, target_recovery, daily_close_indices)
+            if target_recovery.get("unreachable_indices"):
+                unreachable = target_recovery["unreachable_indices"]
+                close_shortfalls = [
+                    {
+                        "slot_start": str(horizon_rows[index]["slot_start"]),
+                        "requested_soc_pct": round(
+                            target_contract["requested_required"][index], 3),
+                        "reachable_soc_pct": round(
+                            target_contract["reachable_required"][index], 3),
+                        "shortfall_pct": round(max(
+                            0.0,
+                            target_contract["requested_required"][index]
+                            - target_contract["reachable_required"][index]), 3),
+                    }
+                    for index in sorted(daily_close_indices & set(unreachable))
+                ]
+                record_event("soc_target_reachability", "planner", {
+                    "unreachable_slot_count": len(unreachable),
+                    "first_unreachable_slot": str(
+                        horizon_rows[unreachable[0]]["slot_start"]),
+                    "daily_close_shortfalls": close_shortfalls,
+                    "action": "PRESERVE_DAILY_TARGET_MAXIMIZE_REACHABLE_SOC",
+                    "battery_sales_disabled": bool(
+                        target_recovery.get("disable_battery_sales")),
+                }, "WARNING")
             terminal_soc = max(terminal_soc, target_contract["required"][-1])
             record_event("replenishment_soc_safety", "planner", {
                 "minimum_soc_pct": max(15.0, reserve),
@@ -2135,7 +2188,8 @@ def build_planner(a: PlannerAdapters):
             # silently replaces today's close goal with the technical reserve.
             enforced_daily_required = list(target_contract["required"])
             waived_daily_closes = set()
-            battery_sales_enabled = not bool(recovery.get("disable_battery_sales"))
+            battery_sales_enabled = not bool(recovery.get("disable_battery_sales")) and not bool(
+                target_recovery.get("disable_battery_sales"))
             if recovery.get("capacity_limited_indices"):
                 record_event("soc_bridge_limited_to_physical_capacity", "planner", {
                     "physical_soc_cap_pct": 100.0,
@@ -2223,6 +2277,11 @@ def build_planner(a: PlannerAdapters):
                     record_event("daily_terminal_soc_unreachable", "planner", {
                         "slot_start": str(horizon_rows[failed_index]["slot_start"]),
                         "requested_soc_pct": daily_required_soc[failed_index],
+                        "reachable_soc_pct": round(
+                            target_contract["reachable_required"][failed_index], 3),
+                        "shortfall_pct": round(max(
+                            0.0, daily_required_soc[failed_index]
+                            - target_contract["reachable_required"][failed_index]), 3),
                         "reason": str(exc),
                     }, "WARNING")
             if target_seed.get("terminal_shortfall_pct", 0.0) > 1e-9:
