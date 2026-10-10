@@ -39,22 +39,28 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
     def test_unreachable_close_uses_best_reachable_soc_and_keeps_reserve(self):
         rows = self.rows(2)
         requested_close = 60.0
+        requested_contract = {
+            "required": [requested_close, requested_close],
+            "charge_targets": [requested_close, requested_close],
+        }
         reachability = validate_recoverable_soc_requirements(
-            rows, [requested_close, requested_close], 20.0, 15.0, 100.0,
+            rows, requested_contract["required"], 20.0, 15.0, 100.0,
             capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
             max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
-        reachable = reachability["required_soc_pcts"][0]
+        contract = preserve_target_contract_after_reachability(
+            requested_contract, reachability, {0})
         best_effort = relax_soc_requirement_to_reachable(
-            requested_close, reachable, 15.0)
+            contract["required"][0], contract["reachable_required"][0], 15.0)
 
+        self.assertLess(contract["reachable_required"][0], requested_close)
+        self.assertEqual(contract["required"][0], requested_close)
+        self.assertEqual(contract["charge_targets"][0], requested_close)
         self.assertLess(best_effort, requested_close)
         self.assertGreaterEqual(best_effort, 15.0)
         plan = self.optimize(
             rows, [best_effort, best_effort], initial=20.0, terminal=17.0,
             battery_sales_enabled=False)
         self.assertGreaterEqual(plan["flows"][0]["soc_end_pct"] + 1e-9, best_effort)
-        # The requested daily goal remains separate for the caller's shortfall audit.
-        self.assertEqual(requested_close, 60.0)
 
     def test_reachability_does_not_lower_daily_close_or_buy_target(self):
         rows = self.rows(2)
