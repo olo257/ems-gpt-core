@@ -54,18 +54,22 @@ def historical_terminal_soc(closing_rows: list[dict], terminal_day,
 
 
 def terminal_soc_recovery(requested_soc_pct: float, safety_soc_pct: float,
-                          battery_sales_enabled: bool) -> tuple[str, float]:
-    """Relax only the historical terminal goal after safer retries fail.
+                          battery_sales_enabled: bool,
+                          current_day: bool = False) -> tuple[str, float]:
+    """Preserve today's historical close and allow an explicit best-effort shortfall.
 
-    The independent replenishment/safety SOC remains a hard floor. A future
-    horizon end must not make an unreachable historical daily-close target
-    abort an otherwise safe plan.
+    The independent replenishment/safety SOC remains a hard floor. For the
+    current day, an infeasible historical close must not be silently relaxed
+    to the technical reserve: the optimizer should select the highest
+    physically reachable terminal SOC and report the shortfall.
     """
     if battery_sales_enabled:
         return "DISABLE_BATTERY_SALES", float(requested_soc_pct)
     requested = float(requested_soc_pct)
     safety = float(safety_soc_pct)
     if requested > safety + 1e-9:
+        if current_day:
+            return "ALLOW_TERMINAL_SHORTFALL", requested
         return "RELAX_HISTORICAL_TARGET", safety
     return "FAIL", requested
 
@@ -725,7 +729,8 @@ def deterministic_soc_target_contract(
         daily_required_soc_pcts: list[float], capacity_kwh: float,
         reserve_pct: float, eta_c: float, eta_d: float,
         max_power_kw: float, slot_minutes: int,
-        uncertainty_weight: float, soc_step_pct: float = 0.10) -> dict:
+        uncertainty_weight: float, soc_step_pct: float = 0.10,
+        single_daily_buy_target_pct: float = 95.0) -> dict:
     """Calculate required SOC from load/PV and fixed RCE permissions first.
 
     No optimizer flow or price objective participates in target calculation.
@@ -751,11 +756,26 @@ def deterministic_soc_target_contract(
     }
     buy_due = {i for i in selected_buy
                if i + 1 == len(rows) or i + 1 not in selected_buy}
+    first_day = rows[0].get("local_day") or rows[0]["slot_start"].date()
+    if isinstance(first_day, str):
+        first_day = datetime.strptime(first_day[:10], "%Y-%m-%d").date()
+    first_day_buy_due = []
+    for index in buy_due:
+        row_day = rows[index].get("local_day") or rows[index]["slot_start"].date()
+        if isinstance(row_day, str):
+            row_day = datetime.strptime(row_day[:10], "%Y-%m-%d").date()
+        if row_day == first_day:
+            first_day_buy_due.append(index)
+    single_daily_buy_due = (first_day_buy_due[0]
+                            if len(first_day_buy_due) == 1 else None)
+    single_buy_goal = max(reserve, min(100.0, float(single_daily_buy_target_pct)))
     required = [reserve] * len(rows)
     next_requirement_kwh = base_kwh
     for i in range(len(rows) - 1, -1, -1):
         requested = max(float(safety_required_soc_pcts[i]),
                         float(daily_required_soc_pcts[i]), reserve)
+        if i == single_daily_buy_due:
+            requested = max(requested, single_buy_goal)
         after_kwh = max(next_requirement_kwh,
                         capacity * min(100.0, requested) / 100.0)
         after_kwh = math.ceil(after_kwh / quantum_kwh - 1e-9) * quantum_kwh
@@ -2100,7 +2120,9 @@ def build_planner(a: PlannerAdapters):
             target_contract = deterministic_soc_target_contract(
                 horizon_rows, safety_required_soc, daily_required_soc,
                 capacity, reserve, eta_c, eta_d, max_kw,
-                int(OPTIONS["slot_minutes"]), uncertainty_weight)
+                int(OPTIONS["slot_minutes"]), uncertainty_weight,
+                single_daily_buy_target_pct=float(
+                    OPTIONS.get("soc_single_daily_buy_target_pct", 95.0)))
             target_recovery = validate_recoverable_soc_requirements(
                 horizon_rows, target_contract["required"], soc_now, reserve,
                 target_cap, capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
@@ -2124,7 +2146,10 @@ def build_planner(a: PlannerAdapters):
             # by that immutable contract and has battery sales disabled.
             optimized_floors = list(sale_constraints)
             internal_soc_step=0.10
-            enforced_daily_required = list(daily_required_soc)
+            # Start from the physically recoverable daily contract. Using the
+            # unbounded historical target here can trigger a fallback that
+            # silently replaces today's close goal with the technical reserve.
+            enforced_daily_required = list(target_contract["required"])
             waived_daily_closes = set()
             battery_sales_enabled = not bool(recovery.get("disable_battery_sales"))
             if recovery.get("capacity_limited_indices"):
@@ -2172,7 +2197,8 @@ def build_planner(a: PlannerAdapters):
                             }, "WARNING")
                             continue
                         recovery_action, recovered_terminal = terminal_soc_recovery(
-                            terminal_soc, safety_required_soc[-1], battery_sales_enabled)
+                            terminal_soc, safety_required_soc[-1], battery_sales_enabled,
+                            current_day=terminal_day == local_now().date())
                         if recovery_action == "RELAX_HISTORICAL_TARGET":
                             record_event("historical_terminal_soc_relaxed_for_feasibility", "planner", {
                                 "terminal_day": str(terminal_day),
@@ -2311,7 +2337,8 @@ def build_planner(a: PlannerAdapters):
                             }, "WARNING")
                             continue
                         recovery_action, recovered_terminal = terminal_soc_recovery(
-                            terminal_soc, safety_required_soc[-1], battery_sales_enabled)
+                            terminal_soc, safety_required_soc[-1], battery_sales_enabled,
+                            current_day=terminal_day == local_now().date())
                         if recovery_action == "RELAX_HISTORICAL_TARGET":
                             record_event("historical_terminal_soc_relaxed_for_feasibility", "planner", {
                                 "stage": pass_name,
