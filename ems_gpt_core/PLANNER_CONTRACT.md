@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.8. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.10. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -73,6 +73,10 @@ Każde przyszłe okno doby (w tym jutro po 14:00) jest uwzględniane wyłącznie
 gdy kompletne ceny RCE i prognozy znajdują się w ciągłym horyzoncie planu.
 Niewykonalność celu jest raportowana jako niedobór, bez cichego obniżenia celu
 do rezerwy.
+Recovery osiągalności może obniżyć wyłącznie pośrednie ograniczenia trajektorii;
+nie może zastąpić targetu zamknięcia doby ani sufitu BUY. Przy niewykonalnym
+zamknięciu plan zachowuje oryginalny target w audycie, wyłącza sprzedaż baterii
+i raportuje osiągalny SOC oraz różnicę do celu.
 
 W prognozie bilansu obciążenie `HP_DHW` jest już zawarte w zużyciu bazowym.
 Dodatkowo uwzględniany jest zaplanowany cykl `HP_HEAT_DHW`; nie należy
