@@ -1370,7 +1370,7 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(contract["charge_targets"][0], 15.0)
 
     def test_disabled_sale_cannot_authorize_grid_import_for_native_load(self):
-        row = {"price_buy_pln_kwh": -1.0, "price_sell_pln_kwh": 0.0,
+        row = {"price_buy_pln_kwh": 3.0, "price_sell_pln_kwh": 0.0,
                "buy_window": True, "sale_window": False,
                "forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.0}
         result = optimize_energy_horizon(
