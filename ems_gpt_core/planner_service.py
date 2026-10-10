@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_7"
+PLANNER_VERSION = "CORE_0_40_8"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -729,8 +729,7 @@ def deterministic_soc_target_contract(
         daily_required_soc_pcts: list[float], capacity_kwh: float,
         reserve_pct: float, eta_c: float, eta_d: float,
         max_power_kw: float, slot_minutes: int,
-        uncertainty_weight: float, soc_step_pct: float = 0.10,
-        single_daily_buy_target_pct: float = 95.0) -> dict:
+        uncertainty_weight: float, soc_step_pct: float = 0.10) -> dict:
     """Calculate required SOC from load/PV and fixed RCE permissions first.
 
     No optimizer flow or price objective participates in target calculation.
@@ -756,33 +755,11 @@ def deterministic_soc_target_contract(
     }
     buy_due = {i for i in selected_buy
                if i + 1 == len(rows) or i + 1 not in selected_buy}
-    def planning_day(row):
-        value = row.get("local_day")
-        if isinstance(value, str):
-            return datetime.strptime(value[:10], "%Y-%m-%d").date()
-        if isinstance(value, datetime):
-            return value.date()
-        if value is not None:
-            return value
-        slot_start = row.get("slot_start")
-        return slot_start.date() if isinstance(slot_start, datetime) else None
-
-    first_day = planning_day(rows[0])
-    first_day_buy_due = []
-    if first_day is not None:
-        for index in buy_due:
-            if planning_day(rows[index]) == first_day:
-                first_day_buy_due.append(index)
-    single_daily_buy_due = (first_day_buy_due[0]
-                            if len(first_day_buy_due) == 1 else None)
-    single_buy_goal = max(reserve, min(100.0, float(single_daily_buy_target_pct)))
     required = [reserve] * len(rows)
     next_requirement_kwh = base_kwh
     for i in range(len(rows) - 1, -1, -1):
         requested = max(float(safety_required_soc_pcts[i]),
                         float(daily_required_soc_pcts[i]), reserve)
-        if i == single_daily_buy_due:
-            requested = max(requested, single_buy_goal)
         after_kwh = max(next_requirement_kwh,
                         capacity * min(100.0, requested) / 100.0)
         after_kwh = math.ceil(after_kwh / quantum_kwh - 1e-9) * quantum_kwh
@@ -2055,8 +2032,10 @@ def build_planner(a: PlannerAdapters):
                 row_day = row.get("local_day") or row["slot_start"].date()
                 planned_heating_kwh = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25
                                        if index in hp_selected_indices else 0.0)
-                work["forecast_heat_pump_load_kwh"] = max(
-                    planned_heating_kwh, historical_dhw_kwh)
+                # HP_DHW is already included in the consumption forecast.
+                # Only the separately planned HP_HEAT_DHW cycle is additional
+                # load for the battery/SOC energy balance.
+                work["forecast_heat_pump_load_kwh"] = planned_heating_kwh
                 work["forecast_heat_pump_dhw_load_kwh"] = historical_dhw_kwh
                 cur.execute("""UPDATE ems_gpt_plan_stage_rows SET
                   forecast_heat_pump_load_kwh=%s,forecast_heat_pump_dhw_load_kwh=%s
@@ -2128,8 +2107,7 @@ def build_planner(a: PlannerAdapters):
                 horizon_rows, safety_required_soc, daily_required_soc,
                 capacity, reserve, eta_c, eta_d, max_kw,
                 int(OPTIONS["slot_minutes"]), uncertainty_weight,
-                single_daily_buy_target_pct=float(
-                    OPTIONS.get("soc_single_daily_buy_target_pct", 95.0)))
+
             target_recovery = validate_recoverable_soc_requirements(
                 horizon_rows, target_contract["required"], soc_now, reserve,
                 target_cap, capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,

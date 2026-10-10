@@ -1,5 +1,5 @@
 name: EMS-GPT Core
-version: "0.40.7"
+version: "0.40.8"
 slug: ems_gpt_core
 description: Niezależny silnik planowania i analityki EMS-GPT
 url: https://github.com/olo257/ems-gpt-core
@@ -40,7 +40,6 @@ options:
   deye_program_6_soc_pct: 30
   garden_temperature_entity: sensor.klimat_w_ogrodzie_temperature
   tou_bridge_override_max_minutes: 180
-  soc_single_daily_buy_target_pct: 95
   executor_enabled: false
   executor_dry_run: true
   executor_activation_ack: ""
@@ -81,7 +80,6 @@ schema:
   deye_program_6_soc_pct: int(0,100)
   garden_temperature_entity: str
   tou_bridge_override_max_minutes: int(15,720)
-  soc_single_daily_buy_target_pct: int(15,100)
   executor_enabled: bool
   executor_dry_run: bool
   executor_activation_ack: str
