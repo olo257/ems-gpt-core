@@ -49,6 +49,30 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertEqual(first_replan_soc, 42.3)
         self.assertEqual(second_replan_soc, 66.0)
 
+    def test_buy_deadline_accounts_for_house_load_in_same_slot(self):
+        rows = self.rows(2, start=datetime(2026, 10, 10, 13, 45))
+        rows[1]["buy_window"] = True
+        rows[1]["forecast_load_kwh"] = 1.0
+        plan = optimize_energy_horizon(
+            rows, 69.0, 15.0, 17.0, 0.9, 0.95, 0.08, 0.05,
+            5.0, 15, [17.0, 17.0], 17.0, 0.1, 100.0,
+            minimum_soc_targets=[17.0, 100.0],
+            hard_target_indices=set(), target_due_indices={1},
+            required_soc_pcts=[17.0, 17.0], battery_sales_enabled=False)
+
+        # The 1 kWh house load and battery charge can share the 12 kW
+        # connection limit (3 kWh per 15-minute slot). The requested 100% SOC
+        # remains physically unreachable in this single slot, so the planner
+        # reports the best feasible SOC instead of failing the full plan.
+        flow = plan["flows"][1]
+        self.assertLess(plan["effective_target_pcts"][1], 100.0)
+        self.assertAlmostEqual(flow["soc_end_pct"], plan["effective_target_pcts"][1])
+        self.assertGreaterEqual(flow["soc_end_pct"], 17.0)
+        self.assertAlmostEqual(flow["grid_charge_kwh"], 1.25)
+        self.assertGreater(flow["grid_load_kwh"], 0.0)
+        self.assertLessEqual(flow["grid_charge_kwh"] + flow["grid_load_kwh"], 3.0 + 1e-9)
+        self.assertLessEqual(flow["grid_charge_kwh"] / 0.25, 5.0 + 1e-9)
+
     def test_unreachable_close_uses_best_reachable_soc_and_keeps_reserve(self):
         rows = self.rows(2)
         requested_close = 60.0
