@@ -1534,6 +1534,20 @@ def target_commitment_required_fallback(safety_required_soc_pcts: list[float]
     return list(safety_required_soc_pcts)
 
 
+def validate_target_due_soc(flows: list[dict], target_pcts: list[float],
+                           due_indices: set[int], tolerance_pct: float = 0.01
+                           ) -> None:
+    """Validate only BUY deadlines retained by the final optimizer pass."""
+    if len(flows) != len(target_pcts):
+        raise RuntimeError("SOC_TARGET_VALIDATION_LENGTH_MISMATCH")
+    for index in sorted(due_indices):
+        soc_end = float(flows[index].get("soc_end_pct") or 0.0)
+        target = float(target_pcts[index])
+        if soc_end + float(tolerance_pct) < target:
+            raise RuntimeError(
+                f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{target}")
+
+
 def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], required_slots: int,
                               min_cycle_slots: int, min_gap_slots: int,
                               max_gap_slots: int, planned_power_kw: float,
@@ -2330,6 +2344,8 @@ def build_planner(a: PlannerAdapters):
             targets=list(optimization.get("effective_target_pcts",charge_targets))
             effective_target_due_indices = set(
                 optimization.get("effective_target_due_indices", target_due_indices))
+            validate_target_due_soc(
+                optimization["flows"], targets, effective_target_due_indices)
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
             record_event("daily_plan_variant_selected","planner",{
@@ -2366,9 +2382,6 @@ def build_planner(a: PlannerAdapters):
                 if grid_charge > flow_threshold and soc_end > targets[index] + 0.01:
                     raise RuntimeError(
                         f"BUY_TARGET_EXCEEDED:{index}:{soc_end}>{targets[index]}")
-                if index in effective_target_due_indices and soc_end + 0.01 < targets[index]:
-                    raise RuntimeError(
-                        f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{targets[index]}")
                 if soc_end + 0.01 < required_soc[index]:
                     raise RuntimeError(
                         f"SOC_REQUIRED_VIOLATION:{index}:"
