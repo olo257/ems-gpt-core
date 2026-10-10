@@ -1,5 +1,16 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.6 — naprawa endpointu aktywnego bilansu
+
+- Przywrócono jawny import `calculate_slot_energy_balance` w API. Brak importu
+  powodował `NameError` na każdym odczycie `/api/status`, przez co aktywny
+  bilans nie był publikowany mimo poprawnych odpowiedzi HTTP.
+- Korekta bilansu: przydział PV do ładowania baterii jest teraz uwzględniany
+  również po stronie zapotrzebowania.
+- Dodano test regresyjny uruchamiający handler `/api/status` i sprawdzający
+  wyliczony bilans aktywnego slotu.
+- Weryfikacja: pełny zestaw testów i kompilacja modułów.
+
 ## 0.40.5 — rozdzielenie właścicieli planu i kontrola bilansu
 
 - Kontrakt SOC jest liczony bezpośrednio z prognozy obciążenia/PV, rezerwy i
