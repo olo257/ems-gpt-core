@@ -109,43 +109,20 @@ def build_handler(a: ApiAdapters):
                 try:
                     current = slot_start().replace(tzinfo=None)
                     with db() as conn, conn.cursor() as cur:
-                        cur.execute("""SELECT slot_start,forecast_pv_total_kwh,
-                          forecast_load_kwh,planned_battery_discharge_kwh,
+                        cur.execute("""SELECT slot_start,forecast_pv_total_kwh,forecast_load_kwh,
+                          forecast_heat_pump_load_kwh,planned_battery_discharge_kwh,
                           planned_buy_kwh,planned_battery_charge_kwh,planned_sell_kwh,
-                          planned_pv_to_bat_kwh
-                          FROM ems_gpt_slots WHERE slot_start=%s LIMIT 1""", (current,))
+                          planned_pv_to_bat_kwh,planned_pv_to_cwu_kwh,planned_pv_to_ev_kwh,
+                          planned_pv_export_kwh FROM ems_gpt_slots
+                          WHERE slot_start=%s LIMIT 1""", (current,))
                         row = cur.fetchone()
                     if row:
-                        values = {key: max(0.0, float(row.get(key) or 0.0)) for key in (
-                            "forecast_pv_total_kwh", "forecast_load_kwh",
-                            "planned_battery_discharge_kwh", "planned_buy_kwh",
-                            "planned_battery_charge_kwh", "planned_sell_kwh")}
-                        pv_to_bat = max(0.0, float(row.get("planned_pv_to_bat_kwh") or 0.0))
                         settings = settings_payload()
                         eta_c = max(0.01, float(settings["battery_charge_efficiency"]["value"]))
                         eta_d = max(0.01, float(settings["battery_discharge_efficiency"]["value"]))
-                        pv_balance = min(values["forecast_pv_total_kwh"],
-                                         values["forecast_load_kwh"] + pv_to_bat)
-                        battery_output = values["planned_battery_discharge_kwh"] * eta_d
-                        pv_to_load = min(values["forecast_pv_total_kwh"], values["forecast_load_kwh"])
-                        battery_to_load = max(0.0, battery_output - values["planned_sell_kwh"])
-                        grid_load = max(0.0, values["forecast_load_kwh"] - pv_to_load - battery_to_load)
-                        grid_import = values["planned_buy_kwh"] + grid_load
-                        charge_input = values["planned_battery_charge_kwh"] / eta_c
-                        supply = pv_balance + battery_output + grid_import
-                        demand = (values["forecast_load_kwh"] + charge_input
-                                  + values["planned_sell_kwh"])
                         payload["active_slot_balance"] = {
-                            "slot_start": row["slot_start"], **values,
-                            "planned_pv_to_bat_kwh": round(pv_to_bat, 6),
-                            "grid_load_kwh": round(grid_load, 6),
-                            "pv_balance_kwh": round(pv_balance, 6),
-                            "battery_discharge_output_kwh": round(battery_output, 6),
-                            "grid_import_kwh": round(grid_import, 6),
-                            "battery_charge_input_kwh": round(charge_input, 6),
-                            "supply_kwh": round(supply, 6),
-                            "demand_kwh": round(demand, 6),
-                            "difference_kwh": round(supply - demand, 6),
+                            "slot_start": row["slot_start"],
+                            **calculate_slot_energy_balance(row, eta_c, eta_d),
                         }
                     else:
                         payload["active_slot_balance"] = None
@@ -224,8 +201,6 @@ def build_handler(a: ApiAdapters):
                                      HTTPStatus.SERVICE_UNAVAILABLE)
             if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","target-history","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs","appliances")):
                 name=path.rsplit("/",1)[-1]; params=parse_qs(urlparse(self.path).query); limit=min(500,max(1,int(params.get("limit",["96"])[0])))
-                if name == "plan":
-                    limit = 500
                 if name == "todo":
                     requested_status = params.get("status", [None])[0]
                     if requested_status:
