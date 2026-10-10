@@ -65,7 +65,7 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             row['forecast_load_kwh'] = 1.0
         safety = self.safety(rows)
         required, _ = daily_close_soc_requirements(
-            rows, safety, {rows[0]['local_day']: 42.7, rows[-1]['local_day']: 42.7})
+            rows, safety, {rows[0]['local_day']: 47.7, rows[-1]['local_day']: 47.7})
         self.assertGreater(required[0], 47.7)
         self.assertAlmostEqual(required[0], 17.0 + 5.0/0.95/15.0*100.0)
 
