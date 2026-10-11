@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.15 — czytelne szczegóły diagnostyki
+
+- Wiersze raportów diagnostycznych otwierają szczegółowy widok analogiczny do rekordu TODO.
+- Statusy, wyzwalacze i wyniki kontroli są prezentowane po polsku; nieudane kontrole pokazują oczekiwane wartości i zrozumiałe podsumowanie.
+- Zmiana dotyczy wyłącznie odczytowego panelu WWW; nie zmienia diagnostyki, planera ani sterowania urządzeniami.
+
 ## 0.40.14 — rezerwacja SOC mostu z importem na obciążenie domu
 
 - Planer i walidator osiągalności traktują energię powyżej aktywnego wymogu SOC jako dostępną do rozładowania; import na dom jest konieczny, gdy rozładowanie naruszyłoby wymagany SOC.

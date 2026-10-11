@@ -103,6 +103,17 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("'IN_PROGRESS'", API)
         self.assertIn("v==='IN_PROGRESS'?'W TOKU'", HTML)
 
+    def test_diagnostic_rows_open_human_readable_report_details(self):
+        self.assertIn("id='diagnosticModal'", HTML)
+        self.assertIn("data-diagnostic-id=", HTML)
+        self.assertIn("function openDiagnostic(reportId)", HTML)
+        self.assertIn("diagnosticLabels={planner_runtime_health:'Stan modułów planera i PPD'", HTML)
+        self.assertIn("function diagnosticSummaryForRow(row)", HTML)
+        self.assertIn("diagnosticFailedChecks(row)", HTML)
+        self.assertIn("if(e.target===diagnosticModal)closeDiagnostic()", HTML)
+        self.assertIn("checks_json", HTML)
+        self.assertIn("Wykryte problemy:", HTML)
+
     def test_agent_ui_is_removed_and_observer_tab_remains(self):
         self.assertNotIn("data-view='agent'", HTML)
         self.assertNotIn("api/agent/", HTML)
