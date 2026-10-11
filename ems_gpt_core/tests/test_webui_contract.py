@@ -108,7 +108,7 @@ class WebUiContractTests(unittest.TestCase):
         self.assertIn("data-diagnostic-id=", HTML)
         self.assertIn("function openDiagnostic(reportId)", HTML)
         self.assertIn("diagnosticLabels={planner_runtime_health:'Stan modułów planera i PPD'", HTML)
-        self.assertIn("function diagnosticSummary(row)", HTML)
+        self.assertIn("function diagnosticSummaryForRow(row)", HTML)
         self.assertIn("diagnosticFailedChecks(row)", HTML)
         self.assertIn("if(e.target===diagnosticModal)closeDiagnostic()", HTML)
         self.assertIn("checks_json", HTML)
