@@ -2360,6 +2360,9 @@ def build_planner(a: PlannerAdapters):
                 nonlocal battery_sales_enabled, terminal_shortfall_allowed, terminal_soc
                 requested_terminal_soc = terminal_soc
                 target_commitment_fallback_level = 0
+                # Never downgrade a failed BUY commitment into a lower target.
+                # Keep the previously accepted plan if no physically feasible
+                # allocation exists under the immutable RCE permissions.
                 original_import_caps = (None if minimum_targets is None
                                         else list(minimum_targets))
                 original_required_pcts = (None if required_pcts is None
