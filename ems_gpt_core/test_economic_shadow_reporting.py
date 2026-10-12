@@ -36,6 +36,24 @@ class ShadowReportingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             snapshot_from_records(list(reversed(self.records())), "test", 90, 90)
 
+    def test_nan_and_invalid_energy_are_rejected(self):
+        rows = self.records()
+        rows[0]["pv_kwh"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "NON_FINITE_VALUE"):
+            snapshot_from_records(rows, "test", 90, 90)
+        rows = self.records()
+        rows[0]["production_buy_kwh"] = -1
+        with self.assertRaisesRegex(ValueError, "NEGATIVE_ENERGY"):
+            snapshot_from_records(rows, "test", 90, 90)
+
+    def test_invalid_soc_rejected(self):
+        rows = self.records()
+        rows[0]["soc_required_pct"] = 110
+        with self.assertRaisesRegex(ValueError, "INVALID_SOC_REQUIRED"):
+            snapshot_from_records(rows, "test", 90, 90)
+        with self.assertRaisesRegex(ValueError, "INVALID_BOUNDARY_SOC"):
+            snapshot_from_records(self.records(), "test", float("nan"), 90)
+
     def test_writer_cannot_overwrite_or_traverse(self):
         with tempfile.TemporaryDirectory() as folder:
             destination = write_shadow_report({"mode": "SHADOW_READ_ONLY"},
