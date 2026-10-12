@@ -11,7 +11,7 @@ class ShadowSimulatorTests(unittest.TestCase):
     def setUp(self):
         self.slots = [
             ShadowSlot("2026-10-13 17:45", 2.18661, 1.58661, False, True, 0.1, 0),
-            ShadowSlot("2026-10-13 23:45", 1.05844, 0.45844, True, False, 0.1, 0),
+            ShadowSlot("2026-10-13 23:45", 1.05844, 0.45844, True, False, 0, 0),
         ]
 
     def test_13_october_price_pair_proposed(self):
@@ -35,6 +35,14 @@ class ShadowSimulatorTests(unittest.TestCase):
         result = simulate("E", self.slots, 95, [1, 0], [0, 0], terminal_soc_pct=95)
         self.assertFalse(result.feasible)
         self.assertIn("TERMINAL_SOC", result.reasons)
+
+    def test_buy_and_native_load_conflict_rejected(self):
+        loaded_slots = [
+            self.slots[0],
+            ShadowSlot("2026-10-13 23:45", 1.05844, 0.45844, True, False, 0.1, 0),
+        ]
+        result = simulate("E", loaded_slots, 95, [0, 0], [0, 1])
+        self.assertIn("1:SIMULTANEOUS_CHARGE_DISCHARGE", result.reasons)
 
     def test_buy_disallowed(self):
         result = simulate("E", self.slots, 95, [0, 0], [0.2, 0])
