@@ -1238,14 +1238,16 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     unit: predecessor for unit, predecessor in next_predecessors.items()
                     if unit in eligible}
             else:
-                # The requested purchase target is a ceiling on import, not a
-                # reason to reject the whole plan when the slot's net physics
-                # cannot reach it. Retain the highest feasible SOC and expose
-                # that effective target to downstream validation/audit.
-                effective_target_unit = max(next_costs)
-                next_costs = {effective_target_unit: next_costs[effective_target_unit]}
-                next_predecessors = {
-                    effective_target_unit: next_predecessors[effective_target_unit]}
+                # A BUY deadline is a physical energy commitment, not merely
+                # a suggested charging ceiling. Never publish a lower SOC
+                # under the original deadline: the caller must reconsider
+                # purchase windows / reachability or keep the prior plan.
+                best_reachable_pct = max(next_costs) * step
+                raise RuntimeError(
+                    f"BUY_TARGET_UNREACHABLE:slot={index}:"
+                    f"requested={requested_target_unit * step:.3f}:"
+                    f"reachable={best_reachable_pct:.3f}"
+                )
         effective_target_pcts.append(effective_target_unit * step)
         costs, predecessors = next_costs, predecessors+[next_predecessors]
     candidates = [(cost, unit) for unit, cost in costs.items() if unit >= terminal_unit]
@@ -1287,6 +1289,54 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                  max(reserve, min(float(max_soc_pct), float(target))))
                 for target in (minimum_soc_targets or [max_soc_pct] * len(rows))
             ]}
+
+
+
+def validate_physical_buy_commitments(
+        rows: list[dict], flows: list[dict], due_indices: set[int],
+        target_pcts: list[float], max_power_kw: float,
+        slot_minutes: int, capacity_kwh: float,
+        eta_c: float, tolerance_pct: float = 0.11) -> dict:
+    """Verify actual scheduled energy, not hypothetical BUY capacity.
+
+    BUY is a permission only. Its physical contribution is the sum of
+    grid_charge_kwh in the selected dispatch. The due SOC is checked after
+    native load and PV for the entire BUY window have been accounted for.
+    """
+    if len(rows) != len(flows) or len(rows) != len(target_pcts):
+        raise RuntimeError("BUY_PHYSICAL_COMMITMENT_LENGTH_MISMATCH")
+    max_charge_input = max(0.0, float(max_power_kw)) * slot_minutes / 60.0
+    actual_buy_kwh = 0.0
+    buy_slots = 0
+    for index, (row, flow) in enumerate(zip(rows, flows)):
+        buy = (strict_database_bool(row.get("buy_window", False), "buy_window")
+               and not strict_database_bool(row.get("sale_window", False), "sale_window"))
+        imported = max(0.0, float(flow.get("grid_charge_kwh") or 0.0))
+        pv_charged = max(0.0, float(flow.get("pv_to_bat_kwh") or 0.0))
+        if imported > 1e-7 and not buy:
+            raise RuntimeError(f"GRID_CHARGE_OUTSIDE_BUY:{index}")
+        if imported + pv_charged > max_charge_input + 1e-6:
+            raise RuntimeError(f"CHARGE_POWER_LIMIT:{index}")
+        if buy:
+            buy_slots += 1
+            actual_buy_kwh += imported
+        if index in due_indices:
+            actual_soc = float(flow.get("soc_end_pct") or 0.0)
+            required_soc = float(target_pcts[index])
+            if actual_soc + tolerance_pct < required_soc:
+                raise RuntimeError(
+                    f"BUY_PHYSICAL_DEFICIT:{index}:{actual_soc:.3f}"
+                    f"<{required_soc:.3f}")
+        if index:
+            previous_soc = float(flows[index - 1].get("soc_end_pct") or 0.0)
+            starting_soc = float(flow.get("soc_start_pct") or 0.0)
+            if abs(previous_soc - starting_soc) > tolerance_pct:
+                raise RuntimeError(f"SOC_DISCONTINUITY:{index}")
+    return {
+        "actual_buy_kwh": round(actual_buy_kwh, 6),
+        "buy_slot_count": buy_slots,
+        "buy_deadline_count": len(due_indices),
+    }
 
 
 def derive_soc_commitments(flows: list[dict], capacity_kwh: float,
@@ -2358,6 +2408,9 @@ def build_planner(a: PlannerAdapters):
                 nonlocal battery_sales_enabled, terminal_shortfall_allowed, terminal_soc
                 requested_terminal_soc = terminal_soc
                 target_commitment_fallback_level = 0
+                # Never downgrade a failed BUY commitment into a lower target.
+                # Keep the previously accepted plan if no physically feasible
+                # allocation exists under the immutable RCE permissions.
                 original_import_caps = (None if minimum_targets is None
                                         else list(minimum_targets))
                 original_required_pcts = (None if required_pcts is None
@@ -2375,44 +2428,10 @@ def build_planner(a: PlannerAdapters):
                         break
                     except RuntimeError as exc:
                         slot_error_prefix = "No feasible SOC state at horizon slot "
-                        if (pass_name == "TARGET_COMMITMENT"
-                                and not battery_sales_enabled
-                                and target_commitment_fallback_level < 2
-                                and required_pcts is not None
-                                and str(exc).startswith(slot_error_prefix)):
-                            failed_index = int(str(exc)[len(slot_error_prefix):])
-                            if not 0 <= failed_index < len(horizon_rows):
-                                raise
-                            hard_indices, due_indices = set(), set()
-                            if target_commitment_fallback_level == 0:
-                                minimum_targets, _, _ = target_commitment_safety_fallback(
-                                    original_import_caps)
-                                event_name = "target_commitment_deadlines_relaxed"
-                                event_payload = {
-                                    "import_cap_preserved": True,
-                                    "required_soc_preserved": True,
-                                }
-                            else:
-                                required_pcts = target_commitment_required_fallback(
-                                    enforced_daily_required)
-                                event_name = "target_commitment_optional_bridge_relaxed"
-                                event_payload = {
-                                    "replenishment_safety_preserved": True,
-                                    "daily_close_target_preserved": True,
-                                    "required_soc_pct": required_pcts[failed_index],
-                                    "original_contract_soc_pct": original_required_pcts[failed_index],
-                                    "import_cap_preserved": True,
-                                }
-                            target_commitment_fallback_level += 1
-                            record_event(event_name, "planner", {
-                                "stage": pass_name,
-                                "slot_start": str(horizon_rows[failed_index]["slot_start"]),
-                                "failed_index": failed_index,
-                                "fallback_level": target_commitment_fallback_level,
-                                "reason": str(exc),
-                                **event_payload,
-                            }, "WARNING")
-                            continue
+                        # A failed SOC bridge must not be repaired by removing
+                        # BUY deadlines or lowering the required energy.
+                        # This preserves the last accepted plan rather than
+                        # publishing a horizon that buys too little.
                         if (pass_name == "TARGET_COMMITMENT"
                                 and battery_sales_enabled
                                 and str(exc).startswith(slot_error_prefix)):
@@ -2609,6 +2628,13 @@ def build_planner(a: PlannerAdapters):
                 }, "WARNING")
             target_due_indices = validate_active_soc_target_deadlines(
                 optimization, target_due_indices, targets)
+            physical_buy_audit = validate_physical_buy_commitments(
+                horizon_rows, optimization["flows"], target_due_indices,
+                charge_targets, max_kw, int(OPTIONS["slot_minutes"]),
+                capacity, eta_c)
+            record_event("buy_physical_commitment_validated", "planner", {
+                "run_id": run_id, **physical_buy_audit,
+            })
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
             record_event("daily_plan_variant_selected","planner",{
