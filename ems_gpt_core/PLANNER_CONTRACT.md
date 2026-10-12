@@ -455,3 +455,16 @@ SOC jest sprawdzana na jednej wspólnej trajektorii.
 Raport diagnostyczny musi uwzględniać bieżący stan modułów planera i PPD oraz
 ich zatrzaśnięte błędy. Starszy opublikowany plan nie oznacza zdrowego systemu,
 gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
+
+## 14. Doprecyzowanie SOC i fizycznego BUY — 12.10.2026 (0.40.16)
+
+- Każdy replan zaczyna się od aktualnego, rzeczywiście zmierzonego SOC baterii; nie wolno podstawiać końcowego SOC poprzedniego planu jako stanu startowego.
+- Cel SOC wynika z przyszłego bilansu obciążeń, prognoz PV i wymaganej rezerwy do kolejnej realnej możliwości uzupełnienia energii (PV albo BUY). Średnia historyczna 7/14/28 dni dotyczy celu końca doby, a nie stałego celu w każdym slocie.
+- Najpierw wyznacza się wymaganą trajektorię SOC i deficyty energii, następnie fizycznie możliwe ilości ładowania w konkretnych slotach BUY. Samo oznaczenie okna BUY nie oznacza jeszcze zakupionej energii.
+- Ładowanie baterii ma limit 5 kW, czyli maksymalnie 1,25 kWh na slot 15-minutowy, łącznie dla PV i sieci. Dopuszczalna moc importu z sieci 12 kW nie zwiększa limitu ładowania baterii.
+- Zakup z sieci może ładować baterię tylko w BUY i nie ponad właściwy SOC target. Produkcja PV może ładować baterię ponad target, do 100% SOC.
+- Przed publikacją walidacja sprawdza planowane kWh importu, sumę ładowania PV + sieć, ciągłość trajektorii SOC i osiągnięcie wymaganego celu przed jego terminem.
+- Nie wolno po cichu obniżać wymaganego SOC ani usuwać terminów jego osiągnięcia tylko po to, aby zaakceptować niewykonalny plan. Niewykonalność musi być jawnie zgłoszona i nie może skutkować publikacją wadliwego kandydata.
+- Warunek kompletności RCE dotyczy doby importowanej (zwykle 96 slotów), ale horyzont planera i jego widok obejmują wszystkie dostępne, ciągłe sloty bieżącej i następnej doby; limit 96 rekordów w UI nie jest kontraktem planowania.
+- Zmiana konfiguracji planera, poza samym numerem wersji dodatku, wymaga osobnej wyraźnej zgody operatora. Zmiany wyłącznie prezentacyjne panelu nie mogą modyfikować obliczeń, wykonawcy ani PPD.
+- Testy regresyjne kodu nie są równoznaczne z odbiorem produkcyjnym: po aktualizacji trzeba osobno potwierdzić wersję przebiegu planera w zapisanych slotach, okna BUY, planowane kWh zakupu i osiągalność SOC.
