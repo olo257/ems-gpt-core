@@ -1,5 +1,15 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.16 — walidacja fizycznego zakupu i ochrona targetu SOC
+
+- Scalono poprawki PR #176: usunięto ciche obniżanie celu SOC w oknie BUY i awaryjne usuwanie terminów jego osiągnięcia.
+- Dodano kontrolę rzeczywiście zaplanowanego ładowania baterii z sieci: wyłącznie w BUY, z łącznym limitem mocy ładowania PV + sieć 5 kW oraz ciągłością SOC.
+- Przed zaakceptowaniem planu sprawdzany jest SOC osiągnięty na końcu okna BUY, zamiast zakładać hipotetyczną zdolność importu.
+- Dodano testy regresyjne oraz workflow GitHub Actions; ostatni przebieg testów PR #176 zakończył się sukcesem.
+- Nie zmieniono konfiguracji falownika, egzekutora ani PPD.
+- Uwaga: testy regresyjne nie zastępują weryfikacji pełnego planu na danych produkcyjnych po ręcznej aktualizacji dodatku.
+
+
 ## 0.40.15 — czytelne szczegóły diagnostyki
 
 - Wiersze raportów diagnostycznych otwierają szczegółowy widok analogiczny do rekordu TODO.
