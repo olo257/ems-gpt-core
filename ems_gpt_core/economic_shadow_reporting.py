@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -53,6 +54,21 @@ def snapshot_from_records(
         if any(values[key] is None for key in REQUIRED_KEYS):
             raise ValueError(f"{i}:NULL_VALUE")
         start = str(values["start"])
+        if not start.strip():
+            raise ValueError(f"{i}:EMPTY_SLOT_START")
+        numeric_keys = ("buy_price", "sell_price", "load_kwh", "pv_kwh",
+                        "soc_required_pct", "production_sell_kwh", "production_buy_kwh")
+        try:
+            numeric = {key: float(values[key]) for key in numeric_keys}
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"{i}:INVALID_NUMERIC_VALUE") from exc
+        if not all(math.isfinite(v) for v in numeric.values()):
+            raise ValueError(f"{i}:NON_FINITE_VALUE")
+        if not 0 <= numeric["soc_required_pct"] <= 100:
+            raise ValueError(f"{i}:INVALID_SOC_REQUIRED")
+        if any(numeric[key] < 0 for key in ("load_kwh", "pv_kwh",
+                                          "production_sell_kwh", "production_buy_kwh")):
+            raise ValueError(f"{i}:NEGATIVE_ENERGY")
         if previous_start is not None and start <= previous_start:
             raise ValueError(f"{i}:NON_MONOTONIC_SLOT_ORDER")
         previous_start = start
@@ -71,6 +87,9 @@ def snapshot_from_records(
         targets.append(float(values["soc_required_pct"]))
         sells.append(float(values["production_sell_kwh"]))
         buys.append(float(values["production_buy_kwh"]))
+    if not all(math.isfinite(float(v)) and 0 <= float(v) <= 100
+               for v in (initial_soc_pct, terminal_soc_pct)):
+        raise ValueError("INVALID_BOUNDARY_SOC")
     return ShadowSnapshot(
         slots=tuple(slots),
         initial_soc_pct=float(initial_soc_pct),
