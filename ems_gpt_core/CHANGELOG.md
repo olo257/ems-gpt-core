@@ -1,5 +1,14 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.18 — izolowany planer ekonomiczny E (SHADOW)
+
+- PR #181: dodano symulator, optymalizator horyzontowy, porównanie P/E i adapter raportów JSON w trybie tylko do odczytu.
+- Planer E nie jest automatycznie uruchamiany, nie zapisuje do produkcyjnych tabel i nie steruje falownikiem.
+- Dodano testy izolacyjne oraz weryfikację regresji planera produkcyjnego.
+- Ujednolicono numer wersji aplikacji, manifestu dodatku i dokumentacji.
+- Nie zmieniono algorytmu ani konfiguracji planera P, PPD i egzekutora.
+
+
 ## 0.40.17 — pełny widok planera i aktualizacja kontraktu
 
 - PR #178: panel Planer pobiera do 288 slotów zamiast 96, udostępnia zakres Wszystkie / Dzisiaj / Jutro i licznik rekordów; wybór jest zapamiętywany lokalnie.
