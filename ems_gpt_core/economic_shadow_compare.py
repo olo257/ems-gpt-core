@@ -9,7 +9,7 @@ from typing import Sequence
 
 from economic_shadow import ShadowSlot
 from economic_shadow_simulator import (
-    ShadowAssumptions, ShadowResult, propose_one_slot_arbitrage, simulate,
+    ShadowAssumptions, ShadowResult, simulate,
 )
 
 
