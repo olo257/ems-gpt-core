@@ -63,7 +63,16 @@ def evaluate_shadow(
                              (assumptions.charge_efficiency * assumptions.discharge_efficiency))
                 candidates.append(replay(f"SALE_REBUY_{i}_{j}_{fraction}", sell, buy))
 
-    # A financially meaningful comparison must preserve the same terminal\n    # battery inventory. Otherwise selling stored energy appears as free profit.\n    reference = next((c for c in candidates if c.name == 'PRODUCTION_P'), None)\n    if reference is None:\n        reference = candidates[0]\n    reference_soc = reference.soc_path_pct[-1] if reference.soc_path_pct else initial_soc_pct\n    terminal_tolerance_pct = 0.05 / assumptions.capacity_kwh * 100\n    comparable = [c for c in candidates if c.feasible and\n                  c.soc_path_pct and c.soc_path_pct[-1] >= reference_soc - terminal_tolerance_pct]\n    feasible = comparable
+    # A financially meaningful comparison must preserve the same terminal
+    # battery inventory. Otherwise selling stored energy appears as free profit.
+    reference = next((c for c in candidates if c.name == 'PRODUCTION_P'), None)
+    if reference is None:
+        reference = candidates[0]
+    reference_soc = reference.soc_path_pct[-1] if reference.soc_path_pct else initial_soc_pct
+    terminal_tolerance_pct = 0.05 / assumptions.capacity_kwh * 100
+    comparable = [c for c in candidates if c.feasible and
+                  c.soc_path_pct and c.soc_path_pct[-1] >= reference_soc - terminal_tolerance_pct]
+    feasible = comparable
     best = max(feasible, key=lambda c: c.net_pln) if feasible else None
     production = next((c for c in candidates if c.name == "PRODUCTION_P"), None)
     def pack(c: ShadowResult) -> dict:
@@ -74,7 +83,9 @@ def evaluate_shadow(
     return {
         "mode": "SHADOW_READ_ONLY",
         "candidate_count": len(candidates),
-        "feasible_count": len(feasible),\n        "comparison_terminal_soc_pct": reference_soc,\n        "comparison_terminal_tolerance_pct": terminal_tolerance_pct,
+        "feasible_count": len(feasible),
+        "comparison_terminal_soc_pct": reference_soc,
+        "comparison_terminal_tolerance_pct": terminal_tolerance_pct,
         "best": pack(best) if best else None,
         "production": pack(production) if production else None,
         "delta_vs_production_pln": (
@@ -86,7 +97,8 @@ def evaluate_shadow(
         "limitations": [
             "single SELL slot and optional single later BUY slot per candidate",
             "no full-horizon dynamic-programming optimization",
-            "no export of surplus PV in revenue accounting",\n            "same-terminal-inventory comparison uses minimum baseline SOC; excess inventory not monetized",
+            "no export of surplus PV in revenue accounting",
+            "same-terminal-inventory comparison uses minimum baseline SOC; excess inventory not monetized",
             "requires complete load/PV input and physical replay before interpretation",
         ],
     }
