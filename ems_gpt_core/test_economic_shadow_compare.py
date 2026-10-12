@@ -26,6 +26,16 @@ class EconomicShadowComparisonTests(unittest.TestCase):
         self.assertIsNotNone(result["best"])
         self.assertGreaterEqual(result["delta_vs_production_pln"], 0)
 
+    def test_sale_without_replacement_cannot_fake_profit(self):
+        slots = [
+            ShadowSlot("17:45", 2.0, 1.5, False, True, 0, 0),
+        ]
+        result = evaluate_shadow(slots, 95, [15], 15,
+                                 production_sell_kwh=[0],
+                                 production_buy_kwh=[0])
+        self.assertEqual(result["best"]["name"], "NO_TRADE")
+        self.assertEqual(result["delta_vs_production_pln"], 0)
+
     def test_missing_half_production_flows_rejected(self):
         with self.assertRaises(ValueError):
             evaluate_shadow(self.slots, 95, [80, 80], 80,
