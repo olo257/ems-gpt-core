@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.17 — pełny widok planera i aktualizacja kontraktu
+
+- PR #178: panel Planer pobiera do 288 slotów zamiast 96, udostępnia zakres Wszystkie / Dzisiaj / Jutro i licznik rekordów; wybór jest zapamiętywany lokalnie.
+- Uzupełniono PLANNER_CONTRACT.md o wymagania SOC, rzeczywistego ładowania w BUY, walidacji fizycznej oraz zasadę odrębnej zgody na zmianę konfiguracji planera.
+- Bez zmian w algorytmie planera, PPD i egzekutorze.
+
+
 ## 0.40.16 — walidacja fizycznego zakupu i ochrona targetu SOC
 
 - Scalono poprawki PR #176: usunięto ciche obniżanie celu SOC w oknie BUY i awaryjne usuwanie terminów jego osiągnięcia.
