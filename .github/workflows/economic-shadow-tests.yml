@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Compile shadow modules
-        run: python -m compileall -q ems_gpt_core/economic_shadow.py ems_gpt_core/economic_shadow_simulator.py ems_gpt_core/economic_shadow_compare.py ems_gpt_core/economic_shadow_horizon.py
+        run: python -m compileall -q ems_gpt_core/economic_shadow.py ems_gpt_core/economic_shadow_simulator.py ems_gpt_core/economic_shadow_compare.py ems_gpt_core/economic_shadow_horizon.py ems_gpt_core/economic_shadow_integration.py
       - name: Run isolated shadow unit tests
         env:
           PYTHONPATH: ems_gpt_core
