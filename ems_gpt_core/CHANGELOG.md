@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.21 — diagnostyka nieosiągalnego celu BUY
+
+- Jawny błąd BUY_TARGET_UNREACHABLE_PRESERVED_PLAN z wymaganym i osiągalnym SOC oraz datą slotu.
+- Bez obniżania targetu, modyfikacji okien RCE lub publikacji nieosiągalnego planu.
+- Zmiana diagnostyczna: nie usuwa źródłowej nieosiągalności celu.
+
 ## 0.40.20 — odczyt danych P dla planera E (SHADOW)
 
 - Dodano tylko-do-odczytu endpoint /api/economic-shadow z kontrolą kompletności danych przyszłych slotów P.
