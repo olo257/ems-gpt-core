@@ -1291,6 +1291,54 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
             ]}
 
 
+
+def validate_physical_buy_commitments(
+        rows: list[dict], flows: list[dict], due_indices: set[int],
+        target_pcts: list[float], max_power_kw: float,
+        slot_minutes: int, capacity_kwh: float,
+        eta_c: float, tolerance_pct: float = 0.11) -> dict:
+    """Verify actual scheduled energy, not hypothetical BUY capacity.
+
+    BUY is a permission only. Its physical contribution is the sum of
+    grid_charge_kwh in the selected dispatch. The due SOC is checked after
+    native load and PV for the entire BUY window have been accounted for.
+    """
+    if len(rows) != len(flows) or len(rows) != len(target_pcts):
+        raise RuntimeError("BUY_PHYSICAL_COMMITMENT_LENGTH_MISMATCH")
+    max_charge_input = max(0.0, float(max_power_kw)) * slot_minutes / 60.0
+    actual_buy_kwh = 0.0
+    buy_slots = 0
+    for index, (row, flow) in enumerate(zip(rows, flows)):
+        buy = (strict_database_bool(row.get("buy_window", False), "buy_window")
+               and not strict_database_bool(row.get("sale_window", False), "sale_window"))
+        imported = max(0.0, float(flow.get("grid_charge_kwh") or 0.0))
+        pv_charged = max(0.0, float(flow.get("pv_to_bat_kwh") or 0.0))
+        if imported > 1e-7 and not buy:
+            raise RuntimeError(f"GRID_CHARGE_OUTSIDE_BUY:{index}")
+        if imported + pv_charged > max_charge_input + 1e-6:
+            raise RuntimeError(f"CHARGE_POWER_LIMIT:{index}")
+        if buy:
+            buy_slots += 1
+            actual_buy_kwh += imported
+        if index in due_indices:
+            actual_soc = float(flow.get("soc_end_pct") or 0.0)
+            required_soc = float(target_pcts[index])
+            if actual_soc + tolerance_pct < required_soc:
+                raise RuntimeError(
+                    f"BUY_PHYSICAL_DEFICIT:{index}:{actual_soc:.3f}"
+                    f"<{required_soc:.3f}")
+        if index:
+            previous_soc = float(flows[index - 1].get("soc_end_pct") or 0.0)
+            starting_soc = float(flow.get("soc_start_pct") or 0.0)
+            if abs(previous_soc - starting_soc) > tolerance_pct:
+                raise RuntimeError(f"SOC_DISCONTINUITY:{index}")
+    return {
+        "actual_buy_kwh": round(actual_buy_kwh, 6),
+        "buy_slot_count": buy_slots,
+        "buy_deadline_count": len(due_indices),
+    }
+
+
 def derive_soc_commitments(flows: list[dict], capacity_kwh: float,
                            reserve_pct: float, terminal_soc_pct: float,
                            floor_cap_pct: float,
@@ -2580,6 +2628,13 @@ def build_planner(a: PlannerAdapters):
                 }, "WARNING")
             target_due_indices = validate_active_soc_target_deadlines(
                 optimization, target_due_indices, targets)
+            physical_buy_audit = validate_physical_buy_commitments(
+                horizon_rows, optimization["flows"], target_due_indices,
+                charge_targets, max_kw, int(OPTIONS["slot_minutes"]),
+                capacity, eta_c)
+            record_event("buy_physical_commitment_validated", "planner", {
+                "run_id": run_id, **physical_buy_audit,
+            })
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
             record_event("daily_plan_variant_selected","planner",{
