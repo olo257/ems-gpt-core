@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from planner_service import optimize_energy_horizon
+from planner_service import optimize_energy_horizon, validate_physical_buy_commitments
 
 
 def slot(buy, load=0.0):
@@ -55,3 +55,27 @@ class BuyDeadlineRegressionTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertLessEqual(result["flows"][0]["grid_charge_kwh"], 1.25 + 1e-9)
         self.assertLessEqual(result["flows"][1]["grid_charge_kwh"], 1.25 + 1e-9)
+
+    def test_physical_buy_audit_rejects_paper_only_buy(self):
+        rows = [slot(True)]
+        fake = [{
+            "grid_charge_kwh": 0.0,
+            "pv_to_bat_kwh": 0.0,
+            "soc_start_pct": 21.0,
+            "soc_end_pct": 21.0,
+        }]
+        with self.assertRaisesRegex(RuntimeError, "BUY_PHYSICAL_DEFICIT"):
+            validate_physical_buy_commitments(
+                rows, fake, {0}, [28.0], 5.0, 15, 15.0, 1.0)
+
+    def test_physical_buy_audit_rejects_overpower(self):
+        rows = [slot(True)]
+        fake = [{
+            "grid_charge_kwh": 2.0,
+            "pv_to_bat_kwh": 0.0,
+            "soc_start_pct": 21.0,
+            "soc_end_pct": 34.0,
+        }]
+        with self.assertRaisesRegex(RuntimeError, "CHARGE_POWER_LIMIT"):
+            validate_physical_buy_commitments(
+                rows, fake, {0}, [28.0], 5.0, 15, 15.0, 1.0)
