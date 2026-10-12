@@ -1,6 +1,9 @@
 """Regression: a BUY deadline must never silently lower the requested SOC."""
-import pytest
+import pathlib
+import sys
+import unittest
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from planner_service import optimize_energy_horizon
 
 
@@ -27,17 +30,18 @@ def dispatch(rows, initial, targets, due):
     )
 
 
-def test_buy_21_to_28_percent_is_feasible():
-    result = dispatch([slot(True)], 21.0, [28.0], {0})
-    assert result["flows"][0]["grid_charge_kwh"] > 0.0
-    assert result["flows"][0]["soc_end_pct"] >= 28.0
+class BuyDeadlineRegressionTests(unittest.TestCase):
+    def test_buy_21_to_28_percent_is_feasible(self):
+        result = dispatch([slot(True)], 21.0, [28.0], {0})
+        self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
+        self.assertGreaterEqual(result["flows"][0]["soc_end_pct"], 28.0)
 
 
-def test_unreachable_buy_deadline_is_not_silently_lowered():
-    with pytest.raises(RuntimeError, match="BUY_TARGET_UNREACHABLE"):
-        dispatch([slot(True)], 21.0, [50.0], {0})
+    def test_unreachable_buy_deadline_is_not_silently_lowered(self):
+        with self.assertRaisesRegex(RuntimeError, "BUY_TARGET_UNREACHABLE"):
+            dispatch([slot(True)], 21.0, [50.0], {0})
 
 
-def test_no_buy_outside_buy_window():
-    result = dispatch([slot(False)], 21.0, [28.0], set())
-    assert result["flows"][0]["grid_charge_kwh"] == 0.0
+    def test_no_buy_outside_buy_window(self):
+        result = dispatch([slot(False)], 21.0, [28.0], set())
+        self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
