@@ -26,3 +26,10 @@ Status: isolated development branch; no production integration or execution righ
 - Reject any candidate increasing unplanned household grid import.
 
 This document specifies isolation and test criteria; it does not change production planner behavior.
+
+## Integracja odczytowa — etap następny
+
+- Widok Planer wyświetla wszystkie sloty zwrócone przez `/api/plan` bez filtra daty po stronie przeglądarki; żądanie pobiera maksymalnie 500 wierszy. API nadal zwraca wyłącznie aktywne/przyszłe niezamknięte sloty; nie jest to historia całej tabeli.
+- Adapter `economic_shadow_reporting.snapshot_from_records` wymaga jawnego mapowania pól z bazy (w tym jednostek kWh, cen PLN/kWh, SOC i wektorów produkcyjnego BUY/SELL). Nie należy zgadywać nazw ani podstawiać zer za brakujące wartości.
+- Przed uruchomieniem automatycznym trzeba zapewnić spójny odczyt pełnego horyzontu, ustalić stan SOC z telemetrii i sprawdzić równoważność bilansu importu na obciążenia domu oraz sprzedaży PV. Obecny symulator E nie odwzorowuje jeszcze wszystkich przepływów energii planera P.
+- Brak integracji harmonogramu, bazy danych i UI P/E; moduły pozostają tylko do odczytu, a wyniki nie mogą służyć do sterowania.
