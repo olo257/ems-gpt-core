@@ -2380,44 +2380,10 @@ def build_planner(a: PlannerAdapters):
                         break
                     except RuntimeError as exc:
                         slot_error_prefix = "No feasible SOC state at horizon slot "
-                        if (pass_name == "TARGET_COMMITMENT"
-                                and not battery_sales_enabled
-                                and target_commitment_fallback_level < 2
-                                and required_pcts is not None
-                                and str(exc).startswith(slot_error_prefix)):
-                            failed_index = int(str(exc)[len(slot_error_prefix):])
-                            if not 0 <= failed_index < len(horizon_rows):
-                                raise
-                            hard_indices, due_indices = set(), set()
-                            if target_commitment_fallback_level == 0:
-                                minimum_targets, _, _ = target_commitment_safety_fallback(
-                                    original_import_caps)
-                                event_name = "target_commitment_deadlines_relaxed"
-                                event_payload = {
-                                    "import_cap_preserved": True,
-                                    "required_soc_preserved": True,
-                                }
-                            else:
-                                required_pcts = target_commitment_required_fallback(
-                                    enforced_daily_required)
-                                event_name = "target_commitment_optional_bridge_relaxed"
-                                event_payload = {
-                                    "replenishment_safety_preserved": True,
-                                    "daily_close_target_preserved": True,
-                                    "required_soc_pct": required_pcts[failed_index],
-                                    "original_contract_soc_pct": original_required_pcts[failed_index],
-                                    "import_cap_preserved": True,
-                                }
-                            target_commitment_fallback_level += 1
-                            record_event(event_name, "planner", {
-                                "stage": pass_name,
-                                "slot_start": str(horizon_rows[failed_index]["slot_start"]),
-                                "failed_index": failed_index,
-                                "fallback_level": target_commitment_fallback_level,
-                                "reason": str(exc),
-                                **event_payload,
-                            }, "WARNING")
-                            continue
+                        # A failed SOC bridge must not be repaired by removing
+                        # BUY deadlines or lowering the required energy.
+                        # This preserves the last accepted plan rather than
+                        # publishing a horizon that buys too little.
                         if (pass_name == "TARGET_COMMITMENT"
                                 and battery_sales_enabled
                                 and str(exc).startswith(slot_error_prefix)):
