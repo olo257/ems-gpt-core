@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.19 — pełny widok dostępnych slotów i walidacja E
+
+- Usunięto filtr daty w panelu Planer. Widok pobiera do 500 bieżących i przyszłych slotów (limit API) oraz pokazuje licznik rekordów.
+- Adapter odczytowy planera E odrzuca NaN, nieskończoności, ujemne energie i niepoprawne wartości SOC; dodano testy.
+- Uzupełniono dokumentację wymagań integracji danych produkcyjnych z E.
+- Bez zmian w algorytmie planera P, PPD i egzekutorze; planer E pozostaje SHADOW bez automatycznego uruchamiania.
+
+
 ## 0.40.18 — izolowany planer ekonomiczny E (SHADOW)
 
 - PR #181: dodano symulator, optymalizator horyzontowy, porównanie P/E i adapter raportów JSON w trybie tylko do odczytu.
