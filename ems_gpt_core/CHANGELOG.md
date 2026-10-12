@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.20 — odczyt danych P dla planera E (SHADOW)
+
+- Dodano tylko-do-odczytu endpoint /api/economic-shadow z kontrolą kompletności danych przyszłych slotów P.
+- Dodano zakładkę Planer E (SHADOW) z sumami energii i jawnym statusem nieporównywalności modeli P/E.
+- Brak obliczania lub publikowania oszczędności P/E do czasu rozszerzenia symulatora o eksport PV, ograniczanie PV i odbiory elastyczne.
+- Dodano testy adaptera; brak zmian w produkcyjnym P, PPD i egzekutorze.
+
 ## 0.40.19 — pełny widok dostępnych slotów i walidacja E
 
 - Usunięto filtr daty w panelu Planer. Widok pobiera do 500 bieżących i przyszłych slotów (limit API) oraz pokazuje licznik rekordów.
