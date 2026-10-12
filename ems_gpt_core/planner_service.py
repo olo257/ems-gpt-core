@@ -2322,6 +2322,33 @@ def build_planner(a: PlannerAdapters):
                         max_grid_import_kw=max_grid_import_kw)
                     break
                 except RuntimeError as exc:
+                    # A BUY due target can be infeasible even though the
+                    # relaxed continuous SOC bridge is feasible. Do not retry
+                    # by lowering the target or publishing a misleading plan.
+                    # Record the physical shortfall and preserve the last
+                    # accepted production plan (the run transaction rolls back).
+                    if str(exc).startswith("BUY_TARGET_UNREACHABLE:"):
+                        parts = str(exc).split(":")
+                        details = dict(part.split("=", 1) for part in parts[1:]
+                                       if "=" in part)
+                        failed_index = int(details["slot"])
+                        record_event("buy_target_unreachable", "planner", {
+                            "slot_start": str(horizon_rows[failed_index]["slot_start"]),
+                            "requested_soc_pct": float(details["requested"]),
+                            "reachable_soc_pct": float(details["reachable"]),
+                            "shortfall_pct": round(
+                                float(details["requested"]) -
+                                float(details["reachable"]), 3),
+                            "action": "KEEP_LAST_ACCEPTED_PLAN_REVIEW_BUY_WINDOWS",
+                            "battery_sales_disabled": True,
+                            "rce_windows_unchanged": True,
+                        }, "ERROR")
+                        raise RuntimeError(
+                            "BUY_TARGET_UNREACHABLE_PRESERVED_PLAN:"
+                            f"slot={horizon_rows[failed_index]['slot_start']}:"
+                            f"requested={details['requested']}:"
+                            f"reachable={details['reachable']}"
+                        ) from exc
                     terminal_failure = (
                         str(exc) == "No feasible terminal SOC state for complete horizon"
                     )
