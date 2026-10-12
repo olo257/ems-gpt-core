@@ -11,6 +11,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from energy_balance_service import calculate_slot_energy_balance
+from economic_shadow_live import inspect_production_slots
 
 
 @dataclass(frozen=True)
@@ -267,6 +268,15 @@ def build_handler(a: ApiAdapters):
                 }
                 with db() as conn,conn.cursor() as cur: cur.execute(*queries[name]); rows=cur.fetchall()
                 return self.json({"view":name,"count":len(rows),"rows":rows})
+            if path.endswith("/api/economic-shadow") or path == "/api/economic-shadow":
+                # Read-only, bounded future P slots; never invoke E as controller.
+                with db() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM ems_gpt_slots WHERE actual_recorded_at IS NULL "
+                        "AND slot_start >= %s ORDER BY slot_start LIMIT %s",
+                        (slot_start().replace(tzinfo=None), 288))
+                    rows = cur.fetchall()
+                return self.json(inspect_production_slots(rows))
             if path.endswith("/icon.png") or path == "/icon.png":
                 data = Path(icon_path).read_bytes(); self.send_response(200); self.send_header("Content-Type", "image/png"); self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(data))); self.end_headers(); return self.wfile.write(data)
             data = HTML.encode(); self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
