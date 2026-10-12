@@ -45,3 +45,13 @@ class BuyDeadlineRegressionTests(unittest.TestCase):
     def test_no_buy_outside_buy_window(self):
         result = dispatch([slot(False)], 21.0, [28.0], set())
         self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
+
+    def test_two_slot_buy_window_covers_physical_deficit(self):
+        rows = [slot(True), slot(True)]
+        rows[0]["price_buy_pln_kwh"] = 0.25
+        rows[1]["price_buy_pln_kwh"] = 0.80
+        result = dispatch(rows, 21.0, [35.0, 35.0], {1})
+        self.assertGreaterEqual(result["flows"][-1]["soc_end_pct"], 35.0)
+        self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
+        self.assertLessEqual(result["flows"][0]["grid_charge_kwh"], 1.25 + 1e-9)
+        self.assertLessEqual(result["flows"][1]["grid_charge_kwh"], 1.25 + 1e-9)
