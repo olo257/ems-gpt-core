@@ -1,0 +1,31 @@
+name: Economic Shadow isolated tests
+
+on:
+  pull_request:
+    paths:
+      - 'ems_gpt_core/economic_shadow*.py'
+      - 'ems_gpt_core/test_economic_shadow*.py'
+      - '.github/workflows/economic-shadow-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ems_gpt_core/economic_shadow*.py'
+      - 'ems_gpt_core/test_economic_shadow*.py'
+      - '.github/workflows/economic-shadow-tests.yml'
+
+jobs:
+  shadow-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile shadow modules
+        run: python -m compileall -q ems_gpt_core/economic_shadow.py ems_gpt_core/economic_shadow_simulator.py ems_gpt_core/economic_shadow_compare.py
+      - name: Run isolated shadow unit tests
+        env:
+          PYTHONPATH: ems_gpt_core
+        run: python -m unittest discover -s ems_gpt_core -p 'test_economic_shadow*.py' -v
