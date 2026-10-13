@@ -37,9 +37,12 @@ class BuyDeadlineRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(result["flows"][0]["soc_end_pct"], 28.0)
 
 
-    def test_unreachable_buy_deadline_is_not_silently_lowered(self):
-        with self.assertRaisesRegex(RuntimeError, "BUY_TARGET_UNREACHABLE"):
-            dispatch([slot(True)], 21.0, [50.0], {0})
+    def test_unreachable_buy_deadline_keeps_reachable_plan_and_reports_shortfall(self):
+        result = dispatch([slot(True)], 21.0, [50.0], {0})
+        self.assertLess(result["effective_target_pcts"][0], 50.0)
+        self.assertEqual(result["requested_target_pcts"][0], 50.0)
+        self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
+        self.assertLessEqual(result["flows"][0]["grid_charge_kwh"], 1.25 + 1e-9)
 
 
     def test_no_buy_outside_buy_window(self):
