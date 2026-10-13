@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.26 — panel energii i wykres prognozy
+
+- Dodano panel energii z bieżącym planem 15-minutowym, wykresami PV, zużycia i SOC, podsumowaniem zakupów/sprzedaży oraz harmonogramem.
+- Poprawiono wykres prognozy zużycia: osie czasu i energii, podziałkę oraz szerokość dopasowaną do widoku.
+- Zmiany dotyczą panelu WWW; bez zmian w logice planera, PPD i wykonawcy.
+
+
 ## 0.40.21 — diagnostyka nieosiągalnego celu BUY
 
 - Jawny błąd BUY_TARGET_UNREACHABLE_PRESERVED_PLAN z wymaganym i osiągalnym SOC oraz datą slotu.
