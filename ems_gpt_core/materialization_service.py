@@ -622,7 +622,7 @@ def build_materializations(a: MaterializationAdapters):
             if not future:
                 return 0
             cur.execute("""SELECT slot_start,actual_load_kwh,
-              actual_heat_pump_electric_kwh,actual_ev_kwh
+              actual_heating_consumed_kwh,actual_ev_kwh
               FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s
                 AND actual_recorded_at IS NOT NULL
                 AND actual_load_kwh IS NOT NULL
@@ -630,7 +630,7 @@ def build_materializations(a: MaterializationAdapters):
             samples = []
             for past in cur.fetchall():
                 native = max(0.0, float(past["actual_load_kwh"])
-                             - max(0.0, float(past.get("actual_heat_pump_electric_kwh") or 0))
+                             - max(0.0, float(past.get("actual_heating_consumed_kwh") or 0))
                              - max(0.0, float(past.get("actual_ev_kwh") or 0)))
                 samples.append({"slot_start": past["slot_start"],
                                 "native_load_kwh": native})
