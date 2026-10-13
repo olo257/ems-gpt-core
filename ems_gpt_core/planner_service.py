@@ -1238,16 +1238,14 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     unit: predecessor for unit, predecessor in next_predecessors.items()
                     if unit in eligible}
             else:
-                # A BUY deadline is a physical energy commitment, not merely
-                # a suggested charging ceiling. Never publish a lower SOC
-                # under the original deadline: the caller must reconsider
-                # purchase windows / reachability or keep the prior plan.
-                best_reachable_pct = max(next_costs) * step
-                raise RuntimeError(
-                    f"BUY_TARGET_UNREACHABLE:slot={index}:"
-                    f"requested={requested_target_unit * step:.3f}:"
-                    f"reachable={best_reachable_pct:.3f}"
-                )
+                # Keep the physically reachable state rather than reject the
+                # entire production plan. Record the actual due SOC separately
+                # from the requested target, preserving the original demand.
+                best_reachable_unit = max(next_costs)
+                next_costs = {best_reachable_unit: next_costs[best_reachable_unit]}
+                next_predecessors = {
+                    best_reachable_unit: next_predecessors[best_reachable_unit]}
+                effective_target_unit = best_reachable_unit
         effective_target_pcts.append(effective_target_unit * step)
         costs, predecessors = next_costs, predecessors+[next_predecessors]
     candidates = [(cost, unit) for unit, cost in costs.items() if unit >= terminal_unit]
