@@ -127,7 +127,7 @@ async function loadConsumptionForecast(){
 
 function energyDashboardChart(rows,series,height=245){
  const W=1200,H=height,L=55,R=18,T=15,B=40;
- const values=rows.flatMap(r=>series.map(s=>Number(r[s.key])||0));
+ const values=rows.flatMap(r=>series.filter(s=>s.key!=='soc_end_plan_pct').map(s=>Number(r[s.key])||0));
  const max=Math.max(0.1,...values)*1.12;
  const xx=i=>L+(W-L-R)*(rows.length<2?0:i/(rows.length-1));
  const yy=v=>H-B-Math.max(0,v)/max*(H-T-B);
@@ -135,8 +135,8 @@ function energyDashboardChart(rows,series,height=245){
  let svg='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;display:block" role="img" aria-label="Wykres danych planu">';
  ticks.forEach(v=>{svg+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yy(v)+'" y2="'+yy(v)+'" stroke="#29415b"/><text x="'+(L-7)+'" y="'+(yy(v)+4)+'" fill="#a9bed4" text-anchor="end" font-size="13">'+v.toFixed(1)+'</text>'});
  rows.forEach((r,i)=>{if(i%Math.max(1,Math.ceil(rows.length/12))===0){svg+='<text x="'+xx(i)+'" y="'+(H-13)+'" fill="#b8c9df" font-size="13" text-anchor="middle">'+escapeHtml(String(r.slot_start).slice(11,16))+'</text>'}});
- series.forEach(line=>{let d='';rows.forEach((r,i)=>{const v=Number(r[line.key]);if(Number.isFinite(v))d+=(d?' L':'M')+xx(i).toFixed(1)+' '+yy(v).toFixed(1)});svg+='<path d="'+d+'" fill="none" stroke="'+line.color+'" stroke-width="2.7"/>'});
- return svg+'</svg><div class="energy-legend">'+series.map(z=>'<span><i style="background:'+z.color+'"></i>'+escapeHtml(z.label)+'</span>').join('')+'</div>';
+ series.forEach(line=>{let d='';rows.forEach((r,i)=>{const v=Number(r[line.key]);if(Number.isFinite(v))d+=(d?' L':'M')+xx(i).toFixed(1)+' '+(line.key==='soc_end_plan_pct'?(H-B-Math.max(0,Math.min(100,v))/100*(H-T-B)):yy(v)).toFixed(1)});svg+='<path d="'+d+'" fill="none" stroke="'+line.color+'" stroke-width="2.7"/>'});
+ if(series.some(line=>line.key==='soc_end_plan_pct')){[0,25,50,75,100].forEach(v=>{svg+='<text x="'+(W-R-2)+'" y="'+(H-B-v/100*(H-T-B)+4)+'" fill="#f2f2f2" text-anchor="end" font-size="12">'+v+'%</text>'})}return svg+'</svg><div class="energy-legend">'+series.map(z=>'<span><i style="background:'+z.color+'"></i>'+escapeHtml(z.label)+'</span>').join('')+'</div>';
 }
 async function loadEnergyDashboard(){
  const panel=document.getElementById('energyDashboardPanel');
@@ -169,7 +169,7 @@ async function loadEnergyDashboard(){
  {key:'forecast_load_kwh',label:'Dom',color:'#4e9bd6'},
  {key:'planned_battery_charge_kwh',label:'Ładowanie baterii',color:'#45d89a'},
  {key:'planned_buy_kwh',label:'Zakup',color:'#9862e9'},
- {key:'soc_end_plan_pct',label:'SOC (%) – osobna skala nie jest dostępna w tym wykresie',color:'#f7f7f7'}],300));
+ {key:'soc_end_plan_pct',label:'SOC (%) — prawa skala',color:'#f7f7f7'}],300));
  const charts='<div class="energy-two">'+
  section('Prognoza zużycia (kWh/15 min)',energyDashboardChart(data,[{key:'forecast_load_kwh',label:'Dom',color:'#4e9bd6'},{key:'forecast_heat_pump_load_kwh',label:'HEAT',color:'#fa8b35'},{key:'forecast_heat_pump_dhw_load_kwh',label:'DHW',color:'#ef5264'}]))+
  section('Prognoza PV (kWh/15 min)',energyDashboardChart(data,[{key:'forecast_pv1_kwh',label:'PV1',color:'#1fc775'},{key:'forecast_pv2_kwh',label:'PV2',color:'#8de5a5'},{key:'forecast_pv_total_kwh',label:'PV razem',color:'#f2c04c'}]))+'</div>';
