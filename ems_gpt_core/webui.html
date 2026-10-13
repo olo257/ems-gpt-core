@@ -72,6 +72,12 @@ const futureProcessNames=['COOL_DHW'];
 async function loadProcessControls(){const r=await fetch('api/overrides?limit=30');const j=await r.json();const active={};j.rows.forEach(x=>{if(x.status==='ACTIVE')active[x.process_name]=x});const future=futureProcessNames.map(p=>`<div class='card'><b>${p}</b><div class='label warn'>PLANOWANE — LATO</div><p><button disabled>Włącz</button> <button disabled>Wyłącz</button> <button disabled>Auto</button></p></div>`).join('');processControls.innerHTML=`<div class='grid'>${processNames.map(p=>{const a=active[p];const manualOn=a?.requested_state==='FORCE_ON',manualOff=a?.requested_state==='FORCE_OFF';const status=manualOn?'WŁĄCZONY RĘCZNIE':manualOff?'WYŁĄCZONY':'AUTO';return `<div class='card'><b>${p}</b><div class='label ${manualOn?'warn':manualOff?'no':'ok'}'>${status}</div><p><button class='${manualOn?'apply':''}' onclick="setOverride('${p}','FORCE_ON')">Włącz</button> <button class='${manualOff?'danger':''}' onclick="setOverride('${p}','FORCE_OFF')">Wyłącz</button> <button class='${!a?'apply':''}' onclick="setOverride('${p}','AUTO')">Auto</button></p></div>`}).join('')}${future}</div><br>`}
 async function setOverride(process,state){const body={process,state,reason:'panel operatora'};const r=await fetch('api/process/override',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)alert(j.error||'Błąd');await loadProcessControls()}
 let currentView='plan',viewLoading=false;
+function niceTickStep(value){
+ if(!Number.isFinite(value)||value<=0)return 0.1;
+ const magnitude=Math.pow(10,Math.floor(Math.log10(value)));
+ const normalized=value/magnitude;
+ return (normalized<=1?1:normalized<=2?2:normalized<=5?5:10)*magnitude;
+}
 async function loadConsumptionForecast(){
  const r=await apiFetch('api/execution?limit=500'),j=await r.json();
  if(!r.ok)throw new Error(j.error||'HTTP '+r.status);
@@ -87,18 +93,33 @@ async function loadConsumptionForecast(){
  const wapeDen=paired.reduce((a,v)=>a+Math.abs(v.actual),0);
  const wape=wapeDen>0?100*paired.reduce((a,v)=>a+Math.abs(v.plan-v.actual),0)/wapeDen:null;
  const plot=vals.filter(v=>Number.isFinite(v.plan)||Number.isFinite(v.actual));
- const width=960,height=290,pad=44;
+ const width=1400,height=380,left=74,right=24,top=24,bottom=64;
+ const innerWidth=width-left-right,innerHeight=height-top-bottom;
  const max=Math.max(0.1,...plot.flatMap(v=>[v.plan,v.actual].filter(Number.isFinite)));
- const x=i=>pad+(plot.length<2?0:i*(width-2*pad)/(plot.length-1));
- const y=v=>height-pad-(v/max)*(height-2*pad);
+ const tickStep=niceTickStep(max/5);
+ const yMax=Math.ceil(max/tickStep)*tickStep;
+ const x=i=>left+(plot.length<2?0:i*innerWidth/(plot.length-1));
+ const y=v=>height-bottom-(v/yMax)*innerHeight;
  const path=key=>plot.map((v,i)=>Number.isFinite(v[key])?(i===0||!Number.isFinite(plot[i-1][key])?'M':'L')+x(i).toFixed(1)+' '+y(v[key]).toFixed(1):'').join(' ');
- const graph='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Prognoza i wykonanie zużycia na slotach 15 minut" style="width:100%;max-width:1100px;background:#0a1d32;border-radius:12px">'+
- '<line x1="'+pad+'" y1="'+(height-pad)+'" x2="'+(width-pad)+'" y2="'+(height-pad)+'" stroke="#63829b"/>'+
+ const axisColor='#a8bfd6',gridColor='#28425e';
+ const yTicks=Array.from({length:Math.round(yMax/tickStep)+1},(_,i)=>i*tickStep);
+ const xStride=Math.max(1,Math.ceil(plot.length/9));
+ const xIndices=plot.map((_,i)=>i).filter(i=>i%xStride===0||i===plot.length-1);
+ const yGrid=yTicks.map(v=>'<line x1="'+left+'" y1="'+y(v)+'" x2="'+(width-right)+'" y2="'+y(v)+'" stroke="'+gridColor+'"/>'+
+  '<text x="'+(left-10)+'" y="'+(y(v)+5)+'" fill="'+axisColor+'" text-anchor="end" font-size="16">'+v.toFixed(2)+'</text>').join('');
+ const xGrid=xIndices.map(i=>'<line x1="'+x(i)+'" y1="'+top+'" x2="'+x(i)+'" y2="'+(height-bottom)+'" stroke="'+gridColor+'" stroke-dasharray="3 5"/>'+
+  '<text x="'+x(i)+'" y="'+(height-bottom+23)+'" fill="'+axisColor+'" text-anchor="middle" font-size="15">'+escapeHtml(plot[i].slot.slice(11,16))+'</text>').join('');
+ const graph='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Prognoza i wykonanie zużycia, oś X godzina, oś Y kWh na slot 15 minut" style="display:block;width:100%;height:auto;background:#0a1d32;border-radius:12px">'+
+ yGrid+xGrid+
+ '<line x1="'+left+'" y1="'+(height-bottom)+'" x2="'+(width-right)+'" y2="'+(height-bottom)+'" stroke="'+axisColor+'"/>'+
+ '<line x1="'+left+'" y1="'+top+'" x2="'+left+'" y2="'+(height-bottom)+'" stroke="'+axisColor+'"/>'+
+ '<text x="'+(width/2)+'" y="'+(height-8)+'" fill="'+axisColor+'" text-anchor="middle" font-size="17">Godzina (Europe/Warsaw)</text>'+
+ '<text x="19" y="'+(height/2)+'" fill="'+axisColor+'" text-anchor="middle" font-size="17" transform="rotate(-90 19 '+(height/2)+')">Zużycie [kWh / 15 min]</text>'+
  '<path d="'+path('plan')+'" fill="none" stroke="#38d2ab" stroke-width="2.5"/>'+
  '<path d="'+path('actual')+'" fill="none" stroke="#ffbb60" stroke-width="2.5"/></svg>';
  const fmt=v=>Number.isFinite(v)?v.toFixed(3):'—';
  thead.innerHTML='<tr><th colspan="4">Ostatnie '+plot.length+' slotów · <span style="color:#38d2ab">— Prognoza</span> · <span style="color:#ffbb60">— Wykonanie</span></th></tr>';
- tbody.innerHTML='<tr><td colspan="4">'+graph+'</td></tr><tr><td>MAE '+fmt(mae)+' kWh/slot</td><td>Bias '+fmt(bias)+' kWh/slot</td><td>WAPE '+(Number.isFinite(wape)?wape.toFixed(1)+'%':'—')+'</td><td>Par pomiarowych: '+paired.length+'</td></tr>'+
+ tbody.innerHTML='<tr><td colspan="4" style="padding:0">'+graph+'</td></tr><tr><td>MAE '+fmt(mae)+' kWh/slot</td><td>Bias '+fmt(bias)+' kWh/slot</td><td>WAPE '+(Number.isFinite(wape)?wape.toFixed(1)+'%':'—')+'</td><td>Par pomiarowych: '+paired.length+'</td></tr>'+
  '<tr><th>Slot</th><th>Dom plan / wykonanie</th><th>HEAT plan</th><th>DHW informacyjnie</th></tr>'+
  vals.map(v=>'<tr><td>'+escapeHtml(v.slot)+'</td><td>'+fmt(v.plan)+' / '+fmt(v.actual)+'</td><td>'+fmt(v.heat)+'</td><td>'+fmt(v.dhw)+'</td></tr>').join('');
  tableRefresh.textContent='Wykonanie to całkowite zużycie; prognoza zawiera dom i dodatkowy HEAT, lecz nie uwzględnia oddzielnie EV. Metryki są diagnostyczne i nie sterują SOC.';
