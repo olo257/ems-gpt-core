@@ -609,7 +609,7 @@ def build_materializations(a: MaterializationAdapters):
         DHW/HEAT attribution remains unchanged until the component contract
         is validated against production telemetry.
         """
-        from .rolling_load_forecast import rolling_slot_forecast
+        from rolling_load_forecast import rolling_slot_forecast
 
         updated = 0
         cutoff = slot_start().replace(tzinfo=None)
