@@ -1,23 +1,25 @@
-# Zbiorcza zmiana prognozowania zuzycia - plan integracji
+# EMS-GPT Core — zbiorcza aktualizacja prognozy i wizualizacji
 
-Status: PR roboczy, bez podlaczenia do planera produkcyjnego.
+## Stan wdrożenia
+Gałąź `feature/rolling-7d-load-forecast-batch`, PR #187. Kod roboczy, nie scalony do main.
 
-## Potwierdzone mechanizmy
-- `analytics_service.py`: profile po weekday/hour/minute, bez twardego limitu 7 dni.
-- `materialization_service.py::learn_missing_load`: nadpisuje prognoze profilem z jedna probka, a fallback z 288 slotow splaszcza rozklad dobowy.
-- `analytics_service.py::_native_load_kwh`: odejmuje cala pompe; `planner_service.py` zaklada, ze DHW jest w bazie, a HEAT dolicza osobno. To wymaga pogodzenia przed integracja.
-- `planner_service.py`: dodatkowa korekta forecast_load_kwh i osobny HP_HEAT; nie wolno dokladac kolejnej korekty w nowym modelu.
+### Zaimplementowane
+- Estymator bazowego zużycia z maksymalnie 7 dni pomiarów w rozdzielczości 15 minut, mediana slotu i fallback z aktualnego tygodnia.
+- Podłączenie estymatora do `materialization_service.learn_missing_load`; przy braku danych nie zastępuje prognozy zerem.
+- Spójna atrybucja: DHW pozostaje w bazowym zużyciu domu, HEAT i EV są odejmowane z bazy, gdy są planowane osobno.
+- Widok WWW „Prognoza zużycia”: wykres, MAE, bias, WAPE i sloty. Metryki diagnostyczne, nie sterują SOC.
+- Widok „Ekonomika P”: bilans energii i przybliżony wynik zakupu/sprzedaży. Nie zastępuje pełnego rachunku.
+- Usunięcie zakładki „Odrzucone plany” z nawigacji; dane audytowe i API zachowane.
+- Testy estymatora oraz kontraktu atrybucji DHW/HEAT/EV.
 
-## Docelowy kontrakt
-1. Okno danych dla bieżącego profilu: maksymalnie 7 ostatnich pelnych dni; dane starsze tylko diagnostycznie.
-2. Jeden profil 96 slotow: bazowy dom (z AGD), DHW tylko 06:00-08:00 i 18:00-20:00, HEAT osobno z przebiegiem malejacym od startu i warunkiem temperatury.
-3. Bilans: E_total=E_native+E_DHW+E_HEAT; kazda skladowa rozlaczna. EV osobno zgodnie z istniejacym PPD.
-4. Dla brakow telemetrii zachowaj ostatnia zweryfikowana prognoze, nie wpisuj zera i nie korzystaj ze starych profili.
-5. Nowy model liczy prognoze tylko raz; bez nowego bufora AGD i bez mnozenia korekt.
-6. Shadow: 7 kolejnych dni porownania prognoza/wynik (MAE, WAPE, bias) z dotychczasowym algorytmem, bez sterowania.
-7. Widok WWW: wykres 24h prognoza/wynik, rozklad na komponenty, zrodlo prognozy, liczba probek, blad i pewnosc.
-8. Widok ekonomiczny: bilans PV/zuzycie/bateria/BUY/SELL/SOC/ceny i wynik PLN, nie tylko porownanie.
-9. Usunac widok odrzuconych planow dopiero po sprawdzeniu innych odwolujacych sie do niego komponentow; dane audytowe zachowac.
-10. Testy: bez podwojnego DHW/HEAT, sloty 96, zmiana dnia, brak danych, skok AGD, HEAT rozruch, limit SOC i buy.
+### Ryzyka i zadania przed wydaniem
+1. Zweryfikować z rzeczywistymi slotami, że `actual_heating_consumed_kwh` jest wypełniane wiarygodnie i nie zawiera DHW.
+2. Potwierdzić, że uruchomienie `learn_missing_load` następuje przed przeliczeniem planu i nie nadpisuje niezaakceptowanych lub ręcznie ustawionych danych.
+3. Testy bilansu 96 slotów i SOC_target w dobie ze znacznym HEAT oraz bez PV; zabezpieczyć brak zakupu poza BUY.
+4. Widok ekonomiczny ma charakter uproszczony: nie uwzględnia wszystkich przepływów i strat baterii. Nie traktować wyniku PLN jako rachunku rozliczeniowego.
+5. Zweryfikować dashboard w przeglądarce i na telefonie oraz testy CI po ostatnim commicie.
+6. Przed scaleniem ocenić zgodność z otwartym PR #186 dotyczącym kwalifikacji nocnej HEAT.
+7. Nie było siedmiodniowej obserwacji shadow nowego algorytmu; nie deklarować jej zakończenia.
 
-Nie scalać przed pelna integracja, testami i ocena regresji.
+### Kryterium publikacji
+Jedno wydanie produkcyjne po testach, przeglądzie skutków w HA i walidacji SOC. Nie modyfikować PPD, egzekutora ani falownika bez osobnej walidacji.
