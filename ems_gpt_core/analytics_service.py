@@ -33,8 +33,10 @@ def _native_load_kwh(row: dict) -> float | None:
         return None
     total = float(row["actual_load_kwh"])
     ev = max(0.0, float(row.get("detail_actual_ev_kwh") or 0))
-    heat_pump = max(0.0, float(row.get("actual_heat_pump_electric_kwh") or 0))
-    return round(max(0.0, total - ev - heat_pump), 6)
+    # DHW stays in the native household baseline; only separately planned
+    # space heating is removed. Subtracting all HP energy dropped DHW twice.
+    heat = max(0.0, float(row.get("actual_heating_consumed_kwh") or 0))
+    return round(max(0.0, total - ev - heat), 6)
 
 
 def _flow_metrics(rows: list[dict], forecast_key: str, actual_key: str,
