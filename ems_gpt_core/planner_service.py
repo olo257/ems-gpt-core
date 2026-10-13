@@ -1899,10 +1899,11 @@ def hp_heating_window_indices(rows: list[dict], day_value) -> set[int]:
 
 def hp_temperature_eligible(night_min: float | None, sample_count: int,
                             threshold: float, minimum_samples: int = 3) -> bool:
-    """Qualify HP heating from actual 00:00-06:00 garden readings."""
-    return (night_min is not None
-            and int(sample_count) >= int(minimum_samples)
-            and float(night_min) < float(threshold))
+    """Qualify HP heating as soon as three garden readings are below threshold.
+
+    The caller supplies the count of below-threshold readings, not all samples.
+    """
+    return int(sample_count) >= int(minimum_samples)
 
 
 @dataclass(frozen=True)
@@ -2059,15 +2060,24 @@ def build_planner(a: PlannerAdapters):
             night_min_by_day = {}
             if day_values:
                 markers = ",".join(["%s"] * len(day_values))
-                cur.execute(f"""SELECT local_day,MIN(actual_temperature_c) night_min,
-                  COUNT(actual_temperature_c) sample_count
-                  FROM ems_gpt_slots WHERE local_day IN ({markers})
-                    AND TIME(slot_start)>='00:00:00' AND TIME(slot_start)<'06:00:00'
-                    AND actual_temperature_c IS NOT NULL GROUP BY local_day""", tuple(day_values))
+                # Map 19:00-23:59 to the following heating day, and 00:00-05:59
+                # to the current day. Count three BELOW-threshold observations,
+                # not three arbitrary observations plus a single cold minimum.
+                # Never use future telemetry: a plan may qualify already at 19:xx.
+                cur.execute(f"""SELECT DATE(slot_start + INTERVAL 5 HOUR) heating_day,
+                  MIN(actual_temperature_c) night_min,
+                  SUM(CASE WHEN actual_temperature_c < %s THEN 1 ELSE 0 END) below_count
+                  FROM ems_gpt_slots
+                  WHERE DATE(slot_start + INTERVAL 5 HOUR) IN ({markers})
+                    AND (TIME(slot_start)>='19:00:00' OR TIME(slot_start)<'06:00:00')
+                    AND slot_start<=%s
+                    AND actual_temperature_c IS NOT NULL
+                  GROUP BY DATE(slot_start + INTERVAL 5 HOUR)""",
+                  (night_threshold, *day_values, now))
                 night_min_by_day = {
-                    str(value["local_day"]): {
+                    str(value["heating_day"]): {
                         "night_min": float(value["night_min"]),
-                        "sample_count": int(value["sample_count"] or 0),
+                        "sample_count": int(value["below_count"] or 0),
                     }
                     for value in cur.fetchall()
                 }
