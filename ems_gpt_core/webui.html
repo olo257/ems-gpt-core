@@ -78,7 +78,7 @@ async function loadConsumptionForecast(){
  const rows=(j.rows||[]).filter(x=>x.slot_start).sort((a,b)=>String(a.slot_start).localeCompare(String(b.slot_start)));
  const recent=rows.slice(-96);
  const num=v=>v===null||v===undefined||v===''?null:Number(v);
- const vals=recent.map(x=>({slot:String(x.slot_start),plan:num(x.forecast_load_kwh),
+ const vals=recent.map(x=>({slot:String(x.slot_start),plan:(num(x.forecast_load_kwh)===null?null:(num(x.forecast_load_kwh)+(num(x.forecast_heat_pump_load_kwh)||0))),
   actual:num(x.actual_load_kwh),heat:num(x.forecast_heat_pump_load_kwh),
   dhw:num(x.forecast_heat_pump_dhw_load_kwh)}));
  const paired=vals.filter(v=>Number.isFinite(v.plan)&&Number.isFinite(v.actual));
@@ -101,7 +101,7 @@ async function loadConsumptionForecast(){
  tbody.innerHTML='<tr><td colspan="4">'+graph+'</td></tr><tr><td>MAE '+fmt(mae)+' kWh/slot</td><td>Bias '+fmt(bias)+' kWh/slot</td><td>WAPE '+(Number.isFinite(wape)?wape.toFixed(1)+'%':'—')+'</td><td>Par pomiarowych: '+paired.length+'</td></tr>'+
  '<tr><th>Slot</th><th>Dom plan / wykonanie</th><th>HEAT plan</th><th>DHW informacyjnie</th></tr>'+
  vals.map(v=>'<tr><td>'+escapeHtml(v.slot)+'</td><td>'+fmt(v.plan)+' / '+fmt(v.actual)+'</td><td>'+fmt(v.heat)+'</td><td>'+fmt(v.dhw)+'</td></tr>').join('');
- tableRefresh.textContent='Wykonanie to całkowite zużycie; prognoza domu może nie zawierać planowanego HEAT/EV. WAPE służy wyłącznie diagnostyce, nie do automatycznej korekty SOC.';
+ tableRefresh.textContent='Wykonanie to całkowite zużycie; prognoza zawiera dom i dodatkowy HEAT, lecz nie uwzględnia oddzielnie EV. Metryki są diagnostyczne i nie sterują SOC.';
 }
 async function loadEconomicProduction(){
  const r=await apiFetch('api/plan?limit=500'),j=await r.json();
