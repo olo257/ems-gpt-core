@@ -1,7 +1,7 @@
 """Seven-day, 15-minute load forecast utilities.
 
-Pure functions only: production planner wiring requires reconciliation of
-DHW/HEAT attribution to prevent double-counting.
+Pure functions for seven-day baseline forecasting. DHW remains in the
+baseline; separately planned HEAT and EV are excluded by the caller.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def rolling_slot_forecast(
     for sample in samples:
         when = sample.get("slot_start")
         value = sample.get("native_load_kwh")
-        if when is None or value is None or not cutoff <= when < now:
+        if not isinstance(when, datetime) or value is None or not cutoff <= when < now:
             continue
         if sample.get("actual_mode") == "MISSING_OUTAGE":
             continue
