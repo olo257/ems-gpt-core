@@ -2655,7 +2655,7 @@ def build_planner(a: PlannerAdapters):
                 optimization, target_due_indices, targets)
             physical_buy_audit = validate_physical_buy_commitments(
                 horizon_rows, optimization["flows"], target_due_indices,
-                charge_targets, max_kw, int(OPTIONS["slot_minutes"]),
+                targets, max_kw, int(OPTIONS["slot_minutes"]),
                 capacity, eta_c)
             record_event("buy_physical_commitment_validated", "planner", {
                 "run_id": run_id, **physical_buy_audit,
