@@ -611,9 +611,15 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_heat_dhw_uses_actual_garden_temperature_and_configured_threshold(self):
         for marker in ("night_heating_threshold_c", "night_min_by_day",
-                       "hp_temperature_eligible", "COUNT(actual_temperature_c)"):
+                       "hp_temperature_eligible",
+                       "SUM(CASE WHEN actual_temperature_c < %s THEN 1 ELSE 0 END) below_count",
+                       "DATE(slot_start + INTERVAL 5 HOUR)",
+                       "TIME(slot_start)>='19:00:00'",
+                       "TIME(slot_start)<'06:00:00'",
+                       "slot_start<=%s"):
             self.assertIn(marker, SOURCE)
         self.assertNotIn("MIN(forecast_temperature_c) night_min", SOURCE)
+        self.assertNotIn("COUNT(actual_temperature_c) sample_count", SOURCE)
         self.assertIn("i in hp_selected_indices", SOURCE)
         self.assertIn("heat_pump_window=%s", SOURCE)
         self.assertIn('_database_bool(row.get("heat_pump_window")', SOURCE)
