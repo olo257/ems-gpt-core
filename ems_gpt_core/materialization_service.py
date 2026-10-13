@@ -621,12 +621,15 @@ def build_materializations(a: MaterializationAdapters):
             future = list(cur.fetchall())
             if not future:
                 return 0
-            cur.execute("""SELECT slot_start,actual_load_kwh,
-              actual_heating_consumed_kwh,actual_ev_kwh
-              FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s
-                AND actual_recorded_at IS NOT NULL
-                AND actual_load_kwh IS NOT NULL
-              ORDER BY slot_start""", (history_start, cutoff))
+            cur.execute("""SELECT s.slot_start,s.actual_load_kwh,
+              s.actual_heating_consumed_kwh,d.actual_ev_kwh
+              FROM ems_gpt_slots s
+              LEFT JOIN ems_gpt_core_execution_details d
+                ON d.slot_start=s.slot_start
+              WHERE s.slot_start>=%s AND s.slot_start<%s
+                AND s.actual_recorded_at IS NOT NULL
+                AND s.actual_load_kwh IS NOT NULL
+              ORDER BY s.slot_start""", (history_start, cutoff))
             samples = []
             for past in cur.fetchall():
                 native = max(0.0, float(past["actual_load_kwh"])
