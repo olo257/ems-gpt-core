@@ -1895,12 +1895,10 @@ def hp_heating_window_indices(rows: list[dict], day_value) -> set[int]:
     }
 
 
-def hp_temperature_eligible(night_min: float | None, sample_count: int,
-                            threshold: float, minimum_samples: int = 3) -> bool:
-    """Qualify HP heating from actual 00:00-06:00 garden readings."""
-    return (night_min is not None
-            and int(sample_count) >= int(minimum_samples)
-            and float(night_min) < float(threshold))
+def hp_temperature_eligible(below_threshold_sample_count: int,
+                            minimum_samples: int = 3) -> bool:
+    """Qualify HP heating after enough actual below-threshold readings."""
+    return int(below_threshold_sample_count) >= int(minimum_samples)
 
 
 @dataclass(frozen=True)
@@ -2048,24 +2046,28 @@ def build_planner(a: PlannerAdapters):
                     float(value["mean_dhw_kwh"] or 0.0)
                 for value in cur.fetchall() if int(value["sample_count"] or 0) >= 2
             }
-            # Use the actual garden temperature recorded by HA between 00:00 and
-            # 06:00. Three samples tolerate a partial HA outage without allowing
-            # Open-Meteo forecasts to decide whether space heating is required.
-            # The operator setting from the EMS panel is authoritative.
+            # Qualify the heating day from actual garden readings beginning at
+            # 19:00 the previous evening through 05:59 local time. The +5 hour
+            # shift maps prior-evening readings to their following heating day.
+            # Count only readings strictly below the operator threshold, and
+            # exclude future telemetry so replans can qualify immediately.
             night_threshold = float(OPTIONS.get("night_heating_threshold_c", 10.0))
             day_values = sorted({row.get("local_day") or row["slot_start"].date() for row in rows})
             night_min_by_day = {}
             if day_values:
                 markers = ",".join(["%s"] * len(day_values))
-                cur.execute(f"""SELECT local_day,MIN(actual_temperature_c) night_min,
-                  COUNT(actual_temperature_c) sample_count
-                  FROM ems_gpt_slots WHERE local_day IN ({markers})
-                    AND TIME(slot_start)>='00:00:00' AND TIME(slot_start)<'06:00:00'
-                    AND actual_temperature_c IS NOT NULL GROUP BY local_day""", tuple(day_values))
+                cur.execute(f"""SELECT DATE(slot_start + INTERVAL 5 HOUR) heating_day,
+                  SUM(CASE WHEN actual_temperature_c < %s THEN 1 ELSE 0 END) below_count
+                  FROM ems_gpt_slots
+                  WHERE DATE(slot_start + INTERVAL 5 HOUR) IN ({markers})
+                    AND (TIME(slot_start)>='19:00:00' OR TIME(slot_start)<'06:00:00')
+                    AND slot_start<=%s
+                    AND actual_temperature_c IS NOT NULL
+                  GROUP BY DATE(slot_start + INTERVAL 5 HOUR)""",
+                  (night_threshold, *day_values, now))
                 night_min_by_day = {
-                    str(value["local_day"]): {
-                        "night_min": float(value["night_min"]),
-                        "sample_count": int(value["sample_count"] or 0),
+                    str(value["heating_day"]): {
+                        "sample_count": int(value["below_count"] or 0),
                     }
                     for value in cur.fetchall()
                 }
@@ -2105,9 +2107,7 @@ def build_planner(a: PlannerAdapters):
                 day_key = str(day_value)
                 night_forecast = night_min_by_day.get(day_key) or {}
                 if not hp_temperature_eligible(
-                        night_forecast.get("night_min"),
-                        int(night_forecast.get("sample_count") or 0),
-                        night_threshold):
+                        int(night_forecast.get("sample_count") or 0)):
                     continue
                 indexed_rows = [(index, row) for index, row in enumerate(rows)
                                 if (row.get("local_day") or row["slot_start"].date()) == day_value]
