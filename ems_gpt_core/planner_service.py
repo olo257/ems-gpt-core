@@ -2340,7 +2340,7 @@ def build_planner(a: PlannerAdapters):
                                 "action": "RETRY_KEEP_BUY_WINDOWS_AND_SOC_CEILINGS",
                             }, "WARNING")
                             continue
-                                        terminal_failure = (
+                    terminal_failure = (
                         str(exc) == "No feasible terminal SOC state for complete horizon"
                     )
                     if terminal_failure:
