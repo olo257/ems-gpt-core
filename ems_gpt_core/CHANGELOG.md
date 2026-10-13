@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.27 — wcześniejsza kwalifikacja HP_HEAT_DHW
+
+- Okno pomiarowe obejmuje 19:00 poprzedniego dnia–05:59 dnia ogrzewania.
+- HP_HEAT_DHW kwalifikuje się po trzech rzeczywistych odczytach temperatury ogrodowej ściśle poniżej skonfigurowanego progu; replanning może przygotować plan od razu po trzecim odczycie.
+- Nie zmienia się wykonawca, PPD ani próg temperatury.
+
 ## 0.40.26 — panel energii i wykres prognozy
 
 - Dodano panel energii z bieżącym planem 15-minutowym, wykresami PV, zużycia i SOC, podsumowaniem zakupów/sprzedaży oraz harmonogramem.

@@ -35,12 +35,11 @@ def runs(selected, length):
 
 
 class HeatPumpOptimizerTests(unittest.TestCase):
-    def test_temperature_condition_requires_three_actual_garden_samples(self):
-        self.assertTrue(hp_temperature_eligible(4.9, 3, 5.0))
-        self.assertTrue(hp_temperature_eligible(4.9, 24, 5.0))
-        self.assertFalse(hp_temperature_eligible(5.0, 3, 5.0))
-        self.assertFalse(hp_temperature_eligible(4.9, 2, 5.0))
-        self.assertFalse(hp_temperature_eligible(None, 3, 5.0))
+    def test_temperature_condition_requires_three_below_threshold_samples(self):
+        self.assertTrue(hp_temperature_eligible(3))
+        self.assertTrue(hp_temperature_eligible(24))
+        self.assertFalse(hp_temperature_eligible(2))
+        self.assertFalse(hp_temperature_eligible(0))
 
     def test_uniform_cost_prefers_one_ten_hour_cycle(self):
         data = rows([1.0] * 64)
