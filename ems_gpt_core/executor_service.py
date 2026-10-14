@@ -1065,4 +1065,3 @@ def build_executor(a: ExecutorAdapters):
         restore_program_targets=restore_program_targets,
         restore_program_targets_if_idle=restore_program_targets_if_idle,
     )
-
