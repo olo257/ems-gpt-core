@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.27**.
+Status: obowiązująca. Wersja wydania: **0.40.29**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -233,6 +233,13 @@ ale zakup nadal podlega ograniczeniom BUY, pojemności i targetu.
 - ręczny i automatyczny replan korzystają z tej samej serializowanej ścieżki;
 - executor pozostaje domyślnie wyłączony i wymaga osobnej decyzji operatora.
 
+### Kolejność komend wykonawcy
+
+Komendy OFF kończą się przed uruchomieniem ON. Dispatch wywołuje nazwaną usługę
+`script.<nazwa>`, aby czekać na zakończenie sekwencji. `SELL_BAT OFF` nie ustawia
+źródła TOU na `Disabled`, gdy globalne ładowanie baterii z sieci jest włączone.
+Błąd bateryjnej komendy OFF blokuje nowe bateryjne ON w tym przebiegu.
+
 ## 8. Panel
 
 Panel Ingress pokazuje stan modułów, plan, wykonanie, agregaty godzinowe i
@@ -252,4 +259,5 @@ Przed scaleniem i publikacją wymagane są:
 
 Zmiana wersji w plikach nie oznacza publikacji. Dopiero scalone wydanie w
 repozytorium jest dostępne dla Home Assistant.
+
 
