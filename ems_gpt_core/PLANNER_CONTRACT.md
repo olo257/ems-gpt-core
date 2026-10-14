@@ -203,11 +203,13 @@ Techniczne minimum SOC jest granicą awaryjną, nie celem operacyjnym. Planowana
 wykonalności od idealnego rozpoczęcia prognozowanego PV. Target zawiera zapas
 wynikający z konserwatywnej korekty zużycia i PV.
 
-Na końcu każdej lokalnej doby historyczny punkt odniesienia stanowi
-ważona średnia rzeczywistego SOC zamknięcia z okien 7/14/28 dni, bez odjęcia
-stałej tolerancji. Wymaganie historyczne dotyczy wyłącznie zamknięcia doby;
-nie jest powtarzane przed porannym SELL. Bilans prognozowanego zużycia do
-najbliższego PV/BUY może wymagać wyższego SOC.
+Na końcu każdej lokalnej doby docelowy SOC mieści się w operacyjnym paśmie
+40–45%. Ważona średnia rzeczywistych zamknięć 7/14/28 dni może wyznaczyć
+wartość wewnątrz tego pasma, ale jest ograniczana do 40% od dołu i 45% od
+góry. Niskie lub wysokie zamknięcia z okresu błędnego działania planera albo
+wykonawcy nie mogą wyprowadzić przyszłego celu poza pasmo. Wymaganie dotyczy
+wyłącznie zamknięcia doby; nie jest powtarzane przed porannym SELL. Bilans
+prognozowanego zużycia do najbliższego PV/BUY może wymagać wyższego SOC.
 
 Niezależny bilans bezpieczeństwa wymaga co najmniej 15% (lub wyższego minimum
 konfiguracji) plus `soc_replenishment_buffer_pct` (domyślnie 2 p.p.) w każdym

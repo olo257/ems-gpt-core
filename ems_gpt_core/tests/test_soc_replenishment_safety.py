@@ -150,10 +150,15 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertEqual(reconciled["required"][1], 60.0)
         self.assertEqual(reconciled["charge_targets"], requested["charge_targets"])
 
-    def test_historical_terminal_soc_is_not_discounted(self):
-        self.assertAlmostEqual(end_of_day_soc_target(47.7, 15.0, 100.0), 47.7)
-        self.assertEqual(end_of_day_soc_target(17.0, 15.0, 100.0), 17.0)
-        self.assertEqual(end_of_day_soc_target(105.0, 15.0, 100.0), 100.0)
+    def test_historical_terminal_soc_is_bounded_to_operating_band(self):
+        # Recent low closes from faulty planner/executor days cannot lower the
+        # terminal target below 40%; high closes cannot push it above 45%.
+        self.assertEqual(end_of_day_soc_target(34.2, 15.0, 100.0), 40.0)
+        self.assertEqual(end_of_day_soc_target(42.5, 15.0, 100.0), 42.5)
+        self.assertEqual(end_of_day_soc_target(47.7, 15.0, 100.0), 45.0)
+        self.assertEqual(end_of_day_soc_target(105.0, 15.0, 100.0), 45.0)
+        self.assertEqual(end_of_day_soc_target(34.2, 15.0, 38.0), 38.0)
+        self.assertEqual(end_of_day_soc_target(34.2, 42.0, 100.0), 42.0)
 
     def test_contract_is_not_clamped_to_economic_path(self):
         rows = self.rows(1)

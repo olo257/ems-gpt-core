@@ -172,12 +172,14 @@ zmniejszone. Możliwy przychód ze sprzedaży nie może pominąć CWU ani EV.
 Historyczne średnie końcowego SOC 7/14/28 dni są liczone niezależnie z pełnych,
 rzeczywiście zamkniętych dób. Doba z brakiem lub `MISSING_OUTAGE` nie jest
 próbką. Krótszy zakres odbudowy agregatów nie może ograniczać horyzontu 14/28.
-Ważona średnia pomniejszona o 5 punktów procentowych stanowi minimalny SOC
-na końcu każdej doby objętej planem, nie tylko ostatniego dnia horyzontu.
-Nie jest osobnym wymaganiem przed porannym SELL. Niezależny bilans domu/HP
-i możliwości ładowania chroni minimum 15% plus bufor przed PV/BUY
-(`soc_replenishment_buffer_pct`, domyślnie 2 p.p.). Wymagania są zaokrąglane
-w górę do kroku SOC; potrzeby nocne mogą podnieść wymagane zamknięcie doby.
+Docelowy SOC na końcu każdej planowanej doby wynosi 40–45%: ważona średnia
+7/14/28 dni jest ograniczana do tego pasma, aby błędne historyczne zamknięcia
+nie zaniżały zapasu. Nie jest to dodatkowy próg przed porannym SELL. Bilans
+zużycia domu/HP, PV i możliwości ładowania wyznacza trajektorię do tego celu;
+rzeczywiste wymaganie może być wyższe, jeśli wynika z przyszłego obciążenia.
+Niezależny bilans bezpieczeństwa nadal chroni minimum 15% plus bufor przed
+PV/BUY (`soc_replenishment_buffer_pct`, domyślnie 2 p.p.). Wymagania są
+zaokrąglane w górę do kroku SOC.
 
 ### AI Observer — audyt w tle
 
