@@ -802,8 +802,18 @@ def build_executor(a: ExecutorAdapters):
               acknowledgement_json=COALESCE(acknowledgement_json,JSON_OBJECT('reason','TTL_EXPIRED'))
               WHERE status IN ('READY_FOR_CONNECTOR','DISPATCHED','ACCEPTED') AND expires_at<=%s""", (now,))
             cur.execute("""SELECT * FROM ems_gpt_core_commands WHERE status='READY_FOR_CONNECTOR'
-              AND slot_start=%s AND expires_at>%s ORDER BY created_at""", (current_slot, now))
-            for command in cur.fetchall():
+              AND slot_start=%s AND expires_at>%s ORDER BY created_at,command_id""", (current_slot, now))
+            # Finish OFF scripts before applying a new battery ON target. These
+            # processes share the Deye work mode and TOU charging selector.
+            commands = sorted(cur.fetchall(), key=lambda command:
+                              0 if command["decision"] == "OFF" else 1)
+            battery_off_failed = False
+            for command in commands:
+                if (battery_off_failed and command["decision"] == "ON"
+                        and command["process_name"] in {"BATTERY_IMPORT", "SELL_BAT"}):
+                    cur.execute("UPDATE ems_gpt_core_commands SET status='FAILED',acknowledgement_json=%s WHERE command_id=%s",
+                                (json.dumps({"reason": "BATTERY_OFF_FAILED"}), command["command_id"]))
+                    continue
                 if command["process_name"] == "HP_HEAT_DHW" and command["decision"] == "ON":
                     cur.execute("""SELECT heat_pump_window FROM ems_gpt_slots
                       WHERE slot_start=%s AND plan_stage='PUBLISHED' LIMIT 1""",
@@ -907,8 +917,12 @@ def build_executor(a: ExecutorAdapters):
                             "reason": str(exc), "slot_start": current_slot,
                         }, "ERROR")
                         continue
-                response = ha_service_response("script", "turn_on", {"entity_id": entity_id})
+                # Calling the named script waits for its sequence to finish;
+                # script.turn_on only schedules it and permits ON/OFF races.
+                response = ha_service_response("script", entity_id.split(".", 1)[1], {})
                 if response is None:
+                    if command["decision"] == "OFF" and command["process_name"] in {"BATTERY_IMPORT", "SELL_BAT"}:
+                        battery_off_failed = True
                     cur.execute("UPDATE ems_gpt_core_commands SET status='FAILED',acknowledgement_json=%s WHERE command_id=%s",
                                 (json.dumps({"reason": "HA_SERVICE_FAILED", "entity_id": entity_id}), command["command_id"]))
                     if target_update is not None:
@@ -918,12 +932,19 @@ def build_executor(a: ExecutorAdapters):
                         restore_program_targets_if_idle()
                     continue
                 if command["process_name"] in {"BATTERY_IMPORT", "SELL_BAT"} and command["decision"] == "OFF":
-                    try:
-                        set_active_program_charging(now, "Disabled")
-                    except RuntimeError as exc:
-                        record_event("battery_program_grid_disable_failed", "executor", {
-                            "reason": str(exc), "slot_start": current_slot,
-                        }, "ERROR")
+                    grid_state = ha_state("switch.inverter_battery_grid_charging") or {}
+                    # SELL_BAT OFF must preserve an already-running BUY, even
+                    # when its ON command was dispatched in an earlier cycle.
+                    disable_grid = (command["process_name"] == "BATTERY_IMPORT"
+                                    or str(grid_state.get("state") or "").lower() == "off")
+                    if disable_grid:
+                        try:
+                            set_active_program_charging(now, "Disabled")
+                        except RuntimeError as exc:
+                            battery_off_failed = True
+                            record_event("battery_program_grid_disable_failed", "executor", {
+                                "reason": str(exc), "slot_start": current_slot,
+                            }, "ERROR")
                     restored_targets = restore_program_targets_if_idle()
                 cur.execute("""UPDATE ems_gpt_core_commands SET status='DISPATCHED',dispatched_at=NOW(6),
                   acknowledgement_json=%s WHERE command_id=%s AND status='READY_FOR_CONNECTOR'""",
@@ -1044,3 +1065,4 @@ def build_executor(a: ExecutorAdapters):
         restore_program_targets=restore_program_targets,
         restore_program_targets_if_idle=restore_program_targets_if_idle,
     )
+
