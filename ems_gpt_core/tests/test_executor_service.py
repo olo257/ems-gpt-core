@@ -366,5 +366,95 @@ class ExecutorServiceTests(unittest.TestCase):
             self.assertEqual(service.restore_program_targets_if_idle(), [])
 
 
+class BatteryDispatchConflictTests(unittest.TestCase):
+    def dispatch(self, directory, commands, grid_on=False, fail_off=False):
+        calls = []
+        now = datetime(2026, 10, 14, 13, 0)
+        states = {
+            "sensor.inverter_battery": {"state": "22"},
+            "number.inverter_program_3_soc": {"state": "32"},
+            "select.inverter_program_3_charging": {"state": "Grid" if grid_on else "Disabled"},
+            "switch.inverter_battery_grid_charging": {"state": "on" if grid_on else "off"},
+            "select.inverter_work_mode": {"state": "Zero Export To Load"},
+        }
+        class Cursor:
+            rowcount = 1
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def execute(self, sql, params=()): self.sql = sql
+            def fetchall(self): return commands
+            def fetchone(self):
+                return {"soc_charge_target_pct": 32.4, "soc_target_pct": 32.4,
+                        "soc_end_plan_pct": 27.1, "planned_buy_kwh": 1.239796}
+        class Connection:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def cursor(self): return Cursor()
+        def service(domain, action, data):
+            calls.append((domain, action, dict(data)))
+            if domain == "script":
+                if action == "export_off" and fail_off: return None
+                if action == "import_on":
+                    states["switch.inverter_battery_grid_charging"] = {"state": "on"}
+                elif action == "import_off":
+                    states["switch.inverter_battery_grid_charging"] = {"state": "off"}
+                elif action == "export_on":
+                    states["select.inverter_work_mode"] = {"state": "Export First"}
+            elif domain == "select":
+                states[data["entity_id"]] = {"state": data["option"]}
+            elif domain == "number":
+                states[data["entity_id"]] = {"state": str(data["value"])}
+            return {"ok": True}
+        executor = build_executor(ExecutorAdapters(
+            options={"executor_enabled": True, "executor_dry_run": False,
+                     "executor_activation_ack": "EMS_CONNECTOR_ACCEPTED",
+                     "executor_battery_import_on_script": "script.import_on",
+                     "executor_battery_import_off_script": "script.import_off",
+                     "executor_battery_export_on_script": "script.export_on",
+                     "executor_battery_export_off_script": "script.export_off",
+                     **{f"deye_program_{p}_soc_pct": 10 for p in range(1, 7)}},
+            operational_settings={}, runtime_settings_path=pathlib.Path(directory) / "runtime.json",
+            lock=RLock(), state={"modules": {}}, record_event=lambda *args: None,
+            local_now=lambda: now, db=Connection, slot_start=lambda: now,
+            tou_program_snapshot=lambda: [], active_tou_program=lambda *_: {"program": 3},
+            number=lambda value: float(value["state"]) if value else None,
+            ha_state=lambda entity: states.get(entity), ha_service_response=service))
+        return executor.dispatch_ready_commands(), states, calls
+
+    def command(self, process, decision):
+        return {"command_id": process, "process_name": process, "decision": decision,
+                "plan_version": "plan:ppd", "source": "PLAN"}
+
+    def test_buy_survives_sell_off_in_same_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, states, calls = self.dispatch(directory, [
+                self.command("BATTERY_IMPORT", "ON"), self.command("SELL_BAT", "OFF")])
+        self.assertEqual(states["select.inverter_program_3_charging"]["state"], "Grid")
+        self.assertEqual(states["switch.inverter_battery_grid_charging"]["state"], "on")
+        self.assertEqual([call[1] for call in calls if call[0] == "script"], ["export_off", "import_on"])
+        self.assertEqual(calls[0], ("script", "export_off", {}))
+
+    def test_later_sell_off_preserves_running_buy_without_new_on(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, states, calls = self.dispatch(directory, [self.command("SELL_BAT", "OFF")], grid_on=True)
+        self.assertEqual(states["select.inverter_program_3_charging"]["state"], "Grid")
+        self.assertFalse(any(call[2].get("option") == "Disabled" for call in calls))
+
+    def test_import_off_disables_grid_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, states, _ = self.dispatch(directory, [self.command("BATTERY_IMPORT", "OFF")], grid_on=True)
+        self.assertEqual(states["select.inverter_program_3_charging"]["state"], "Disabled")
+        self.assertEqual(states["switch.inverter_battery_grid_charging"]["state"], "off")
+
+    def test_failed_off_blocks_new_buy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, states, calls = self.dispatch(directory, [
+                self.command("BATTERY_IMPORT", "ON"), self.command("SELL_BAT", "OFF")], fail_off=True)
+        self.assertEqual(result["dispatched"], 0)
+        self.assertFalse(any(call[1] == "import_on" for call in calls))
+        self.assertEqual(states["switch.inverter_battery_grid_charging"]["state"], "off")
+
+
 if __name__ == "__main__":
     unittest.main()
+
