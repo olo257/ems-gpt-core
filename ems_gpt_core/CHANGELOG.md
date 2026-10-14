@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.29 — naprawa konfliktu Charging=Grid w wykonawcy
+
+- Komendy OFF są wykonywane przed ON; nazwane usługi skryptów czekają na zakończenie sekwencji.
+- SELL_BAT OFF nie cofa Charging=Grid podczas aktywnego importu, również bez nowej komendy importu ON.
+- Nieudane bateryjne OFF blokuje nowe bateryjne ON w tym przebiegu. Import OFF nadal wyłącza źródło ładowania TOU.
+- Dodano cztery testy regresji konfliktu oraz opis incydentu z 14.10.2026.
+- Bez zmiany logiki i konfiguracji planera.
+
 ## 0.40.28 — stabilizacja terminalnego SOC 40–45%
 
 - Ograniczono historyczny cel SOC zamknięcia do pasma 40–45%, aby błędne niskie lub wysokie zamknięcia z ostatnich dni nie zaniżały lub zawyżały celu.
@@ -1840,3 +1848,4 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
 - agregacja dobowa: OK;
 - restart wyłącznie aplikacji: OK, plan i baza zachowane;
 - brak poleceń do urządzeń: potwierdzony.
+
