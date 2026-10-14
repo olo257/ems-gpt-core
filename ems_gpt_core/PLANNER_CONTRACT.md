@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.11. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.30. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -67,7 +67,15 @@ optymalizacji ekonomicznej: najpierw obciążenie bazowe i HP, prognoza PV,
 sprawności, rezerwa oraz dopuszczone przez RCE okna BUY wyznaczają wymagane SOC
 i terminy uzupełnienia. Dopiero potem optymalizator wybiera przepływy i
 ekonomiczne wykorzystanie zakupów w granicach tego kontraktu. Przebieg
-ekonomiczny nie może obniżać ani tworzyć wymagań SOC. Targetem końca każdej
+ekonomiczny nie może obniżać wymaganych rezerw ani celu zamknięcia doby.
+Opcjonalny sufit ładowania jest oddzielony od obowiązkowego wymogu i terminu:
+tańszy wcześniejszy BUY może zastąpić droższy późniejszy BUY, do fizycznej
+pojemności baterii i limitów mocy. Ilość zakupu wybiera pełny bilans horyzontu;
+podniesienie opcjonalnego sufitu nie wymusza zakupu do 100%.
+Wykonawca otrzymuje najwyższy target rzeczywiście wybranego ciągu zakupów już
+od pierwszego slotu tego ciągu. Wymagany SOC na końcu okna jest sprawdzany
+osobno; opcjonalny szczyt wcześniejszego ładowania nie jest nowym wymogiem
+SOC na końcu okna. Targetem końca każdej
 doby jest ważona średnia rzeczywistych zamknięć SOC z 7/14/28 dni. Wymagany
 SOC w slotach przed zamknięciem wynika z bilansu wstecznego: target zamknięcia,
 prognozowane zużycie i PV, sprawności, rezerwa oraz fizyczna dostępność
@@ -181,16 +189,18 @@ jeśli ilości przepływów i przejście SOC nie są zgodne.
 
 ## 5. `soc_target`
 
-`soc_target` jest zapotrzebowaniem energetycznym do najbliższego realnego,
-wykonalnego źródła uzupełnienia: prognozowanego PV albo wybranego okna BUY.
-Jednocześnie jest sufitem ładowania z sieci w oknie BUY.
+`soc_required_pct` jest wymaganym zapotrzebowaniem energetycznym do realnego,
+wykonalnego źródła uzupełnienia: prognozowanego PV albo dopuszczonego okna BUY.
+`soc_target` / `soc_charge_target_pct` jest sufitem wykonawczego ładowania z sieci.
+Wymagane SOC i termin końca okna są niezależne od opcjonalnego zwiększenia
+zakupu w tańszym wcześniejszym BUY w celu zastąpienia droższego późniejszego BUY.
 
-Wybrane okno BUY ustala termin i sufit importu. Target tego okna wynika z
-wymagania po jego zamknięciu, a nie z końcowego SOC znalezionego przez
-nieograniczony przebieg ekonomiczny. Do targetu przypisanego do BUY należą też
-wcześniejsze sloty mostu, więc użyteczne PV może zmniejszyć albo wyeliminować
-późniejszy import. Sama dostępność taniego lub ujemnie wycenionego BUY nie
-uzasadnia zakupu energii ponad ten target.
+Opcjonalny sufit jest ograniczony bilansem przyszłego zapotrzebowania bez
+zakładania przyszłych zakupów, z uwzględnieniem użytecznego PV, sprawności,
+wymaganych rezerw i pojemności baterii. Sama tania lub ujemna cena nie tworzy
+zapotrzebowania na dodatkowy zapas. Pełny bilans horyzontu wybiera rzeczywistą
+ilość zakupu. Wykonawca otrzymuje wspólny najwyższy target wybranego ciągu
+zakupów od pierwszego slotu; przerwa w zakupach rozpoczyna nowy ciąg.
 
 `soc_target` ogranicza ładowanie z sieci. Nie ogranicza ładowania z PV, które
 może uzupełniać baterię do fizycznego maksimum 100%. Dopiero po osiągnięciu
