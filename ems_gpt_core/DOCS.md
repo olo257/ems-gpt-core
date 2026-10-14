@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.30**.
+Status: obowiązująca. Wersja wydania: **0.40.31**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -262,7 +262,7 @@ repozytorium jest dostępne dla Home Assistant.
 
 
 
-## Zakupy i prognoza zużycia w 0.40.30
+## Zakupy i prognoza zużycia w 0.40.31
 
 Wymagane SOC (`soc_required_pct`) wynika z bilansu i rezerw. Opcjonalne sufity
 optymalizacji pozwalają przenieść droższy późniejszy zakup do tańszego BUY.
@@ -275,3 +275,9 @@ rozdziela opcjonalne sufity, targety wykonawcze oraz wymagane cele terminowe.
 W widoku prognozy zużycia rekordy są wyświetlane od najnowszego. Wykres i
 metryki korzystają z chronologicznego zbioru danych; odwrócenie listy jest
 wykonywane na kopii i nie zmienia osi wykresu.
+
+
+Kontrola `VOLUNTARY_GRID_LOAD_WITHOUT_SALE` w 0.40.31 odróżnia pobór domu
+podczas rzeczywistego ładowania BUY od dobrowolnego importu bez ładowania.
+Ładowanie wymaga przekroczenia `planned_flow_threshold_kwh`; optymalizator
+oraz końcowe kontrole stosują ten sam próg. Limit importu obejmuje dom i baterię.
