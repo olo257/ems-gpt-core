@@ -151,7 +151,8 @@ def build_handler(a: ApiAdapters):
                     return self.json({"error": "invalid_range", "max_hours": 48,
                                       "timezone": "Home Assistant local time"},
                                      HTTPStatus.BAD_REQUEST)
-                limit = min(200, max(1, int(params.get("limit", ["200"])[0])))
+                limit = min(96, max(1, int(params.get("limit", ["96"])[0])))
+                offset = min(192, max(0, int(params.get("offset", ["0"])[0])))
                 with db() as conn, conn.cursor() as cur:
                     cur.execute("""SELECT s.slot_start,s.plan_run_id,
                       s.soc_charge_target_pct,
@@ -188,11 +189,12 @@ def build_handler(a: ApiAdapters):
                         WHERE c.process_name='BATTERY_IMPORT'
                       ) c ON c.slot_start=s.slot_start
                       WHERE s.plan_stage='PUBLISHED' AND s.slot_start>=%s AND s.slot_start<%s
-                      ORDER BY s.slot_start DESC LIMIT %s""",
-                      (start_at,end_at,start_at,end_at,limit))
+                      ORDER BY s.slot_start DESC LIMIT %s OFFSET %s""",
+                      (start_at,end_at,start_at,end_at,limit,offset))
                     rows = cur.fetchall()
                 return self.json({"view":"executor-diagnostics","timezone":"Europe/Warsaw",
-                                  "from":start_at,"to":end_at,"count":len(rows),"rows":rows})
+                                  "from":start_at,"to":end_at,"count":len(rows),"offset":offset,
+                                  "has_more":len(rows)==limit,"rows":rows})
 
             if path.endswith("/api/settings") or path == "/api/settings":
                 return self.json({"settings": settings_payload()})
