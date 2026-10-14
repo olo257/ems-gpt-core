@@ -116,8 +116,10 @@ opcje `executor_*_on_script` i `executor_*_off_script` dla procesów:
 - `MANUAL_CIRCULATION`;
 - `HP_HEAT_DHW`.
 
-Każda wartość musi zaczynać się od `script.`. Core wywołuje wyłącznie
-`script.turn_on`. `connector_service_map_json` pozostaje wyłącznie ścieżką
+Każda wartość musi zaczynać się od `script.`. Podczas dispatch Core wywołuje
+nazwaną usługę `script.<nazwa>` i czeka na zakończenie sekwencji. Komendy OFF
+wykonuje przed ON. `SELL_BAT OFF` nie wyłącza źródła Grid przy aktywnym imporcie.
+Ścieżki awaryjnego wyłączenia mogą używać `script.turn_on`. `connector_service_map_json` pozostaje wyłącznie ścieżką
 zgodnościową dla starszej konfiguracji i jest używane dopiero przy braku
 odpowiedniej osobnej opcji. Mapowanie zawierające nazwę programu falownika lub
 `soc` jest odrzucane jako próba obejścia ochrony programów TOU.
