@@ -70,6 +70,15 @@ przewidział jako zakupu. `/api/status` udostępnia bilans aktywnego slotu,
 łącznie z obciążeniem HP i pozostałym poborem z sieci. Endpoint `/api/plan`
 honoruje jawny parametr `limit`.
 
+Endpoint tylko-do-odczytu `/api/executor-diagnostics` służy do analizy BUY
+w zakresie do 48 godzin. Wymaga parametrów `from` i `to` w lokalnym czasie HA
+(`YYYY-MM-DDTHH:MM:SS` bez przesunięcia strefy). `limit` jest ograniczony do
+96 slotów, a `offset` pozwala pobrać kolejną stronę. Każdy wiersz zestawia
+opublikowany `soc_charge_target_pct` (oraz wartość zgodnościową
+`soc_target_pct`), planowany import i ładowanie, decyzję PPD, zapis wykonania,
+ostatnią komendę importu oraz jej wynik i target przekazany do TOU falownika.
+Przykład: `/api/executor-diagnostics?from=2026-10-12T08:00:00&to=2026-10-14T08:00:00&limit=96&offset=0`; powtórz z `offset=96`, aby pobrać wcześniejsze sloty zakresu.
+
 ## 3. Encje Home Assistant i ich właściciele
 
 Core nie tworzy helperów ani równoległych sensorów ceny. Aktualizuje tylko
