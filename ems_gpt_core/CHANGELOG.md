@@ -5,6 +5,7 @@
 - Ograniczono historyczny cel SOC zamknięcia do pasma 40–45%, aby błędne niskie lub wysokie zamknięcia z ostatnich dni nie zaniżały lub zawyżały celu.
 - Wymagane SOC w slotach nadal wynika z bilansu zużycia, PV, sprawności i dostępnych okien BUY; nie wprowadzono zakupu do 100% jako stałej reguły.
 - Dodano testy granic 40% i 45%, rezerwy technicznej oraz limitu SOC targetu.
+- Dodano tylko-do-odczytu endpoint `/api/executor-diagnostics` z 48-godzinnym zakresem i stronicowaniem; łączy target SOC wykonawcy, plan BUY, decyzje PPD, komendy i wykonanie.
 
 ## 0.40.27 — wcześniejsza kwalifikacja HP_HEAT_DHW
 
