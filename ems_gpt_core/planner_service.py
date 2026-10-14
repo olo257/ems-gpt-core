@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_30"
+PLANNER_VERSION = "CORE_0_40_31"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -879,6 +879,29 @@ def economic_buy_charge_caps(rows: list[dict], required_targets: list[float],
     return result
 
 
+def voluntary_load_without_charging_indices(
+        rows: list[dict], flows: list[dict], technical_threshold: float,
+        charge_threshold: float) -> set[int]:
+    """Home supply during real battery BUY is part of the permitted import.
+
+    Only native import without a battery charging decision requires the
+    separate economic sale justification. Never exempt SELL or non-BUY.
+    """
+    if len(rows) != len(flows):
+        raise ValueError("VOLUNTARY_LOAD_LENGTH_MISMATCH")
+    forbidden = set()
+    for index, (row, flow) in enumerate(zip(rows, flows)):
+        if float(flow.get("voluntary_grid_load_kwh") or 0.0) <= technical_threshold:
+            continue
+        charging_buy = (
+            strict_database_bool(row.get("buy_window", False), "buy_window")
+            and not strict_database_bool(row.get("sale_window", False), "sale_window")
+            and float(flow.get("grid_charge_kwh") or 0.0) > charge_threshold)
+        if not charging_buy:
+            forbidden.add(index)
+    return forbidden
+
+
 def planned_buy_execution_targets(rows: list[dict], flows: list[dict],
                                   required_targets: list[float],
                                   threshold_kwh: float = 1e-7) -> list[float]:
@@ -1126,7 +1149,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             battery_sales_enabled: bool = True,
                             allow_terminal_shortfall: bool = False,
                             max_grid_import_kw: float = 12.0,
-                            grid_charge_caps: list[float] | None = None) -> dict:
+                            grid_charge_caps: list[float] | None = None,
+                            minimum_grid_charge_kwh: float = 0.0) -> dict:
     """Minimize total energy cost across every available slot and SOC state."""
     if not rows:
         return {"flows": [], "objective_pln": 0.0, "soc_step_pct": soc_step_pct}
@@ -1265,7 +1289,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # load when usable SOC is available. A single SOC quantum may
                 # leave a small numerical residual that cannot be discharged
                 # without violating the no-battery-export rule.
-                if (grid_charge <= 1e-9
+                if (grid_charge <= max(1e-9, minimum_grid_charge_kwh)
                         and voluntary_grid_load > unit_kwh * eta_d + 1e-9):
                     continue
                 # During deliberate export the complete slot, including the
@@ -2423,7 +2447,8 @@ def build_planner(a: PlannerAdapters):
                         battery_sales_enabled=False,
                         allow_terminal_shortfall=terminal_shortfall_allowed,
                         max_grid_import_kw=max_grid_import_kw,
-                        grid_charge_caps=grid_charge_caps)
+                        grid_charge_caps=grid_charge_caps,
+                        minimum_grid_charge_kwh=flow_threshold)
                     break
                 except RuntimeError as exc:
                     # A BUY due target can be infeasible even though the
@@ -2556,7 +2581,8 @@ def build_planner(a: PlannerAdapters):
                             battery_sales_enabled=battery_sales_enabled,
                             allow_terminal_shortfall=terminal_shortfall_allowed,
                             max_grid_import_kw=max_grid_import_kw,
-                            grid_charge_caps=grid_charge_caps)
+                            grid_charge_caps=grid_charge_caps,
+                            minimum_grid_charge_kwh=flow_threshold)
                         break
                     except RuntimeError as exc:
                         slot_error_prefix = "No feasible SOC state at horizon slot "
@@ -2674,12 +2700,11 @@ def build_planner(a: PlannerAdapters):
                     index for index, flow in enumerate(optimization["flows"])
                     if float(flow.get("battery_sell_kwh") or 0.0) > flow_threshold
                 }
+                unbacked_load_indices = voluntary_load_without_charging_indices(
+                    horizon_rows, optimization["flows"],
+                    technical_threshold, flow_threshold)
                 if not sell_indices:
-                    voluntary_import = any(
-                        float(flow.get("voluntary_grid_load_kwh") or 0.0)
-                        > technical_threshold
-                        for flow in optimization["flows"]
-                    )
+                    voluntary_import = bool(unbacked_load_indices)
                     if voluntary_import and battery_sales_enabled:
                         # A grid supplied native load is an allowed exception
                         # only when it protects energy for a later sale. If the
@@ -2692,11 +2717,21 @@ def build_planner(a: PlannerAdapters):
                         ensure_deadline("GRID_LOAD_WITHOUT_SALE_GUARD")
                         continue
                     if voluntary_import:
+                        record_event("voluntary_native_import_rejected", "planner", {
+                            "slots": [
+                                {"slot_start": str(horizon_rows[index]["slot_start"]),
+                                 "buy_window": horizon_rows[index].get("buy_window"),
+                                 "sale_window": horizon_rows[index].get("sale_window"),
+                                 "grid_charge_kwh": optimization["flows"][index].get("grid_charge_kwh"),
+                                 "voluntary_grid_load_kwh": optimization["flows"][index].get("voluntary_grid_load_kwh")}
+                                for index in sorted(unbacked_load_indices)],
+                            "charge_threshold_kwh": flow_threshold,
+                            "technical_threshold_kwh": technical_threshold,
+                        }, "ERROR")
                         raise RuntimeError("VOLUNTARY_GRID_LOAD_WITHOUT_SALE")
                     break
                 voluntary_without_later_sale = any(
-                    float(flow.get("voluntary_grid_load_kwh") or 0.0)
-                    > technical_threshold
+                    index in unbacked_load_indices
                     and not any(sale_index > index for sale_index in sell_indices)
                     for index, flow in enumerate(optimization["flows"])
                 )
@@ -2716,7 +2751,8 @@ def build_planner(a: PlannerAdapters):
                         battery_sales_enabled=False,
                         allow_terminal_shortfall=terminal_shortfall_allowed,
                         max_grid_import_kw=max_grid_import_kw,
-                        grid_charge_caps=grid_charge_caps)
+                        grid_charge_caps=grid_charge_caps,
+                        minimum_grid_charge_kwh=flow_threshold)
                     sale_assessment = assess_sale_plan_against_no_sale(
                         optimization, no_sale_optimization, horizon_rows,
                         min_margin, capacity, eta_c, technical_threshold,
