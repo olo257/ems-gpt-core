@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.31 — poprawna kontrola poboru domu podczas ładowania BUY
+
+- Naprawiono odrzucenie VOLUNTARY_GRID_LOAD_WITHOUT_SALE, gdy w BUY sieć zasila dom równocześnie z zaplanowanym ładowaniem baterii.
+- Kontrola braku sprzedaży i kontroli poboru po sprzedaży korzystają z tej samej kwalifikacji aktywnego BUY. Wyjątek wymaga rzeczywistego planowanego ładowania ponad próg wykonawczy, BUY oraz braku SELL.
+- Optymalizator korzysta z tego samego progu ładowania co kwalifikacja komend; symboliczny przepływ poniżej progu nie uzasadnia poboru na dom.
+- Dodano trzy regresje: ładowanie BUY bez sprzedaży, nieuprawniony pobór nadal blokowany, techniczna resztka pomijana.
+
 ## 0.40.30 — tańszy zakup wcześniej i wspólny target BUY
 
 - Oddzielono wymagane SOC i terminy od opcjonalnych sufitów optymalizacji zakupów. Tańszy wcześniejszy BUY może zastąpić droższy późniejszy BUY w pełnym bilansie horyzontu.
