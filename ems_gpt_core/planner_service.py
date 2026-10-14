@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_14"
+PLANNER_VERSION = "CORE_0_40_15"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -712,9 +712,16 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
 
 def end_of_day_soc_target(historical_soc_pct: float, reserve_pct: float,
                           target_cap_pct: float) -> float:
-    """Use the weighted historical close directly, bounded by reserve and cap."""
+    """Keep daily closes in the 40–45% operating band.
+
+    Weighted history remains useful inside the band, but low or high closes
+    caused by faulty plans/execution cannot pull the next terminal target
+    outside it. Physical reserve and target-cap limits still apply.
+    """
+    history_pct = float(historical_soc_pct)
+    bounded_history_pct = max(40.0, min(45.0, history_pct))
     return max(float(reserve_pct), min(float(target_cap_pct),
-                                       float(historical_soc_pct)))
+                                       bounded_history_pct))
 
 
 def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
@@ -2203,7 +2210,7 @@ def build_planner(a: PlannerAdapters):
                 record_event("historical_terminal_soc_forecast", "planner", {
                     "terminal_day": str(planning_day),
                     "terminal_soc_pct": round(daily_terminal_soc[planning_day], 3),
-                    "historical_tolerance_pp": 5.0,
+                    "daily_close_target_band_pct": [40.0, 45.0],
                     **terminal_history,
                 })
             terminal_soc = daily_terminal_soc[terminal_day]
