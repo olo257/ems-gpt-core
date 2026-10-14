@@ -133,6 +133,69 @@ def build_handler(a: ApiAdapters):
                     LOG.warning("active slot balance unavailable: %s", type(exc).__name__)
                     payload["active_slot_balance"] = None
                 return self.json(payload)
+            if path.endswith("/api/executor-diagnostics") or path == "/api/executor-diagnostics":
+                params = parse_qs(urlparse(self.path).query)
+                raw_start = params.get("from", [None])[0]
+                raw_end = params.get("to", [None])[0]
+                if not raw_start or not raw_end:
+                    return self.json({"error": "from_and_to_required",
+                                      "format": "YYYY-MM-DDTHH:MM:SS in Home Assistant local time"},
+                                     HTTPStatus.BAD_REQUEST)
+                try:
+                    start_at = datetime.fromisoformat(raw_start)
+                    end_at = datetime.fromisoformat(raw_end)
+                except ValueError:
+                    return self.json({"error": "invalid_datetime"}, HTTPStatus.BAD_REQUEST)
+                if (start_at.tzinfo is not None or end_at.tzinfo is not None
+                        or end_at <= start_at or end_at - start_at > timedelta(hours=48)):
+                    return self.json({"error": "invalid_range", "max_hours": 48,
+                                      "timezone": "Home Assistant local time"},
+                                     HTTPStatus.BAD_REQUEST)
+                limit = min(96, max(1, int(params.get("limit", ["96"])[0])))
+                offset = min(192, max(0, int(params.get("offset", ["0"])[0])))
+                with db() as conn, conn.cursor() as cur:
+                    cur.execute("""SELECT s.slot_start,s.plan_run_id,
+                      s.soc_charge_target_pct,
+                      COALESCE(s.soc_charge_target_pct,s.soc_target_pct) executor_target_pct,
+                      CASE WHEN s.soc_charge_target_pct IS NOT NULL
+                        THEN 'soc_charge_target_pct' ELSE 'soc_target_pct' END executor_target_source,
+                      s.soc_target_pct,s.soc_end_plan_pct,s.planned_buy_kwh,
+                      s.planned_battery_charge_kwh,
+                      d.eligible ppd_eligible,d.decision ppd_decision,d.reason ppd_reason,
+                      x.command_id execution_command_id,x.planned_state,x.effective_state,
+                      x.observed_state,x.observed_energy_kwh,x.decision_source,
+                      x.reason execution_reason,x.recorded_at execution_recorded_at,
+                      c.command_id,c.plan_version command_plan_version,
+                      c.decision command_decision,c.source command_source,c.status command_status,
+                      c.created_at command_created_at,c.dispatched_at command_dispatched_at,
+                      JSON_UNQUOTE(JSON_EXTRACT(c.acknowledgement_json, '$.reason')) command_result_reason,
+                      JSON_UNQUOTE(JSON_EXTRACT(c.acknowledgement_json, '$.live_soc')) command_live_soc_pct,
+                      JSON_UNQUOTE(JSON_EXTRACT(c.acknowledgement_json, '$.target_soc')) command_guard_target_pct,
+                      JSON_UNQUOTE(JSON_EXTRACT(c.acknowledgement_json,
+                        '$.tou_target_update.target_soc_pct')) inverter_tou_target_pct
+                      FROM ems_gpt_slots s
+                      LEFT JOIN ems_gpt_core_process_decisions d
+                        ON d.slot_start=s.slot_start AND d.plan_run_id=s.plan_run_id
+                        AND d.process_name='BATTERY_IMPORT'
+                      LEFT JOIN ems_gpt_core_process_execution x
+                        ON x.slot_start=s.slot_start AND x.process_name='BATTERY_IMPORT'
+                      LEFT JOIN (
+                        SELECT c.* FROM ems_gpt_core_commands c
+                        JOIN (SELECT slot_start,MAX(created_at) created_at
+                          FROM ems_gpt_core_commands
+                          WHERE process_name='BATTERY_IMPORT' AND created_at>=%s AND created_at<%s
+                          GROUP BY slot_start) latest
+                          ON latest.slot_start=c.slot_start AND latest.created_at=c.created_at
+                        WHERE c.process_name='BATTERY_IMPORT'
+                      ) c ON c.slot_start=s.slot_start
+                      WHERE s.plan_stage='PUBLISHED' AND s.slot_start>=%s AND s.slot_start<%s
+                      ORDER BY s.slot_start DESC LIMIT %s OFFSET %s""",
+                      (start_at,end_at,start_at,end_at,limit,offset))
+                    rows = cur.fetchall()
+                return self.json({"view":"executor-diagnostics","timezone":"Europe/Warsaw",
+                                  "from":start_at,"to":end_at,"count":len(rows),"offset":offset,
+                                  "has_more":len(rows)==limit,"rows":rows})
+
             if path.endswith("/api/settings") or path == "/api/settings":
                 return self.json({"settings": settings_payload()})
             if path.endswith("/api/database-audit") or path == "/api/database-audit":
