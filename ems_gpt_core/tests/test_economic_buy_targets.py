@@ -6,7 +6,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from planner_service import (
     deterministic_soc_target_contract, economic_buy_charge_caps,
     optimize_energy_horizon, planned_buy_execution_targets,
-    validate_physical_buy_commitments,
+    validate_physical_buy_commitments, voluntary_load_without_charging_indices,
 )
 
 
@@ -30,7 +30,8 @@ class EconomicBuyTargetsTests(unittest.TestCase):
             contract['charge_targets'], set(), contract['buy_due_indices'],
             contract['required'], battery_sales_enabled=False,
             grid_charge_caps=(economic_buy_charge_caps(rows, contract['charge_targets'])
-                              if optional else None))
+                              if optional else None),
+            minimum_grid_charge_kwh=0.02)
         validate_physical_buy_commitments(
             rows, result['flows'], contract['buy_due_indices'],
             result['effective_target_pcts'], 5.0, 15, 15.0, 0.9)
@@ -134,6 +135,31 @@ class EconomicBuyTargetsTests(unittest.TestCase):
             grid_charge_caps=caps)
         self.assertLessEqual(max(f['soc_end_pct'] for f in result['flows']), 100.0)
         self.assertGreater(sum(f['grid_charge_kwh'] for f in result['flows'][10:]), 0.1)
+
+    def test_home_import_during_battery_buy_does_not_require_sale(self):
+        rows = self.rows()
+        for row in rows[:4]:
+            row['forecast_load_kwh'] = 0.3
+        _, result = self.optimize(rows)
+        self.assertTrue(any(f['grid_charge_kwh'] > 0.02 and
+                            f['voluntary_grid_load_kwh'] > 0.05
+                            for f in result['flows']))
+        self.assertEqual(voluntary_load_without_charging_indices(
+            rows, result['flows'], 0.05, 0.02), set())
+
+    def test_unbacked_native_import_stays_forbidden(self):
+        rows = [dict(buy_window=b, sale_window=s) for b, s in
+                [(True, False), (False, False), (True, True), (True, False)]]
+        flows = [dict(voluntary_grid_load_kwh=0.3, grid_charge_kwh=q)
+                 for q in [0.0, 1.0, 1.0, 0.01]]
+        self.assertEqual(voluntary_load_without_charging_indices(
+            rows, flows, 0.05, 0.02), {0, 1, 2, 3})
+
+    def test_technical_native_residual_is_not_deliberate_import(self):
+        self.assertEqual(voluntary_load_without_charging_indices(
+            [dict(buy_window=False, sale_window=False)],
+            [dict(voluntary_grid_load_kwh=0.01, grid_charge_kwh=0)],
+            0.05, 0.02), set())
 
 
 if __name__ == '__main__':

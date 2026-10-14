@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.30. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.31. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -480,3 +480,14 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 - Warunek kompletności RCE dotyczy doby importowanej (zwykle 96 slotów), ale horyzont planera i jego widok obejmują wszystkie dostępne, ciągłe sloty bieżącej i następnej doby; limit 96 rekordów w UI nie jest kontraktem planowania.
 - Zmiana konfiguracji planera, poza samym numerem wersji dodatku, wymaga osobnej wyraźnej zgody operatora. Zmiany wyłącznie prezentacyjne panelu nie mogą modyfikować obliczeń, wykonawcy ani PPD.
 - Testy regresyjne kodu nie są równoznaczne z odbiorem produkcyjnym: po aktualizacji trzeba osobno potwierdzić wersję przebiegu planera w zapisanych slotach, okna BUY, planowane kWh zakupu i osiągalność SOC.
+
+
+### Pobór domu podczas aktywnego BUY — 0.40.31
+
+Podczas zaplanowanego ładowania baterii w BUY sieć może równocześnie pokrywać
+zużycie domu. Pobór ten wlicza się do wspólnego limitu importu i kosztu planu,
+lecz nie wymaga późniejszej sprzedaży baterii. Wyjątek obowiązuje tylko przy
+`grid_charge_kwh` ponad wykonawczy próg przepływu, BUY i braku SELL. Symboliczny
+zakup poniżej tego progu nie może uzasadniać dobrowolnego poboru domu.
+Dobrowolny pobór bez takiego ładowania nadal wymaga osobnej oceny ekonomicznej
+sprzedaży; bez niej plan zostaje odrzucony. Rezerwy i cele SOC pozostają bez zmian.
