@@ -233,7 +233,9 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_planner_contract_is_versioned_and_keeps_core_definitions(self):
         self.assertIn("kanoniczny kontrakt RCE, planera i SOC", PLANNER_CONTRACT)
-        self.assertIn("`soc_target` jest zapotrzebowaniem energetycznym", PLANNER_CONTRACT)
+        self.assertIn("`soc_required_pct` jest wymaganym zapotrzebowaniem energetycznym", PLANNER_CONTRACT)
+        self.assertIn("`soc_target` / `soc_charge_target_pct` jest sufitem", PLANNER_CONTRACT)
+        self.assertIn("wspólny najwyższy target", PLANNER_CONTRACT)
         self.assertIn("`soc_floor` jest wyłącznie dolną granicą", PLANNER_CONTRACT)
         self.assertIn("PV + rozładowanie baterii + import", PLANNER_CONTRACT)
         self.assertIn("ogranicza wyłącznie energię ładowania z sieci", PLANNER_CONTRACT)
@@ -809,4 +811,5 @@ class OfflineContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

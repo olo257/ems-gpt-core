@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_15"
+PLANNER_VERSION = "CORE_0_40_30"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -818,6 +818,94 @@ def deterministic_soc_target_contract(
 
 
 
+def economic_buy_charge_caps(rows: list[dict], required_targets: list[float],
+                             max_soc_pct: float = 100.0,
+                             capacity_kwh: float = 15.0, eta_c: float = 0.9,
+                             eta_d: float = 0.95, max_power_kw: float = 5.0,
+                             slot_minutes: int = 15) -> list[float]:
+    """Permit cheaper earlier BUY to replace dearer later BUY, without new floors.
+
+    These are optional DP ceilings, not deadlines or executor targets. The
+    complete energy balance chooses the actual extra energy; execution receives
+    only the peak of its selected consecutive charging run.
+    """
+    if len(rows) != len(required_targets):
+        raise ValueError("ECONOMIC_BUY_CAP_LENGTH_MISMATCH")
+    cap = min(100.0, max(0.0, float(max_soc_pct)))
+    result = [min(cap, float(value)) for value in required_targets]
+    # An optional price allowance must still correspond to forecast demand,
+    # not speculative stockpiling (particularly at a negative price). Compute
+    # the bridge with future BUY removed, but retain usable PV and all original
+    # requirements. Its ceiling permits replacing future purchases only.
+    capacity = max(0.001, float(capacity_kwh))
+    demand_caps = [0.0] * len(rows)
+    next_kwh = 0.0
+    for index in range(len(rows) - 1, -1, -1):
+        after_kwh = max(next_kwh, capacity * result[index] / 100.0)
+        demand_caps[index] = min(cap, math.ceil(after_kwh / capacity * 1000.0 - 1e-9) / 10.0)
+        row = rows[index]
+        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
+                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
+        deficit = max(0.0, load - pv) / max(0.01, eta_d)
+        pv_supply = min(max_power_kw * slot_minutes / 60.0,
+                        max(0.0, pv - load)) * max(0.01, eta_c)
+        next_kwh = max(0.0, after_kwh + deficit - pv_supply)
+    allowed = [strict_database_bool(row.get("buy_window", False), "buy_window")
+               and not strict_database_bool(row.get("sale_window", False), "sale_window")
+               for row in rows]
+    # Equalize the existing requirement throughout every uninterrupted BUY
+    # window before considering an optional price-driven increase.
+    start = 0
+    while start < len(rows):
+        if not allowed[start]:
+            start += 1
+            continue
+        end = start + 1
+        while end < len(rows) and allowed[end]:
+            end += 1
+        window_target = max(result[start:end])
+        for index in range(start, end):
+            result[index] = window_target
+        start = end
+    future_max_price = None
+    for index in range(len(rows) - 1, -1, -1):
+        if not allowed[index] or rows[index].get("price_buy_pln_kwh") is None:
+            continue
+        price = float(rows[index]["price_buy_pln_kwh"])
+        if future_max_price is not None and price < future_max_price - 1e-9:
+            result[index] = max(result[index], demand_caps[index])
+        future_max_price = price if future_max_price is None else max(price, future_max_price)
+    return result
+
+
+def planned_buy_execution_targets(rows: list[dict], flows: list[dict],
+                                  required_targets: list[float],
+                                  threshold_kwh: float = 1e-7) -> list[float]:
+    """Publish one achieved peak target from the first slot of a BUY run."""
+    if not len(rows) == len(flows) == len(required_targets):
+        raise ValueError("BUY_EXECUTION_TARGET_LENGTH_MISMATCH")
+    targets = list(required_targets)
+    active = [float(flow.get("grid_charge_kwh") or 0.0) > threshold_kwh
+              and strict_database_bool(row.get("buy_window", False), "buy_window")
+              and not strict_database_bool(row.get("sale_window", False), "sale_window")
+              for row, flow in zip(rows, flows)]
+    start = 0
+    while start < len(rows):
+        if not active[start]:
+            start += 1
+            continue
+        end = start + 1
+        while end < len(rows) and active[end]:
+            end += 1
+        peak = min(100.0, max(
+            max(float(flow["soc_end_pct"]) for flow in flows[start:end]),
+            max(float(value) for value in targets[start:end])))
+        targets[start:end] = [peak] * (end - start)
+        start = end
+    return targets
+
+
 def preserve_target_contract_after_reachability(
         target_contract: dict, recovery: dict,
         daily_close_indices: set[int]) -> dict:
@@ -1037,10 +1125,13 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             required_soc_pcts: list[float] | None = None,
                             battery_sales_enabled: bool = True,
                             allow_terminal_shortfall: bool = False,
-                            max_grid_import_kw: float = 12.0) -> dict:
+                            max_grid_import_kw: float = 12.0,
+                            grid_charge_caps: list[float] | None = None) -> dict:
     """Minimize total energy cost across every available slot and SOC state."""
     if not rows:
         return {"flows": [], "objective_pln": 0.0, "soc_step_pct": soc_step_pct}
+    if grid_charge_caps is not None and len(grid_charge_caps) != len(rows):
+        raise ValueError("GRID_CHARGE_CAP_LENGTH_MISMATCH")
     capacity = max(0.001, float(capacity_kwh))
     reserve = max(0.0, min(100.0, float(reserve_pct)))
     step = max(0.05, float(soc_step_pct))
@@ -1082,6 +1173,10 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                       max(reserve, min(float(max_soc_pct),
                           float(minimum_soc_targets[index]))))
         requested_target_unit = int(math.ceil(target_pct / step - 1e-9))
+        grid_cap_pct = (target_pct if grid_charge_caps is None else
+                        max(reserve, min(float(max_soc_pct), float(grid_charge_caps[index]))))
+        grid_cap_unit = (requested_target_unit if grid_charge_caps is None else
+                         int(math.floor(grid_cap_pct / step + 1e-9)))
         required_pct = (reserve if required_soc_pcts is None else
                         max(0.0, min(float(max_soc_pct),
                             float(required_soc_pcts[index]))))
@@ -1116,9 +1211,9 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     # SOC target is the ceiling of deliberate GRID
                     # replenishment only. Free PV remains allowed to fill
                     # the battery up to the physical max SOC.
-                    if (minimum_soc_targets is not None
+                    if ((minimum_soc_targets is not None or grid_charge_caps is not None)
                             and grid_charge > 1e-9
-                            and next_unit > max(current_unit, requested_target_unit)):
+                            and next_unit > max(current_unit, grid_cap_unit)):
                         continue
                     grid_load = deficit
                     pv_export = max(0.0, surplus-pv_to_bat) if sell_price > 0 else 0.0
@@ -2311,6 +2406,9 @@ def build_planner(a: PlannerAdapters):
             terminal_shortfall_allowed = False
             target_due_indices = set(target_contract["buy_due_indices"])
             charge_targets = list(target_contract["charge_targets"])
+            grid_charge_caps = economic_buy_charge_caps(
+                horizon_rows, charge_targets, target_cap, capacity, eta_c,
+                eta_d, max_kw, int(OPTIONS["slot_minutes"]))
             enforced_daily_required = list(target_contract["required"])
             while True:
                 try:
@@ -2324,7 +2422,8 @@ def build_planner(a: PlannerAdapters):
                         required_soc_pcts=enforced_daily_required,
                         battery_sales_enabled=False,
                         allow_terminal_shortfall=terminal_shortfall_allowed,
-                        max_grid_import_kw=max_grid_import_kw)
+                        max_grid_import_kw=max_grid_import_kw,
+                        grid_charge_caps=grid_charge_caps)
                     break
                 except RuntimeError as exc:
                     # A BUY due target can be infeasible even though the
@@ -2456,7 +2555,8 @@ def build_planner(a: PlannerAdapters):
                             minimum_targets,hard_indices,due_indices,required_pcts,
                             battery_sales_enabled=battery_sales_enabled,
                             allow_terminal_shortfall=terminal_shortfall_allowed,
-                            max_grid_import_kw=max_grid_import_kw)
+                            max_grid_import_kw=max_grid_import_kw,
+                            grid_charge_caps=grid_charge_caps)
                         break
                     except RuntimeError as exc:
                         slot_error_prefix = "No feasible SOC state at horizon slot "
@@ -2615,7 +2715,8 @@ def build_planner(a: PlannerAdapters):
                         charge_targets, set(), target_due_indices, required_soc,
                         battery_sales_enabled=False,
                         allow_terminal_shortfall=terminal_shortfall_allowed,
-                        max_grid_import_kw=max_grid_import_kw)
+                        max_grid_import_kw=max_grid_import_kw,
+                        grid_charge_caps=grid_charge_caps)
                     sale_assessment = assess_sale_plan_against_no_sale(
                         optimization, no_sale_optimization, horizon_rows,
                         min_margin, capacity, eta_c, technical_threshold,
@@ -2666,6 +2767,16 @@ def build_planner(a: PlannerAdapters):
                 capacity, eta_c)
             record_event("buy_physical_commitment_validated", "planner", {
                 "run_id": run_id, **physical_buy_audit,
+            })
+            deadline_targets = list(targets)
+            targets = planned_buy_execution_targets(
+                horizon_rows, optimization["flows"], targets, flow_threshold)
+            record_event("economic_buy_targets", "planner", {
+                "run_id": run_id,
+                "optional_caps_pct": grid_charge_caps,
+                "execution_targets_pct": targets,
+                "required_deadline_targets_pct": deadline_targets,
+                "policy": "CHEAPER_BUY_REPLACES_DEARER_BUY_SHARED_RUN_TARGET",
             })
             audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
                         f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
@@ -2725,9 +2836,9 @@ def build_planner(a: PlannerAdapters):
                 if grid_charge > flow_threshold and soc_end > targets[index] + 0.01:
                     raise RuntimeError(
                         f"BUY_TARGET_EXCEEDED:{index}:{soc_end}>{targets[index]}")
-                if index in target_due_indices and soc_end + 0.01 < targets[index]:
+                if index in target_due_indices and soc_end + 0.01 < deadline_targets[index]:
                     raise RuntimeError(
-                        f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{targets[index]}")
+                        f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{deadline_targets[index]}")
                 if soc_end + 0.01 < required_soc[index]:
                     raise RuntimeError(
                         f"SOC_REQUIRED_VIOLATION:{index}:"

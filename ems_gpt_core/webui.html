@@ -142,7 +142,7 @@ async function loadConsumptionForecast(){
  thead.innerHTML='<tr><th colspan="4">Ostatnie '+plot.length+' slotów · <span style="color:#38d2ab">— Prognoza</span> · <span style="color:#ffbb60">— Wykonanie</span></th></tr>';
  tbody.innerHTML='<tr><td colspan="4" style="padding:0">'+graph+'</td></tr><tr><td>MAE '+fmt(mae)+' kWh/slot</td><td>Bias '+fmt(bias)+' kWh/slot</td><td>WAPE '+(Number.isFinite(wape)?wape.toFixed(1)+'%':'—')+'</td><td>Par pomiarowych: '+paired.length+'</td></tr>'+
  '<tr><th>Slot</th><th>Dom plan / wykonanie</th><th>HEAT plan</th><th>DHW informacyjnie</th></tr>'+
- vals.map(v=>'<tr><td>'+escapeHtml(v.slot)+'</td><td>'+fmt(v.plan)+' / '+fmt(v.actual)+'</td><td>'+fmt(v.heat)+'</td><td>'+fmt(v.dhw)+'</td></tr>').join('');
+ [...vals].reverse().map(v=>'<tr><td>'+escapeHtml(v.slot)+'</td><td>'+fmt(v.plan)+' / '+fmt(v.actual)+'</td><td>'+fmt(v.heat)+'</td><td>'+fmt(v.dhw)+'</td></tr>').join('');
  tableRefresh.textContent='Wykonanie to całkowite zużycie; prognoza zawiera dom i dodatkowy HEAT, lecz nie uwzględnia oddzielnie EV. Metryki są diagnostyczne i nie sterują SOC.';
 }
 

@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.30 — tańszy zakup wcześniej i wspólny target BUY
+
+- Oddzielono wymagane SOC i terminy od opcjonalnych sufitów optymalizacji zakupów. Tańszy wcześniejszy BUY może zastąpić droższy późniejszy BUY w pełnym bilansie horyzontu.
+- Wykonawca od pierwszego slotu ciągłego zakupu otrzymuje wspólny najwyższy target wybranego ciągu; opcjonalny limit optymalizacji nie jest automatycznie przekazywany do falownika.
+- Rezerwy, cele zamknięcia doby, sprawności, limity ładowania i zakaz BUY w SELL pozostają ograniczeniami bilansu. Okna RCE nie są zmieniane.
+- Lista prognozy zużycia pokazuje najnowszy rekord najpierw; wykres nadal korzysta z osobnych danych w kolejności chronologicznej.
+- Dziewięć nowych testów regresji zakupów; opis walidacji w docs/BUY_TARGETS_0_40_30.md.
+
 ## 0.40.29 — naprawa konfliktu Charging=Grid w wykonawcy
 
 - Komendy OFF są wykonywane przed ON; nazwane usługi skryptów czekają na zakończenie sekwencji.

@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.29**.
+Status: obowiązująca. Wersja wydania: **0.40.30**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -261,3 +261,17 @@ Zmiana wersji w plikach nie oznacza publikacji. Dopiero scalone wydanie w
 repozytorium jest dostępne dla Home Assistant.
 
 
+
+## Zakupy i prognoza zużycia w 0.40.30
+
+Wymagane SOC (`soc_required_pct`) wynika z bilansu i rezerw. Opcjonalne sufity
+optymalizacji pozwalają przenieść droższy późniejszy zakup do tańszego BUY.
+Nie są one targetami wykonawcy. `soc_charge_target_pct` i `soc_target_pct`
+zawierają wspólny najwyższy target wybranego ciągłego zakupu, od jego pierwszego
+slotu. Ograniczenia BUY/SELL, pojemności, mocy, rezerw i celów dobowych obowiązują
+we wszystkich porównywanych wariantach. Zdarzenie `economic_buy_targets`
+rozdziela opcjonalne sufity, targety wykonawcze oraz wymagane cele terminowe.
+
+W widoku prognozy zużycia rekordy są wyświetlane od najnowszego. Wykres i
+metryki korzystają z chronologicznego zbioru danych; odwrócenie listy jest
+wykonywane na kopii i nie zmienia osi wykresu.

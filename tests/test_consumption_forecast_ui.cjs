@@ -1,0 +1,21 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const html=fs.readFileSync('ems_gpt_core/webui.html','utf8');
+const scripts=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]);
+for (const s of scripts) new vm.Script(s);
+const script=scripts.find(s=>s.includes('async function loadConsumptionForecast()'));
+new vm.Script(script);
+const source=script.slice(script.indexOf('async function loadConsumptionForecast(){'),script.indexOf('function energyDashboardChart('));
+const rows=[3,1,2].map(i=>({slot_start:`2026-10-14 0${i}:00:00`,forecast_load_kwh:i,actual_load_kwh:i}));
+const context={apiFetch:async()=>({ok:true,json:async()=>({rows})}),niceTickStep:()=>1,escapeHtml:String,thead:{},tbody:{},tableRefresh:{}};
+vm.createContext(context);
+vm.runInContext(source+';globalThis.run=loadConsumptionForecast;',context);
+context.run().then(()=>{
+ const body=context.tbody.innerHTML;
+ const table=body.slice(body.indexOf('<tr><th>Slot'));
+ assert(table.indexOf('03:00:00')<table.indexOf('02:00:00'));
+ assert(table.indexOf('02:00:00')<table.indexOf('01:00:00'));
+ const graph=body.slice(0,body.indexOf('</svg>'));
+ assert(graph.indexOf('01:00')<graph.indexOf('03:00'));
+ assert.deepEqual(rows.map(r=>r.slot_start.slice(11,13)),['03','01','02']);
+ console.log('JS syntax OK; newest-first table, chronological graph, source preserved OK');
+}).catch(e=>{console.error(e);process.exit(1);});
