@@ -260,16 +260,6 @@ def _soc_reachability_profile(
         next_scores = {}
         next_predecessors = {}
         for current, score in scores.items():
-            current_energy = current * unit_kwh
-            required_floor_unit = (
-                first_unit if required_soc_pcts is None else
-                max(first_unit, int(math.ceil(
-                    float(required_soc_pcts[index]) / step - 1e-9)))
-            )
-            usable_internal = min(
-                max_internal_discharge,
-                max(0.0, current_energy - required_floor_unit * unit_kwh),
-            )
             lower_state = current if current < first_unit else first_unit
             for following in range(max(lower_state, current-max_down),
                                     min(last_unit, current+max_up)+1):
