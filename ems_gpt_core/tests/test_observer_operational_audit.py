@@ -51,10 +51,10 @@ class ObserverOperationalAuditTests(unittest.TestCase):
         rows = []
         # The observer's SQL supplies only this rolling-day slice; it can
         # contain records from two calendar dates when it crosses midnight.
-        for slot in range(4):
-            rows.append({"slot_start": datetime(2026, 9, 19, 23, 0) + timedelta(minutes=15 * slot),
+        for slot in range(6):
+            rows.append({"slot_start": datetime(2026, 9, 19, 22, 30) + timedelta(minutes=15 * slot),
                          "forecast_pv_total_kwh": 0.125, "actual_pv_total_kwh": 0.25})
-        for slot in range(4):
+        for slot in range(6):
             rows.append({"slot_start": datetime(2026, 9, 20, 0, 0) + timedelta(minutes=15 * slot),
                          "forecast_pv_total_kwh": 0.125, "actual_pv_total_kwh": 0.25})
         findings, _ = audit_operational_rows(rows, [], options=self.options)
