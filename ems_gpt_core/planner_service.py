@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_31"
+PLANNER_VERSION = "CORE_0_40_33"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -624,6 +624,8 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
     # this, SOC above the terminal target can look free: a plan can buy energy,
     # later export it below cost, and still meet the terminal SOC contract.
     grid_inventory: list[list[float]] = []  # internal kWh, cost PLN/internal kWh
+    grid_load_inventory: list[list[float]] = []  # native-load kWh, avoided import PLN/kWh
+    grid_load_sale_loss = 0.0
     grid_origin_sale_kwh = 0.0
     grid_origin_sale_revenue = 0.0
     grid_origin_sale_cost = 0.0
@@ -645,9 +647,24 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             native_discharge -= used
             if grid_inventory[0][0] <= 1e-9:
                 grid_inventory.pop(0)
+        grid_load = max(0.0, float(flow.get("grid_load_kwh") or 0.0))
+        if grid_load > 1e-9:
+            grid_load_inventory.append([
+                grid_load, float(row.get("price_buy_pln_kwh") or 0.0),
+            ])
         battery_sale = max(0.0, float(flow.get("battery_sell_kwh") or 0.0))
         sale_internal = battery_sale / discharge_efficiency
+        sale_output_remaining = battery_sale
         sale_price = float(row.get("price_sell_pln_kwh") or 0.0)
+        while sale_output_remaining > 1e-9 and grid_load_inventory:
+            used = min(sale_output_remaining, grid_load_inventory[0][0])
+            required_price = (grid_load_inventory[0][1]
+                              + float(degradation) + float(min_margin))
+            grid_load_sale_loss += used * max(0.0, required_price - sale_price)
+            grid_load_inventory[0][0] -= used
+            sale_output_remaining -= used
+            if grid_load_inventory[0][0] <= 1e-9:
+                grid_load_inventory.pop(0)
         while sale_internal > 1e-9 and grid_inventory:
             used = min(sale_internal, grid_inventory[0][0])
             revenue = used * sale_price * discharge_efficiency
@@ -693,7 +710,8 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
     eligible = (sold <= 1e-9 or
                 (gain is not None and gain > 1e-6
                  and extra_native_import <= tolerance_kwh + 1e-9
-                 and grid_origin_sale_loss <= 1e-6))
+                 and grid_origin_sale_loss <= 1e-6
+                 and grid_load_sale_loss <= 1e-6))
     return {"eligible": eligible, "sold_kwh": round(sold, 6),
             "gross_gain_pln": round(gross_gain, 6),
             "net_gain_pln": round(gain, 6) if gain is not None else None,
@@ -703,6 +721,7 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             "extra_native_import_kwh": round(extra_native_import, 6),
             "extra_grid_charge_kwh": round(extra_grid_charge, 6),
             "extra_grid_charge_cost_pln": round(extra_grid_charge_cost, 6),
+            "grid_load_sale_loss_pln": round(grid_load_sale_loss, 6),
             "grid_origin_sale_kwh": round(grid_origin_sale_kwh, 6),
             "grid_origin_sale_revenue_pln": round(grid_origin_sale_revenue, 6),
             "grid_origin_sale_cost_pln": round(grid_origin_sale_cost, 6),
