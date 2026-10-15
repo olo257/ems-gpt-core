@@ -307,27 +307,21 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'No feasible SOC state'):
             self.optimize(rows, self.safety(rows), initial=20.0)
 
-    def test_reachability_allows_house_import_inside_buy_charge(self):
+    def test_buy_charge_does_not_allow_import_for_house_load(self):
         rows = self.rows(1)
         rows[0].update(forecast_load_kwh=0.5, buy_window=True)
         profile = _soc_reachability_profile(
             rows, 20.0, 15.0, 15.0, 0.98, 0.98, 5.0, 15, 0.1,
             [28.0])
-        self.assertGreater(profile['feasible_soc_path_pcts'][0], 20.0)
-        validated = validate_recoverable_soc_requirements(
-            rows, [28.0], 20.0, 15.0, 100.0, capacity_kwh=15.0,
-            eta_c=0.98, eta_d=0.98, max_power_kw=5.0,
-            slot_minutes=15, soc_step_pct=0.1)
+        self.assertLess(profile['feasible_soc_path_pcts'][0], 20.0)
         plan = optimize_energy_horizon(
             rows, 20.0, 15.0, 15.0, 0.98, 0.98, 0.08, 0.05,
             5.0, 15, [15.0], 15.0, 0.1, 100.0,
-            required_soc_pcts=validated['required_soc_pcts'],
-            battery_sales_enabled=False)
+            required_soc_pcts=[15.0], battery_sales_enabled=False)
         flow = plan['flows'][0]
-        self.assertGreater(flow['grid_charge_kwh'], 0.0)
-        self.assertGreater(flow['grid_load_kwh'], 0.0)
-        self.assertAlmostEqual(flow['battery_discharge_internal_kwh'], 0.0)
-        self.assertLessEqual(flow['grid_charge_kwh'] + flow['grid_load_kwh'], 3.0 + 1e-9)
+        self.assertGreater(flow['battery_to_load_kwh'], 0.0)
+        self.assertLessEqual(flow['grid_load_kwh'], 0.05)
+        self.assertEqual(flow['grid_charge_kwh'], 0.0)
 
     def test_invalid_measured_soc_above_100_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'INVALID_INITIAL_SOC'):
@@ -391,27 +385,15 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         for flow, floor in zip(plan['flows'], result['required_soc_pcts']):
             self.assertGreaterEqual(flow['soc_end_pct'] + 1e-9, floor)
 
-    def test_joint_reachability_relaxes_earlier_floor_for_later_buy(self):
-        rows = self.rows(6)
+    def test_house_load_above_battery_power_is_infeasible_without_grid_import(self):
+        rows = self.rows(2)
         rows[0]['buy_window'] = True
         rows[1]['forecast_load_kwh'] = 1.4523
-        rows[2]['forecast_pv_total_kwh'] = 4.6066
-        rows[3]['buy_window'] = True
-        rows[4].update(buy_window=True, forecast_load_kwh=2.5365)
-        rows[5]['forecast_load_kwh'] = 3.4881
-        requested = [92.9, 84.2, 91.7, 99.2, 100.0, 91.3]
-        result = validate_recoverable_soc_requirements(
-            rows, requested, 85.4201, 15.0, 100.0,
-            capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
-            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
-        self.assertEqual(result['unreachable_indices'], [])
-        self.assertEqual(result['required_soc_pcts'], requested)
-        self.assertGreaterEqual(result['reachable_soc_ceiling_pcts'][4], requested[4])
-        plan = self.optimize(rows, result['required_soc_pcts'],
-                             initial=85.4201, terminal=15.0,
-                             battery_sales_enabled=False)
-        for flow, floor in zip(plan['flows'], result['required_soc_pcts']):
-            self.assertGreaterEqual(flow['soc_end_pct'] + 1e-9, floor)
+        with self.assertRaisesRegex(
+                RuntimeError, 'SOC_NO_PHYSICALLY_REACHABLE_STATE:1'):
+            _soc_reachability_profile(
+                rows, 85.4201, 15.0, 15.0, 0.9, 0.95, 5.0, 15, 0.1,
+                [92.9, 84.2])
 
     def test_requirements_do_not_clip_an_impossible_bridge(self):
         rows = self.rows(20)
