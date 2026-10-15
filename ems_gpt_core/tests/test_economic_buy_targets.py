@@ -143,10 +143,17 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         _, result = self.optimize(rows)
         self.assertTrue(any(f['grid_charge_kwh'] > 0.02
                             for f in result['flows']))
-        self.assertTrue(all(f['voluntary_grid_load_kwh'] <= 0.05
+        self.assertTrue(all(f['grid_load_kwh'] <= 0.05
                             for f in result['flows']))
         self.assertEqual(voluntary_load_without_charging_indices(
             rows, result['flows'], 0.05, 0.02), set())
+
+    def test_no_plan_imports_house_load_at_minimum_soc(self):
+        rows = self.rows()
+        rows[0]['forecast_load_kwh'] = 0.3
+        with self.assertRaisesRegex(
+                RuntimeError, 'SOC_NO_PHYSICALLY_REACHABLE_STATE:0'):
+            self.optimize(rows, initial=15.0)
 
     def test_unbacked_native_import_stays_forbidden(self):
         rows = [dict(buy_window=b, sale_window=s) for b, s in
