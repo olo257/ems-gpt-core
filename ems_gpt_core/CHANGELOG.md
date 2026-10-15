@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.32 — pełne przełączanie ładowania BATTERY_IMPORT
+
+- BUY ustawia target SOC oraz `Charging=Grid` we wszystkich sześciu programach TOU, a następnie uruchamia skonfigurowany skrypt importu.
+- BUY OFF wyłącza skrypt ładowania, ustawia `Charging=Disabled` w programach 1–6 i przywraca SOC z konfiguracji dodatku.
+- Jeśli przygotowanie BUY nie powiedzie się dla któregokolwiek programu, wykonawca przechodzi do OFF, wyłącza programy i odtwarza konfigurację SOC.
+- Dodano testy regresji przejścia ON/OFF dla wszystkich sześciu programów.
+
 ## 0.40.31 — poprawna kontrola poboru domu podczas ładowania BUY
 
 - Naprawiono odrzucenie VOLUNTARY_GRID_LOAD_WITHOUT_SALE, gdy w BUY sieć zasila dom równocześnie z zaplanowanym ładowaniem baterii.
