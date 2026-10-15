@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.42. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.43. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -497,7 +497,7 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 - Testy regresyjne kodu nie są równoznaczne z odbiorem produkcyjnym: po aktualizacji trzeba osobno potwierdzić wersję przebiegu planera w zapisanych slotach, okna BUY, planowane kWh zakupu i osiągalność SOC.
 
 
-### Dostępny wolumen BUY ograniczony targetem SOC — 0.40.42
+### Dostępny wolumen BUY ograniczony targetem SOC — 0.40.43
 
 Slot BUY wykorzystuje maksymalną fizycznie dostępną moc ładowania baterii,
 ale nigdy ponad wyliczony dla tego slotu `soc_charge_target_pct`. Target może
@@ -505,6 +505,12 @@ zmieniać się slot po slocie; nie jest zastępowany stałym 40% ani podnoszony 
 100%. Ograniczają go też pojemność baterii, limit ładowania 5 kW łącznie z PV
 oraz limit importu obiektu 12 kW. Po osiągnięciu targetu zakup do baterii
 wynosi zero. Sloty poza BUY nigdy nie ładują baterii z sieci.
+
+W ciągłym oknie BUY najwyższy dynamiczny `soc_charge_target_pct` wymagany w
+tym oknie jest limitem ładowania już od jego pierwszego slotu. Dzięki temu
+planer może wykorzystać wcześniejsze sloty BUY; target nadal nie przekracza
+wyliczonego celu końca okna. `soc_required_pct` pozostaje oddzielnym minimum
+mostu energetycznego w każdym slocie.
 
 Target wynikający z mostu SOC do kolejnego PV/BUY i wymagany SOC na końcu okna
 BUY pozostają odrębnymi warunkami. Jeśli wymaganego SOC nie da się osiągnąć,

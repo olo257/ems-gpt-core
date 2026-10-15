@@ -887,9 +887,26 @@ def deterministic_soc_target_contract(
         else:
             due.append(rows[-1].get("slot_end") or rows[-1].get("slot_start"))
             source.append("HORIZON")
+
+    # A continuous BUY window is one replenishment opportunity. Keep the
+    # per-slot required SOC as the minimum bridge, but expose the highest
+    # dynamic target reached within the window as its charge ceiling from the
+    # first slot. Otherwise early BUY slots can be capped below live SOC and
+    # charging is deferred until a later slot's target rises.
+    charge_targets = list(required)
+    buy_starts = [i for i in selected_buy
+                  if i == 0 or i - 1 not in selected_buy]
+    for start in buy_starts:
+        end = start
+        while end + 1 in selected_buy:
+            end += 1
+        window_target = max(required[start:end + 1])
+        for index in range(start, end + 1):
+            charge_targets[index] = window_target
+
     return {
         "required": required,
-        "charge_targets": list(required),
+        "charge_targets": charge_targets,
         "due": due,
         "source": source,
         "reserved_pv_kwh": [0.0] * len(rows),
