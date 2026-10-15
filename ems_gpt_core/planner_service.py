@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import math
-import time
+import time as monotonic_clock
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_36"
+PLANNER_VERSION = "CORE_0_40_37"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -2095,13 +2095,13 @@ def build_planner(a: PlannerAdapters):
 
     def _run_planner(run_type: str, attempt: dict) -> dict:
         """Run the V3 staged planner transactionally in the app-owned database."""
-        started_monotonic = time.monotonic()
+        started_monotonic = monotonic_clock.monotonic()
         planning_budget = max(10.0, min(600.0, float(
             OPTIONS.get("planner_deadline_seconds", 120.0))))
 
         def ensure_deadline(stage: str) -> None:
             attempt["failed_stage"] = stage
-            if time.monotonic() - started_monotonic > planning_budget:
+            if monotonic_clock.monotonic() - started_monotonic > planning_budget:
                 raise RuntimeError(f"PLANNER_DEADLINE_EXCEEDED:{stage}:{planning_budget:.0f}s")
 
         now = local_now().replace(tzinfo=None)
