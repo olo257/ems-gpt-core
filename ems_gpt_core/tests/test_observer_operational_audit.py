@@ -47,22 +47,26 @@ class ObserverOperationalAuditTests(unittest.TestCase):
         self.assertEqual(summary["audited_history_slots"], 1)
         self.assertEqual(summary["audited_new_history_slots"], 0)
 
-    def test_pv_underforecast_requires_repeated_daily_evidence(self):
+    def test_pv_underforecast_24h_aggregates_across_midnight(self):
         rows = []
-        for day in range(3):
-            for slot in range(8):
-                rows.append({"slot_start": datetime(2026, 9, 20, 10, 0) + timedelta(days=day, minutes=15 * slot),
-                             "forecast_pv_total_kwh": 0.125, "actual_pv_total_kwh": 0.25})
+        # The observer's SQL supplies only this rolling-day slice; it can
+        # contain records from two calendar dates when it crosses midnight.
+        for slot in range(6):
+            rows.append({"slot_start": datetime(2026, 9, 19, 22, 30) + timedelta(minutes=15 * slot),
+                         "forecast_pv_total_kwh": 0.125, "actual_pv_total_kwh": 0.25})
+        for slot in range(6):
+            rows.append({"slot_start": datetime(2026, 9, 20, 0, 0) + timedelta(minutes=15 * slot),
+                         "forecast_pv_total_kwh": 0.125, "actual_pv_total_kwh": 0.25})
         findings, _ = audit_operational_rows(rows, [], options=self.options)
-        finding = next(item for item in findings if item["metric"] == "pv_forecast_underestimation_7d")
+        finding = next(item for item in findings if item["metric"] == "pv_forecast_underestimation_24h")
         self.assertEqual(finding["value"], 100.0)
-        self.assertEqual(len(finding["evidence"]["underestimated_days"]), 3)
+        self.assertEqual(set(finding["evidence"]["days"]), {"2026-09-19", "2026-09-20"})
 
     def test_single_pv_deviation_does_not_create_forecast_finding(self):
         rows = [{"slot_start": datetime(2026, 9, 29, 12),
                  "forecast_pv_total_kwh": 1.0, "actual_pv_total_kwh": 2.0}]
         findings, _ = audit_operational_rows(rows, [], options=self.options)
-        self.assertFalse(any(item["metric"] == "pv_forecast_underestimation_7d" for item in findings))
+        self.assertFalse(any(item["metric"] == "pv_forecast_underestimation_24h" for item in findings))
 
     def test_hp_plan_outside_allowed_window_is_reported(self):
         rows = [{"slot_start": datetime(2026, 9, 29, 6, 45), "market_window": "NEUTRAL",

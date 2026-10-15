@@ -136,13 +136,14 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         self.assertLessEqual(max(f['soc_end_pct'] for f in result['flows']), 100.0)
         self.assertGreater(sum(f['grid_charge_kwh'] for f in result['flows'][10:]), 0.1)
 
-    def test_home_import_during_battery_buy_does_not_require_sale(self):
+    def test_battery_buy_does_not_authorize_home_import(self):
         rows = self.rows()
         for row in rows[:4]:
             row['forecast_load_kwh'] = 0.3
         _, result = self.optimize(rows)
-        self.assertTrue(any(f['grid_charge_kwh'] > 0.02 and
-                            f['voluntary_grid_load_kwh'] > 0.05
+        self.assertTrue(any(f['grid_charge_kwh'] > 0.02
+                            for f in result['flows']))
+        self.assertTrue(all(f['voluntary_grid_load_kwh'] <= 0.05
                             for f in result['flows']))
         self.assertEqual(voluntary_load_without_charging_indices(
             rows, result['flows'], 0.05, 0.02), set())
