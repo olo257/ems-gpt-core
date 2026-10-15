@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 29631)
-Total output lines: 1949
-
 # EMS-GPT Core — historia zmian
 
 ## 0.40.44 — osiągalny target BUY przy późniejszym obciążeniu domu
@@ -620,7 +617,686 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
 - Dodano trwałą skrzynkę pytań i odpowiedzi operatora z osobnym uwierzytelnieniem
   tokenem agenta. Agent może pobierać wiadomości, odczytywać ograniczony
   kontekst przyszłych slotów, wykonania, analityki i Observera oraz zapisywać
-  wyłącznie odpowiedź…9631 tokens truncated…ych slotów
+  wyłącznie odpowiedź na przejęte pytanie.
+- Agent nie otrzymuje adapterów planera, PPD, wykonawcy, usług Home Assistant,
+  poleceń ani konfiguracji sterowania. Kontekst ma jawny tryb tylko do odczytu.
+- Dodano zakładkę `Agent AI` do panelu operatora oraz testy cyklu wiadomości
+  i izolacji uprawnień.
+- Sam token włącza API agenta, ale nie uruchamia modelu ani procesu worker.
+  Kontrakt integracji opisano w `docs/AI_AGENT.md`.
+
+## 0.39.10 — rzeczywista nadwyżka mimo rozbieżności planu SOC
+
+- PPD uwzględnia świeży pomiar PV, zużycia i SOC przy otwieraniu najbliższego
+  okna CWU/EV, gdy planowany SOC lub przydział nadwyżki odbiega od pomiaru.
+  Prognoza nadal wyznacza dalszy plan.
+- Executor może uruchomić CWU/EV w bieżącym slocie przy rzeczywistej nadwyżce
+  i osiągniętym target SOC, nawet gdy wcześniejsza prognoza oznaczyła slot
+  jako `BLOCK`. Zachowuje progi mocy, histerezę, ręczne `OFF` i wymóg świeżych
+  danych.
+- Skrypt Home Assistant kończący import nie zapisuje już sztywnych wartości
+  SOC 20/20/40/40/40/30. Przywracanie korzysta z konfiguracji executora.
+
+## 0.39.9 — prognoza nie blokuje odbioru rzeczywistej nadwyżki
+
+- Wspólne okno `PV_CWU` i `PV_EV` otwiera się po osiągnięciu targetu,
+  gdy plan wykazuje istotną dodatnią nadwyżkę PV. Nie wymaga już, aby
+  prognoza slotu przekraczała próg startowy CWU lub EV.
+- Progi 2,0/1,5 kW, pierwszeństwo CWU, histereza, świeża telemetria
+  i kontrola bieżącego SOC pozostają w wykonawcy. Słaba prognoza nie
+  zablokuje odbiorników przy rzeczywistej nadwyżce i niedodatniej cenie
+  sprzedaży.
+
+## 0.39.8 — wspólne okno PV_CWU/PV_EV i priorytet runtime
+
+- PPD publikuje wspólne okno dopuszczenia odbiorów elastycznych po osiągnięciu
+  targetu. Osobne progi prognozy nie mogą już dać EV=ALLOWED przy CWU=BLOCKED.
+- Wewnątrz wspólnego okna executor stosuje rzeczywistą telemetrię i osobne
+  progi ON/OFF: najpierw CWU 2,0 kW, następnie EV 1,5 kW z pozostałej mocy.
+- Zachowano histerezę, tryby ręczne oraz brak wpływu CWU/EV na target i load.
+
+## 0.39.7 — odbiory PV po osiągnięciu targetu
+
+- Po osiągnięciu opublikowanego targetu runtime guard liczy energię dostępną
+  dla `PV_CWU/PV_EV` jako `PV - load`, bez odejmowania dalszego ładowania
+  baterii ponad target.
+- Włączenie CWU/EV naturalnie zmniejsza moc ładowania baterii; target pozostaje
+  bramą odczytywaną przez executor i nie jest modyfikowany.
+- Zachowano kolejność CWU przed EV, progi 2,0/1,5 kW oraz histerezę.
+- Nie zmieniono obliczeń SOC target, SOC required, floor ani trajektorii SOC.
+
+## 0.39.6 — niezależne procesy sprzedaży baterii i PV
+
+- Zastąpiono niejednoznaczną nazwę procesu PPD `BATTERY_EXPORT` nazwą
+  `SELL_BAT`; istniejące rekordy procesów są migrowane przy starcie.
+- Dodano niezależny proces informacyjny `SELL_PV`. Każdy z procesów sprzedaży
+  ma dwie osobne osie: politykę `ALLOWED/BLOCKED` oraz wykonanie `ON/OFF`.
+  Dodatnia cena pozwala na `SELL_PV=ALLOWED`, a cena mniejsza lub równa zero
+  daje `SELL_PV=BLOCKED`; obecność nadwyżki niezależnie ustala ON/OFF.
+- `SELL_PV` nie uruchamia skryptów baterii. Dotychczasowe skrypty eksportu
+  baterii są przypisane wyłącznie do `SELL_BAT`.
+- Sprzedaż baterii nie przecina już okna `PV_CWU/PV_EV`; odbiory elastyczne
+  korzystają z niezależnej nadwyżki PV i zachowują priorytet przed sprzedażą PV.
+- Nie zmieniono targetu, required, floor ani trajektorii SOC.
+
+## 0.39.5 — przywrócenie priorytetu nadwyżki PV
+
+- Przywrócono stałą kolejność wykorzystania PV: odbiory domu wraz z HP,
+  ładowanie baterii, PV_CWU, PV_EV, a dopiero potem eksport pozostałego PV.
+  Cena możliwego eksportu PV nie może już blokować PV_CWU ani PV_EV.
+- Sprzedaż baterii jest bezwzględnie wykluczona przy cenie sprzedaży mniejszej
+  lub równej zero: podczas wyznaczania okien, w optymalizatorze oraz w końcowej
+  walidacji opublikowanego przepływu.
+- Nie zmieniono obliczeń SOC target, SOC required, podłóg ani trajektorii SOC.
+- W trybie AUTO wykonawca przepuszcza `PV_CWU` i `PV_EV` dopiero po kontroli
+  świeżej telemetrii: rzeczywistego PV, load, ładowania baterii i osiągnięcia
+  opublikowanego targetu. CWU ma pierwszeństwo, EV otrzymuje wyłącznie
+  pozostałość, a brak danych lub zanik nadwyżki wymusza stan OFF.
+- Dodano histerezę wykonawczą oraz osobne wersjonowanie przejść ON/OFF w slocie.
+  Odbiory elastyczne pozostają poza load i nie zmieniają żadnej wartości SOC.
+
+## 0.39.4 — ekonomika sprzedaży, przywracanie SOC i historia targetu
+
+- Plan z `SELL_BAT` przechodzi dodatkową symulację bez sprzedaży przy tym samym
+  horyzoncie, prognozie i wymaganym SOC. Weryfikacja uwzględnia wybrane sloty
+  ładowania i ich ceny, wartość energii pozostającej w baterii oraz dodatkowy
+  import dla domu. Niekorzystny wariant jest ponownie planowany bez sprzedaży.
+- Wynik i przyczyna odrzucenia są zapisywane w zdarzeniu
+  `battery_sale_counterfactual`.
+- Po restarcie znacznik przywracania programu falownika nie zawiera już
+  dawnego SOC. Executor odczytuje obowiązującą wartość z bieżących opcji
+  dodatku; stary plik z zapisanym `20%` jest traktowany jako sam znacznik.
+- Nieukończony, ciągły horyzont historii targetu otrzymuje stan `OCZEKUJE`,
+  pozostaje w zakładce historii i nie zwiększa licznika próbek nieważnych.
+  Przerwany horyzont nadal jest oznaczany jako nieważny.
+
+## 0.39.3 — bazowe zużycie bez HP i historyczna moc ogrzewania
+
+- Awaryjna prognoza zużycia bazowego odejmuje rzeczywistą energię pompy ciepła
+  i EV, więc odbiory sterowane nie są drugi raz dodawane do bilansu planera.
+- Planowana moc ogrzewania korzysta z ważonej średniej rzeczywistych aktywnych
+  slotów HP z okien 7/14/28 dni, z tymi samymi wagami co target SOC.
+- Przy braku historii startowy fallback HP wynosi 1,5 kW. Planer zapisuje źródło,
+  liczbę próbek i wynikową moc w zdarzeniu audytowym.
+
+## 0.39.2 — terminalny fallback we wszystkich przebiegach planera
+
+- Wspólna obsługa niewykonalnego terminalnego SOC obejmuje teraz także iteracje
+  zabezpieczeń TOU, ich końcową walidację oraz przebieg `TARGET_COMMITMENT`.
+- Każdy z tych etapów najpierw ponawia obliczenia bez `SELL_BAT`, a dla bieżącej
+  doby publikuje najwyższy fizycznie osiągalny SOC zamiast wycofywać cały plan.
+- Dodano nazwę etapu do zdarzeń audytowych, aby kolejna niewykonalność wskazywała
+  dokładne miejsce bez analizy stosu wyjątków.
+
+## 0.39.1 — przywrócenie fallbacku terminalnego SOC
+
+- Błąd `No feasible terminal SOC state for complete horizon` ponawia plan bez
+  `SELL_BAT`, przywracając zasadę bezpieczeństwa wprowadzoną w 0.38.3.
+- Jeżeli po wyłączeniu sprzedaży cel końcowy bieżącej doby nadal jest fizycznie
+  nieosiągalny, planer publikuje najwyższy osiągalny SOC i jawny niedobór zamiast
+  wycofywać cały plan. Dzięki temu może opublikować także `HP_HEAT_DHW`.
+- Cele końcowe przyszłych dób pozostają twarde i nie korzystają z fallbacku.
+
+## 0.39.0 — jedno źródło konfiguracji i ochrona porannego SOC
+
+- Zastąpiono `deye_program_soc_baseline_json` sześcioma osobnymi opcjami
+  dodatku. Programy 1–5 mają wartość 10%, program 6 — 30%. Panel aplikacji nie
+  przechowuje drugiej kopii tych parametrów, a dawna wartość runtime jest
+  jawnie ignorowana.
+- Encja rzeczywistej temperatury ogrodu jest opcją dodatku
+  `garden_temperature_entity`; nie jest już wpisana na sztywno w `app.py`.
+- Widok Daily nie wykonuje globalnego zliczania wszystkich dób i nie pokazuje
+  pól `Doby razem`, `Doby do nauki` ani `Doby poza nauką`.
+- Przed rozpoczęciem porannego okna SELL planer wymaga historycznego targetu
+  końcowego SOC danej doby. Bilans wsteczny zachowuje dodatkowo energię na
+  nocne odbiory, dlatego target północy nie może zostać zużyty przed porannym
+  szczytem RCE.
+
+## 0.38.9 — ochrona SOC po sprzedaży i kontrolowany most do BUY
+
+- Sprzedaż z baterii zachowuje bazowy SOC aktywnego programu TOU oraz energię
+  potrzebną odbiorom do chwili wejścia kolejnego, niższego programu. Planner
+  nie może już sprzedać dokładnie do 40% i wymusić później importu dla domu.
+- Programy 5 i 6 mogą zostać tymczasowo obniżone wyłącznie wtedy, gdy ten sam
+  opublikowany plan zawiera rzeczywisty zakup do baterii w ciągu maksymalnie
+  180 minut oraz bezpieczne zamknięcie doby co najmniej na `soc_required`.
+- Executor prowadzi próg programu 5/6 za ilościową trajektorią SOC, wyłącza
+  ładowanie programu podczas mostu i przywraca bazowe wartości po utracie
+  warunków, zmianie planu lub zakończeniu zakupu.
+
+## 0.38.8 — bezpieczna migracja relacji `slot_id`
+
+- Zastąpiono pełne, restartowe `UPDATE JOIN` migracją wykonywaną partiami dobowymi.
+- Przed backfillem tworzone są indeksy dla `slot_id/slot_start` oraz kalendarza lokalnych slotów.
+- Po każdej partii wykonywany jest commit; błąd powoduje rollback bieżącej partii, a kolejny start bezpiecznie wznawia migrację.
+- Po pełnym zakończeniu zapisywany jest trwały marker `slot_id_backfill_batched_0_38_8`; kolejne restarty nie powtarzają aktualizacji historycznej.
+- Połączenie używane przez migrację ma lokalnie wydłużony timeout 120 s, bez zmiany zwykłych połączeń runtime.
+- Dodano test regresyjny symulujący 730 dni historii i 5 110 krótkich partii.
+
+## 0.38.7
+
+- Naprawiono ostatni etap ochrony `BATTERY_IMPORT`: `planned_buy_kwh` pobrane z
+  MariaDB jest teraz konwertowane jako skalar SQL, a nie jako obiekt stanu Home
+  Assistant. Poprawny zakup nie jest już odrzucany z
+  `IMPORT_PLAN_OR_SOC_UNAVAILABLE` mimo obecnej energii planu, targetu i SOC.
+
+## 0.38.6
+
+- Executor wiąże ochronę `BATTERY_IMPORT` z dokładnym `plan_run_id` zapisanym
+  w wersji komendy. Nie może już odrzucić poprawnego zakupu jako
+  `IMPORT_PLAN_OR_SOC_UNAVAILABLE` wskutek odczytu innego rekordu tego samego
+  slotu z `planned_buy_kwh=NULL`.
+- Obserwacja `PV_CWU` korzysta ze stanu rzeczywiście sterowanej grzałki
+  `light.sm_pro_3248d_1_grzalka_cwu`. Autonomiczne grzanie CWU przez pompę
+  ciepła nie jest już klasyfikowane jako ręczne uruchomienie `PV_CWU`.
+- Obserwacja `BATTERY_EXPORT` obejmuje wyłącznie rozładowanie przypisane do
+  rzeczywistego eksportu sieciowego. Autokonsumpcja bateria→dom nie jest już
+  klasyfikowana jako ręczna sprzedaż.
+
+## 0.38.5
+
+- Naprawiono klasyfikację wykonania `BATTERY_IMPORT`: ładowanie baterii z PV
+  nie jest już oznaczane jako ręczne uruchomienie importu. Obserwowana energia
+  procesu obejmuje wyłącznie część dodatniego importu sieciowego pozostałą po
+  pokryciu rzeczywistego deficytu odbiorów i jest ograniczona zmierzonym
+  ładowaniem baterii.
+
+## 0.38.4
+
+- Konfiguracja aplikacji zawiera teraz dziesięć jawnych odniesień do skryptów
+  `ON/OFF` executora dla `BATTERY_IMPORT`, `BATTERY_EXPORT`, `PV_CWU`, `PV_EV`
+  oraz `HP_HEAT_DHW`. Pola mają domyślne wartości odpowiadające istniejącym
+  encjom `script.ems_gpt_core_*` i można je edytować w panelu konfiguracji.
+- Executor korzysta z jawnych pól jako źródła prawdy. Dotychczasowy
+  `connector_service_map_json` pozostaje wyłącznie fallbackiem migracyjnym.
+
+## 0.38.3
+
+- Jeżeli sprzedaż z baterii koliduje z historycznym celem SOC końca doby,
+  planer najpierw przelicza cały horyzont bez `SELL_BAT`. Bateria nadal może
+  zasilać odbiory domu; blokowany jest wyłącznie celowy eksport jej energii.
+- Replan po ostatnim wykonalnym oknie uzupełnienia nie odrzuca już całego
+  planu, gdy historyczny cel końca bieżącej doby stał się fizycznie
+  nieosiągalny. Cel pozostaje publikowany, a planer zapisuje jawny shortfall i
+  wybiera najlepszą wykonalną trajektorię.
+- Zwolnienie niewykonalnej granicy dotyczy wyłącznie konkretnej doby; cele
+  kolejnych dób pozostają twardymi ograniczeniami.
+
+## 0.38.2
+
+- Historyczna prognoza końcowego SOC 7/14/28 jest twardą minimalną granicą
+  zamknięcia każdej doby w horyzoncie, a nie wyłącznie ostatniej doby planu.
+  Przy obecnej średniej około 40% planer nie może publikować końca dnia około 20%.
+- BUY pozostaje zakupem energii do baterii: nie może powstać wyłącznie dla
+  zużycia domu, a energia ładowania musi być co najmniej równa dobrowolnej
+  części zasilania odbiorów z sieci. Poza BUY pozostaje tylko techniczny ślad
+  kwantyzacji albo import nieunikniony z powodu rezerwy lub limitu mocy.
+
+## 0.38.1
+
+- Naprawiono interpretację bazodanowego zera dla `heat_pump_window`: PPD nie
+  może już zamienić wartości `0`, `"0"` ani `b'\\x00'` na rekomendację `ON`.
+- Executor niezależnie sprawdza opublikowane okno planera przed utworzeniem i
+  przed wysłaniem komendy `HP_HEAT_DHW=ON`; niespójność działa fail-closed.
+- Energia planowana procesu HP jest prezentowana jako zero, gdy opublikowane
+  okno HP jest wyłączone; historyczna energia CWU nie udaje już ogrzewania.
+- Usunięto uproszczone, zdublowane walidacje importu domu z końca planera i z
+  PPD. O fizycznie nieuniknionym imporcie decyduje wyłącznie optymalizator,
+  który uwzględnia limit 5 kW, dostępną energię, rezerwę i sprawność baterii.
+  Import wynikający z przekroczenia mocy rozładowania nie odrzuca już planu po RCE.
+
+## 0.38.0
+
+- Rozdzielono odpowiedzialność planera, PPD i executora. Planer pozostaje
+  jedynym właścicielem ilościowych przebiegów `BATTERY_IMPORT`,
+  `BATTERY_EXPORT` i `HP_HEAT_DHW`, ponieważ procesy te wpływają na bilans,
+  trajektorię SOC i target.
+- PPD nie przelicza już ekonomiki importu ani eksportu baterii i nie nadpisuje
+  polityk sieciowych planera. Publikuje zamrożone rekomendacje do executora.
+- PPD odrzuca publikację, jeżeli `BUY_ALLOWED` nie zgadza się z ilościowym
+  `planned_buy_kwh` albo `SELL_BAT` z `planned_sell_kwh`; zerowy plan zakupu nie
+  może zostać ukryty pod aktywną decyzją automatyczną.
+- Widok Procesy rozdziela rekomendację planera, stan planowany, tryb
+  `AUTO/FORCE_ON/FORCE_OFF`, stan efektywny oraz planowaną energię. Wiersz
+  `BATTERY_IMPORT` z zerową energią jest prezentowany jako plan `OFF`, a ręczna
+  blokada HP nie jest już mylona z rekomendacją planera `ON`.
+- Planer nie odczytuje już `ems_gpt_core_process_decisions` ani override'ów.
+  Minione sloty HP rozlicza według własnego wcześniej opublikowanego planu;
+  również brak telemetrii nie usuwa zaplanowanego slotu z ciągłości cyklu.
+  Różnice ręczne i rzeczywiste pozostają odchyleniem wykonania.
+- `AUTO`, `FORCE_ON` i `FORCE_OFF` pozostają wyłącznie w warstwie wykonawczej.
+  Nie zmieniają wstecz planu ani targetu.
+- `PV_CWU` i `PV_EV` pozostają niezależną alokacją PPD po zamrożeniu targetu.
+- Kwalifikacja temperaturowa `HP_HEAT_DHW` korzysta z rzeczywistych zapisów
+  `sensor.klimat_w_ogrodzie_temperature`, a nie z prognozy `weather.dom`.
+  Wymagane są co najmniej 3 zapisy z okna 00:00–06:00, dzięki czemu częściowa
+  awaria HA nie blokuje planu, ale zbyt mała próbka nadal działa fail-closed.
+- Średnie końcowego SOC 7/14/28 dni są liczone z trzech niezależnych okien
+  kompletnych dób bez awarii, bez zależności od 7-dniowego zakresu odbudowy
+  tabel agregacyjnych.
+- Dodano regresje kontraktu planer→PPD oraz niezależności planera od PPD.
+
+## 0.37.8
+
+- Aktywne `FORCE_OFF` procesu `HP_HEAT_DHW` blokuje teraz również automatyczne okna planera, a nie tylko wykonanie komendy.
+- Przycisk `Wyłącz` wymusza `heat_pump_window=0` i usuwa obciążenie HP z planu; dopiero `Auto` przywraca kwalifikację temperaturową.
+- Usunięto rozbieżność, w której wykonanie miało `OFF`, lecz tabela Procesy nadal publikowała `HP_HEAT_DHW=ON / TAK`.
+
+## 0.37.7
+
+- Naprawiono klasyfikację wykonania `HP_HEAT_DHW`: zwykła energia przygotowania CWU nie jest już doliczana do energii ogrzewania domu.
+- Tryb `DHW only` nie może już zostać zapisany jako zewnętrzne/ręczne `HP_HEAT_DHW=ON` i przeniesiony do kolejnych przebiegów planera.
+- Stan procesu ogrzewania wynika wyłącznie z energii obiegu CO; energia CWU pozostaje raportowana oddzielnie.
+
+## 0.37.6
+
+- Publikacja bieżących cen jest ponawiana co minutę aż do potwierdzenia obu helperów; pojedynczy błąd HA przy otwarciu slotu nie pozostawia już ceny nieaktualnej przez cały slot.
+- Po `input_number.set_value` Core odczytuje helper i sprawdza zapisaną wartość. Diagnostyka pokazuje oczekiwaną i rzeczywistą wartość oraz zakres `min`/`max` helpera.
+- Wynik ostatniej próby publikacji jest dostępny w stanie aplikacji jako `current_prices`.
+
+## 0.37.5
+
+- Planer nie dziedziczy już `heat_pump_window=1` z poprzedniego planu; każdy przebieg rozpoczyna ocenę HP od `NIE`.
+- Próg HP ponownie pochodzi wyłącznie z ustawienia panelu `night_heating_threshold_c`.
+- Bieżąca cena zakupu jest zapisywana wyłącznie do istniejącej encji `input_number.ems_gpt_cena_zakupu_biezaca`.
+- Usunięto równoległą publikację cen do `sensor.gpt_ems_*`; Core aktualizuje tylko dwa istniejące helpery i nie tworzy duplikatów encji.
+
+## 0.37.4
+
+- Próg uruchomienia `HP_HEAT_DHW` jest pobierany z helpera `input_number.temperatura_nocna_pompy_ciepla`; brak lub niedostępność helpera blokuje automatyczne ogrzewanie.
+- Bieżące ceny są publikowane bezpośrednio do kanonicznych sensorów `sensor.gpt_ems_cena_zakupu` i `sensor.gpt_ems_cena_sprzedazy`. Zapis do dotychczasowych helperów pozostaje zgodnościowy i jego błąd nie blokuje sensorów.
+
+## 0.37.3
+
+- Naprawiono wykonawcę `HP_HEAT_DHW`: automatyczny stan `OFF` z opublikowanego planu nie jest już pomijany, gdy sprężarka nadal pracuje. Tylko jawny `FORCE_ON` może utrzymać ogrzewanie poza zaplanowanym oknem.
+- Usunięto błędne przejmowanie trwającego cyklu EMS jako sterowania zewnętrznego po 30 minutach pracy.
+
+## 0.37.2
+
+- Przywrócono twarde dzienne okno automatycznego `HP_HEAT_DHW`.
+- W dni robocze i weekend ogrzewanie może rozpocząć się najwcześniej o 07:00,
+  bezpośrednio po zakończeniu porannego okna `SELL`.
+- Okno kończy się najpóźniej o 19:00 albo wcześniej, przed początkiem
+  wieczornego `SELL`; żaden slot `SELL` nie może uruchomić ogrzewania.
+- Okna `BUY` nie wpływają na początek ani koniec okna pompy ciepła.
+- Energia `HP_HEAT` jest dodawana do bilansu i targetu BUY wyłącznie po
+  spełnieniu skonfigurowanego progu nocnej temperatury. Kwalifikacja wymaga
+  kompletnych 24 próbek prognozy 00:00–06:00; brak danych, niepełna prognoza
+  oraz temperatura równa lub wyższa od progu dają `HP_HEAT=0`.
+- Optymalizator otrzymuje wyłącznie sloty należące do okna. Ręczne `Włącz`
+  pozostaje nadrzędnym poleceniem operatora.
+
+## 0.37.1
+
+- Naprawiono `No feasible SOC state at horizon slot` po wdrożeniu 0.37.0.
+- Kontrakt `SOC required` korzysta teraz z faktycznych przepływów baterii,
+  więc nie zalicza nieuniknionego poboru sieciowego jako energii, którą
+  bateria musi posiadać przed najbliższym oknem uzupełnienia.
+- Wymagany SOC jest ograniczony do fizycznie osiągalnej trajektorii bez
+  dobrowolnej sprzedaży; przyszłe okno BUY/PV nie tworzy wymagania wcześniej,
+  niż energia może zostać dostarczona.
+- Dodano regresję startu na rezerwie oraz zachowano test 48 h / 192 slotów.
+
+## 0.37.0
+
+- Przebudowano logikę SOC na cztery niezależne kontrakty: rezerwę fizyczną,
+  ciągły `SOC required`, cel ładowania BUY i floor sprzedaży.
+- `SOC required` jest liczony wstecz z dokładnie przydzielonych kWh PV/BUY;
+  samo okno uzupełnienia nie resetuje już wymagania do 15%.
+- Usunięto oscylacyjną pętlę targetu. Plan powstaje deterministycznie w dwóch
+  przebiegach: ekonomicznym i kontraktowym.
+- Minimalny wymagany SOC jest egzekwowany w każdym slocie, a cel ładowania
+  wyłącznie kończy import do baterii w BUY.
+- PPD pozostaje tylko czytelnikiem planu i odrzuca ukryty import na zużycie,
+  zamiast oznaczać go jako `NEUTRAL`.
+- Dodano kolumny `soc_reserve_pct`, `soc_required_pct`,
+  `soc_charge_target_pct` i `soc_sale_floor_pct`; stare pola pozostają aliasami
+  zgodności podczas migracji.
+
+## 0.36.15
+
+- Naprawiono regresję 0.36.14, w której obsługa cyklu ścieżek BUY wracała
+  do planu bez kontraktu targetu i mogła obniżyć SOC przez około 22% do
+  technicznej rezerwy 15%.
+- Przy oscylacji zachowywany jest ostatni wykonalny plan policzony z pełnym
+  mostem energetycznym oraz jego terminami osiągnięcia targetu.
+- Plan bazowy bez targetów nie jest już publikowany jako rozwiązanie awaryjne.
+
+## 0.36.14
+
+- Naprawiono błąd `SOC_TARGET_PATH_OSCILLATION`, w którym dwa wykonalne
+  zestawy slotów BUY naprzemiennie zmieniały się po przeliczeniu targetu.
+- Przy wykryciu cyklu planer używa stabilnego, pełnohoryzontowego wyniku
+  ekonomicznego, który już spełnia bilans fizyczny i terminalny SOC.
+- Targety wykonawcze dla BUY i SELL są wtedy wiązane z zaakceptowanym SOC
+  końcowym tych przepływów; oscylacja i wybrana ścieżka są zapisywane w
+  diagnostyce zamiast przerywać każdy replan.
+
+## 0.36.13
+
+- Naprawiono krytyczny błąd, w którym niewykonalny wariant `PV_FIRST`
+  przerywał cały replan komunikatem `No feasible SOC state`.
+- `PV_FIRST` jest wariantem alternatywnym: gdy nie da się go wykonać przy
+  aktualnym SOC i ograniczeniach mocy, planer odrzuca wyłącznie ten wariant,
+  publikuje wcześniej zweryfikowany plan `STANDARD` i zapisuje powód
+  odrzucenia w diagnostyce.
+
+## 0.36.12
+
+- Dodano wariant planu `PV_FIRST`. Jeżeli drogi wcześniejszy zakup zajmuje
+  pojemność, a pobliska nadwyżka PV byłaby sprzedawana taniej, target końca
+  okna BUY jest obniżany wyłącznie o energię możliwą do bezpiecznego
+  przesunięcia na PV bez zejścia poniżej rezerwy przed jego nadejściem.
+- Planer porównuje pełny wynik PLN wariantu standardowego i `PV_FIRST` przy
+  identycznym SOC początkowym i terminalnym, po czym publikuje wariant
+  ekonomicznie lepszy. Wyniki i wybór zapisuje diagnostyka przebiegu.
+- `Daily` ponownie zapisuje rzeczywiste godziny początku i końca produkcji PV,
+  również podczas odbudowy historycznej.
+- Widok `Daily` pokazuje liczbę wszystkich dób, dób dopuszczonych do uczenia
+  i rekordów otwartych lub odrzuconych.
+- Dla każdej doby zapisano średnie rzeczywistego SOC końcowego z 7, 14 i 28
+  dni, liczebności prób oraz ważoną prognozę terminalnego SOC.
+
+## 0.36.11
+
+- Wydzielono PPD jako osobny przebieg uruchamiany dopiero po atomowej
+  publikacji planu. PPD otrzymuje własny `ppd_run_id` i jawny status w tabeli
+  przebiegów modułów.
+- Planer nie zapisuje już decyzji wykonawczych. PPD czyta wskazany
+  `plan_run_id`, nie może zmieniać SOC ani targetu i zapisuje wyłącznie
+  polityki, rekomendacje, elastyczny podział nadwyżki PV oraz decyzje procesów.
+- Executor wersjonuje polecenia parą `plan_run_id` + `ppd_run_id`, dlatego nie
+  wykona decyzji pochodzącej z innego przebiegu PPD.
+- Bliskie okno PV może teraz usunąć wcześniej wybrany poranny BUY. Iteracje
+  targetu zastępują zbiór zakupów aktualnym wynikiem zamiast kumulować go;
+  oscylacja BUY–PV kończy przebieg bez publikacji.
+
+## 0.36.10
+
+- Zamknięto lukę, w której minimalny krok ładowania `+0,25% SOC` pozwalał
+  zasilać znacznie większe bieżące zużycie domu z sieci w oknie BUY.
+- W każdym celowym slocie BUY energia kierowana do baterii musi być co
+  najmniej równa dobrowolnemu importowi na zużycie. Import technicznie
+  nieunikniony po osiągnięciu minimalnego SOC pozostaje dozwolony.
+- Panel automatycznie włącza kolumny `SOC początek` i `SOC koniec` w zapisanych
+  wcześniej konfiguracjach widoków Godzinowe i Dobowe, zachowując pozostałe
+  preferencje kolumn użytkownika.
+
+## 0.36.9
+
+- Usunięto krytyczny mechanizm `SOC_HOLD_FOR_FUTURE_SALE`, który mógł
+  zasilać bieżące odbiorniki z sieci i sztucznie utrzymywać stały SOC baterii
+  w oczekiwaniu na późniejszą sprzedaż.
+- Usunięto rekomendację „Ochrona SOC przed sprzedażą”. Poza celowym
+  ładowaniem w oknie BUY import odbiorników jest dopuszczalny wyłącznie jako
+  fizycznie nieunikniony przepływ po osiągnięciu technicznego minimum SOC.
+- Autokonsumpcja z baterii nie jest blokowana przez przyszłe okno sprzedaży;
+  każdy slot nadal musi spełnić pełny bilans energii.
+
+## 0.36.8
+
+- Agregacje godzinowe i dzienne zapisują rzeczywisty `SOC początek` oraz
+  `SOC koniec` wyłącznie z zamkniętych slotów wykonania.
+- `SOC początek` okresu jest równy ostatniemu rzeczywistemu `SOC koniec`
+  poprzedniego okresu, dzięki czemu zmiana stanu baterii jest ciągła między
+  kolejnymi godzinami i dobami.
+- Odbudowa agregacji po restarcie stosuje tę samą zasadę; wartości planowane
+  ani przyszłe sloty nie są używane do domykania rzeczywistego bilansu.
+- Panel godzinowy i dzienny pokazuje obie granice SOC.
+- Rzeczywisty SOC zamknięcia kompletnych dób wyznacza ważoną prognozę SOC
+  na koniec horyzontu: domyślnie 50% dla średniej 7-dniowej oraz po 25% dla
+  średnich 14- i 28-dniowej. Wagi są konfigurowalne i muszą sumować się do
+  100%.
+- Historyczna prognoza jest wyłącznie terminalnym warunkiem końca doby.
+  Target każdego slotu 15-minutowego nadal powstaje wstecz z jego bilansu
+  energii, prognozowanego zużycia, PV, HP/CWU, sprawności i okien zakupu.
+
+## 0.36.7
+
+- Panel Planera pokazuje prognozę całego poboru HP oraz osobno historyczny
+  pobór CWU, które od wersji 0.36.6 są używane do wyliczania `soc_target`.
+- Analityka raportuje plan–wykonanie ładowania i rozładowania baterii jako
+  WAPE, błąd aktywnych slotów, F1 zdarzeń oraz bias energii.
+- Metryki baterii pozostają wyłącznie diagnostyczne (`DIAGNOSTIC_READ_ONLY`)
+  i nie wprowadzają automatycznych korekt do planera ani PPD.
+- Agregacja analityczna ponownie filtruje każdy historyczny tryb HP, dzięki
+  czemu stare próbki jałowego kanału CO sprzed 0.36.4 nie są już sumowane w
+  bieżącym 30-dniowym raporcie.
+
+## 0.36.6
+
+- Prognoza obciążenia pompy ciepła używana przez optymalizator SOC jest teraz
+  zapisywana również w planie slotowym. Osobna kolumna CWU pokazuje historyczny
+  pobór przypisany do cyklu, w tym powtarzalne grzanie około 06:00.
+- Plan, diagnostyka i wyliczenie targetu korzystają z tego samego obrazu
+  przyszłego obciążenia HP; wartości nie pozostają już wyłącznie wewnątrz
+  przebiegu optymalizatora.
+
+## 0.36.5
+
+- Decyzja sprzedaży baterii ma końcową kontrolę ekonomiczną typu fail-closed:
+  cena sprzedaży musi pokrywać najtańszy późniejszy odkup z uwzględnieniem
+  sprawności ładowania i rozładowania, degradacji oraz minimalnej marży.
+- Diagnostyka decyzji `BATTERY_EXPORT` zapisuje cenę odkupu, wymagany próg
+  sprzedaży, oczekiwaną marżę i wynik kontroli ekonomicznej.
+- Historia targetu pozostaje wyłącznie diagnostyczna, ale odciążenie PV jest
+  teraz rozpoznawane na podstawie rzeczywistej nadwyżki PV ponad nieuniknione
+  zużycie przez dwa kolejne sloty. Sama produkcja PV mniejsza od obciążenia nie
+  skraca już sztucznie horyzontu i nie zaniża targetu wymaganego z perspektywy
+  wykonania.
+
+## 0.36.4
+
+- Odfiltrowano pobór jałowy nieaktywnego kanału pompy ciepła, który był
+  błędnie raportowany jako energia CO mimo zatrzymanego kompresora i zerowej
+  produkcji ciepła.
+- Energia pobrana, wytworzona i COP pozostają liczone niezależnie dla CO, CWU
+  i chłodzenia; żaden wspólny COP nie służy do przypisywania trybu pracy.
+- Dodano niezależne, przełączalne korekty: stała korekta bezpieczeństwa ±10%
+  jest domyślnie wyłączona, a korekta historyczna PV jest stosowana osobno do
+  PV1 i PV2 po osiągnięciu wymaganej jakości danych.
+- Otwarte prognozy zużycia są ponownie wyliczane z aktualnego profilu
+  historycznego zamiast zachowywać zawyżoną wartość zapisaną wcześniej.
+- Planer uczy się osobnego profilu poboru HP w trybie CWU dla dni roboczych
+  i weekendów. Powtarzalny poranny cykl około 06:00 jest uwzględniany w
+  zapotrzebowaniu i `soc_target` jeszcze przed jego uruchomieniem.
+
+## 0.36.3
+
+- Naprawiono regresję kroczącego replanu, w której nieosiągalny w ostatnim
+  slocie termin `soc_target` usuwał wszystkie stany DP i przełączał planer
+  oraz PPD w tryb ograniczony.
+- Termin targetu jest teraz ograniczany do najwyższego SOC fizycznie
+  osiągalnego z aktualnego zbioru stanów, dostępnej mocy, PV i uprawnienia
+  BUY. Oryginalny target nadal pozostaje sufitem ładowania z sieci.
+- Publikowany `soc_target` odzwierciedla wartość rzeczywiście wykonalną;
+  niezasilony hard target poza terminem nadal kończy się błędem zamkniętym.
+
+## 0.36.0
+
+- Wydzielono `PV_CWU` i `PV_EV` z `planner_service.py` do osobnego
+  `ppd_service.py`, wykonywanego dopiero po zamrożeniu pełnej trajektorii
+  `soc_target`. Odbiorniki elastyczne nie zwiększają i nie zmieniają targetu.
+- Każdy proces otrzymuje jedno ciągłe dzienne okno PPD od pierwszego do
+  ostatniego wykonalnego punktu. Słabszy slot PV wewnątrz okna nie rozcina
+  zgody; rzeczywiste włączanie i wyłączanie pozostaje po stronie automatyzacji.
+- Cykliczny replan używa aktualnego SOC, więc nieplanowany wzrost SOC z PV
+  może przesunąć początek okna wcześniej.
+- Sprzedaż baterii oraz ekonomiczna blokada są twardymi granicami okna.
+- `PV_EV` wymaga osiągnięcia `soc_target`, bez wcześniejszego dodatkowego
+  warunku `soc_target + 20 pp`. CWU zachowuje pierwszeństwo w ilościowym
+  przydziale prognozowanej nadwyżki.
+- Dodano testy ciągłości, izolacji targetu, korekty po zmianie SOC, granicy
+  sprzedaży baterii i rozdzielenia dni.
+
+## 0.35.8
+
+- `soc_target` ogranicza wyłącznie ładowanie baterii z sieci. Nadwyżka PV może
+  ładować baterię dalej, aż do fizycznego maksimum SOC, zanim zostanie
+  przeznaczona do odbiorników elastycznych albo eksportu.
+- Panel tłumaczy stany techniczne: `RUNNING` jako `URUCHOMIONY`, `STARTING`
+  jako `STARTUJE`, `LIVE`/produkcję jako `URUCHOMIONE`, a `OFF` i `DISABLED`
+  jako `WYŁĄCZONY`.
+- Kolory stanów: start — żółty, uruchomienie/produkcja — zielony, `OFF` —
+  czerwony, `DISABLED` — niebieski.
+
+## 0.35.7
+
+- Dodano obserwacyjny moduł historycznej oceny `soc_target`. Moduł rekonstruuje
+  wymagany target z rzeczywistego zużycia pomniejszonego wyłącznie o EV do pierwszego
+  potwierdzonego odciążenia PV albo następnego okna BUY; nie uczy się z dawnych
+  targetów jako prawdy i nie zapisuje niczego do planera ani wykonawcy.
+- Zużycie ogrzewania i DHW pompy ciepła pozostaje częścią wymaganego targetu;
+  produkcyjnego `actual_dhw_kwh` nie uznano błędnie za elastyczną grzałkę.
+- Próbki z luką slotów, awarią, niedostateczną telemetrią, brakującą energią lub
+  niezamkniętym horyzontem są jawnie odrzucane. Brak danych kolejnej doby nie
+  jest zastępowany sztucznym zerem ani targetem 15%.
+- Dodano metryki niedoszacowania P80/P90, limitowaną sugestię korekty oraz
+  osobną kontrolę slotu 18:30. Sugestia pojawia się dopiero po minimalnej
+  liczbie poprawnych próbek i pozostaje `SHADOW_READ_ONLY`.
+- Dodano tabelę i widok `Historia targetu` oraz parametry zakresu analizy,
+  minimalnej liczby próbek, limitu korekty i progu odciążenia PV.
+- Wykonawca pozostaje domyślnie wyłączony.
+
+## 0.35.6
+
+- Rozszerzono ciągłość targetu z pojedynczego punktu PV na całe ciągłe okno
+  produkcji. Największy wymagany target okna obowiązuje jako sufit ładowania od
+  pierwszego prognozowanego PV, z podziałem przy faktycznie wybranym BUY.
+- Naprawiono produkcyjny przypadek 07:00–09:00, w którym SOC pozostawał na
+  17,75%, a poranna nadwyżka PV była eksportowana do 11:45.
+- Wykonawca pozostaje domyślnie wyłączony.
+
+## 0.35.5
+
+- Target końcowego slotu uzupełnienia PV jest propagowany wstecz na całe
+  podejście do tego okna. Wcześniejsza poranna nadwyżka ładuje baterię do
+  targetu zamiast być sprzedawana przy niskim SOC.
+- Techniczne minimum SOC pozostaje rezerwą awaryjną, a nie celem operacyjnym.
+- Dodano regresję dla przejścia nocnego minimum do wieloslotowego okna PV.
+- Wykonawca pozostaje domyślnie wyłączony.
+
+## 0.35.4
+
+- Naprawiono odczyt bilansu aktywnego slotu po wdrożeniu 0.35.3. Import domu
+  jest wyliczany z istniejących przepływów PV, baterii i obciążenia zamiast z
+  nieistniejącej kolumny `grid_load_kwh`.
+- Prognoza zużycia jest uzupełniana dla całego otwartego horyzontu profilem
+  slotu, a przy zbyt krótkiej historii konserwatywną średnią z ostatnich trzech
+  dób. Planer blokuje publikację, jeśli mimo tego pozostanie `NULL`.
+- Pusty slot bez przepływów otrzymuje rekomendację `Neutralny`; etykieta
+  `Zasilanie z sieci` wymaga rzeczywistego, nieuniknionego importu domu.
+- Produkcyjny replan 0.35.3 potwierdził zbieżność: `ACCEPTED`, 124 sloty.
+- Wykonawca pozostaje domyślnie wyłączony.
+
+## 0.35.3
+
+- Usunięto oscylację ścieżki targetu, gdy PV przed wybranym BUY całkowicie
+  zastępuje zakup. Okno uzupełnienia pozostaje granicą targetu niezależnie od
+  końcowej liczby kupionych kWh.
+- Bilans aktywnego slotu używa jednej strony pomiarowej: uwzględnia sprawność
+  ładowania i rozładowania, import domu oraz tylko PV należące do bilansu
+  podstawowego. Elastyczna nadwyżka PV pozostaje poza bilansem targetu.
+- Błąd replanu jest zatrzaskiwany jako `DEGRADED` do czasu kolejnego
+  poprawnego planu i nie jest nadpisywany przez cykl statusowy.
+- Wykonawca pozostaje domyślnie wyłączony.
+
+## 0.35.2
+
+- Naprawiono zamykanie wstecznego kontraktu `soc_target`: faktycznie wybrany
+  BUY odcina wcześniejsze sloty od zapotrzebowania po tym oknie, a wystarczające
+  konserwatywne PV odcina most dopiero po pełnym pokryciu zobowiązania.
+- Granica BUY zachowuje przed oknem tę część energii, której nie można fizycznie
+  uzupełnić w wybranych slotach przy limicie 5 kW i sprawności ładowania.
+- Częściowe PV nadal pomniejsza wymagany target, ale nie usuwa niedoboru.
+- Kafelki modułów mają stałą wysokość i są tworzone tylko raz. Odświeżanie
+  zmienia wyłącznie ich tekst i klasy stanu, bez przebudowy całej siatki.
+- Kafelek RCE przeniesiono na ostatnią pozycję siatki modułów.
+- Kafelek aktywnego slotu pokazuje czas bez sufiksu strefy oraz obie strony
+  planowanego bilansu energii i ich odchylenie.
+- Wykonawca pozostaje domyślnie wyłączony.
+
+## 0.35.1
+
+- Rozdzielono technicznie nieunikniony import domu przy minimalnym SOC od
+  decyzji `BUY`, która nadal służy wyłącznie ładowaniu baterii. Planer nie
+  kończy już błędem `No feasible SOC state at horizon slot 0`, gdy PV i energia
+  ponad rezerwę nie wystarczają do pokrycia pierwszego slotu.
+- Panel pokazuje dla każdego modułu stan, aktualną/ostatnią czynność i czas jej
+  odświeżenia.
+- Dodano przycisk **Przelicz plan**, korzystający z tej samej serializowanej,
+  atomowej ścieżki publikacji co replan automatyczny. Panel pokazuje trwanie,
+  sukces albo dokładny błąd przebiegu.
+- Stały kontrakt importu wymuszonego, BUY i ręcznego replanu zapisano w
+  `PLANNER_CONTRACT.md` i `DOCS.md`.
+
+## 0.35.0
+
+- Rozdzielono kompletność importu RCE od wyniku prognoz i planera. Pełny zestaw
+  `96/96` pozostaje zatwierdzonym importem również wtedy, gdy późniejszy przebieg
+  planera kończy się błędem.
+- Błąd przebiegu zależnego ma osobny status `planner=ERROR` i zdarzenie
+  `rce_dependent_cycle_failed`; nie uruchamia ponownego importu ani nie zastępuje
+  kompletnych cen częściowym zestawem.
+- Ręczne odświeżenie RCE zwraca wynik kompletności cen niezależnie od błędu
+  późniejszego planowania.
+- Plan po RCE i późniejsze replany korzystają z tej samej serializowanej ścieżki
+  planowania oraz atomowej publikacji.
+- Zastąpiono godzinny replan przebiegiem dla każdego slotu 15-minutowego. Start
+  następuje po ustabilizowaniu wejść; nieudany przebieg może zostać ponowiony w
+  tym samym bezpiecznym oknie bez usuwania ostatniego zaakceptowanego planu.
+- Replan jest blokowany bez zatwierdzonego RCE oraz podczas odświeżania prognoz
+  po północy. Błąd replanu degraduje moduł planera, ale nie oznacza awarii bazy.
+- Dodano kanoniczny `PLANNER_CONTRACT.md`: trwałe definicje bilansu,
+  `soc_target`, `soc_floor`, priorytetu PV, BUY/SELL, etapów i walidacji.
+
+## 0.34.5
+
+- `soc_floor` is now derived per accepted battery-sale slot from its planned
+  ending SOC; it is no longer copied from the active Deye TOU program.
+- Outside deliberate battery sale, `soc_floor` falls back to the technical
+  reserve and does not constrain battery discharge for native consumption.
+- `soc_target` remains the independent energy commitment and sale safeguard.
+
+## 0.34.4
+
+- `soc_floor` pozostaje wyłącznie sprzętową podłogą celowej sprzedaży baterii;
+  nie jest podnoszony do `soc_target` i nie ogranicza autokonsumpcji.
+- Energia dostępna dla `SELL_BAT` jest liczona wyłącznie ponad efektywnym
+  progiem `max(soc_floor, soc_target)`. Gdy bieżący SOC jest niższy od targetu,
+  planowana sprzedaż baterii wynosi zero również w ekonomicznym oknie SELL.
+- Publikacja planu jest blokowana przez `SALE_TARGET_VIOLATION`, jeżeli celowa
+  sprzedaż kończy slot poniżej targetu energetycznego.
+- Przy każdym otwarciu slotu Core publikuje do Home Assistant obie ceny z tego
+  samego rekordu `ems_gpt_slots`. Sensory `sensor.gpt_ems_cena_zakupu` oraz
+  `sensor.gpt_ems_cena_sprzedazy` nie zależą już od starego modelu RCE.
+- Wykonawca pozostaje domyślnie wyłączony.
+
+## 0.34.3
+
+- Cała nadwyżka PV poniżej `soc_target` jest przypisywana do baterii, także
+  gdy jest mniejsza niż krok prognozy SOC 0,25%. Kwantyzacja SOC nie może już
+  tworzyć fałszywego eksportu ani rekomendacji `Sprzedaż PV`.
+
+## 0.34.2
+
+- Wybrane okno BUY wyznacza termin osiągnięcia `soc_target`, ale nie obniża
+  sufitu ładowania we wcześniejszych slotach PV.
+- Przy zachowaniu bilansu PV jest kierowane do baterii przed sprzedażą, jeżeli
+  zastępuje późniejszy, droższy zakup sieciowy. Dodano regresję dla sekwencji
+  `PV surplus → BUY`.
+
+## 0.34.1
+
+- Planer publikuje wynik wieloprzebiegowy wyłącznie po zbieżności wybranych
+  slotów BUY z kontraktem `soc_target`; brak zbieżności kończy przebieg
+  bezpiecznym odrzuceniem.
+- Ponowne liczenie bez osieroconej ochrony SOC nie może po cichu zmienić ścieżki
+  zakupu. Taka zmiana również odrzuca plan zamiast publikować nieaktualny target.
+
+## 0.34.0
+
+- Okno `BUY` jest wyłącznie ze…3345 tokens truncated…nych slotów
   zakupu.
 - Usunięto archiwalne wymuszenie `evening_soc_target_pct=60%` o 19:45 oraz
   sztuczny końcowy target zależny od `historical_soc_drop_p80_pct` i
