@@ -635,7 +635,7 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             if grid_inventory[0][0] <= 1e-9:
                 grid_inventory.pop(0)
         grid_load = max(0.0, float(flow.get("grid_load_kwh") or 0.0))
-        if grid_load > unit_kwh * eta_d + 1e-9:
+        if grid_load > tolerance_kwh + 1e-9:
             grid_load_inventory.append([
                 grid_load, float(row.get("price_buy_pln_kwh") or 0.0),
             ])
