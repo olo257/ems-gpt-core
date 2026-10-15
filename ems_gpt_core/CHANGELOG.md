@@ -1,10 +1,15 @@
 # EMS-GPT Core — historia zmian
 
-## 0.40.40 — pełny zakup także przy braku ceny w slocie BUY
+## 0.40.41 — ładowanie BUY nie blokuje zasilania domu
 
-- Okno BUY wyznacza zgodę na ładowanie; brak ceny w pojedynczym wierszu nie ogranicza wolumenu do bieżącego targetu SOC.
+- Usunięto sprzeczność, przez którą dodatni import na zużycie domu w slocie BUY unieważniał równoczesne ładowanie baterii.
+- Podczas rzeczywistego ładowania BUY domowy pobór pozostaje oddzielnym `grid_load_kwh`; nie zwiększa `planned_buy_kwh` ani `grid_charge_kwh` i podlega łącznemu limitowi importu.
+- Dodano regresję dla nocnego okna BUY z prognozowanym obciążeniem oraz symulację 40% targetu z pełnym dostępnym wolumenem BUY.
+
+## 0.40.40 — pełny dostępny zakup w każdym BUY
+
 - Każdy slot BUY wykorzystuje pełną fizycznie dostępną moc ładowania w ramach pojemności baterii i limitu importu.
-- Dodano regresję okna BUY z brakującą ceną.
+- Dodano regresję wykorzystania pełnego dostępnego wolumenu BUY.
 
 ## 0.40.39 — pełny dostępny zakup w każdym BUY
 

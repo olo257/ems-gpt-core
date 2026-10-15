@@ -50,6 +50,38 @@ class BuyDeadlineRegressionTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertGreaterEqual(result["flows"][0]["soc_end_pct"], 28.0)
 
+    def test_buy_charges_battery_while_grid_supplies_house_load(self):
+        row = slot(True, load=0.20)
+        result = optimize_energy_horizon(
+            [row], 21.0, 15.0, 15.0, 1.0, 1.0,
+            0.0, 0.0, 5.0, 15, [15.0], 15.0, 0.1, 100.0,
+            minimum_soc_targets=[28.0], hard_target_indices=set(),
+            target_due_indices={0}, required_soc_pcts=[15.0],
+            battery_sales_enabled=False, max_grid_import_kw=12.0,
+            grid_charge_caps=[100.0],
+        )
+        flow = result["flows"][0]
+        self.assertGreaterEqual(flow["grid_charge_kwh"], 1.24)
+        self.assertAlmostEqual(flow["grid_load_kwh"], 0.20)
+        self.assertAlmostEqual(flow["voluntary_grid_load_kwh"], 0.20)
+
+    def test_overnight_buy_reaches_daily_close_after_load_before_dhw(self):
+        rows = [slot(False, load=0.20) for _ in range(4)]
+        rows += [slot(True, load=0.20) for _ in range(2)]
+        result = optimize_energy_horizon(
+            rows, 36.0, 15.0, 15.0, 0.9, 0.95,
+            0.0, 0.0, 5.0, 15, [15.0] * len(rows), 40.0, 0.1, 100.0,
+            minimum_soc_targets=[40.0] * len(rows), hard_target_indices=set(),
+            target_due_indices={5}, required_soc_pcts=[15.0] * len(rows),
+            battery_sales_enabled=False, max_grid_import_kw=12.0,
+            grid_charge_caps=[15.0] * 4 + [100.0] * 2,
+            minimum_grid_charge_kwh=0.02,
+        )
+        self.assertGreaterEqual(result["flows"][5]["soc_end_pct"], 40.0)
+        for flow in result["flows"][4:]:
+            self.assertGreater(flow["grid_charge_kwh"], 1.2)
+            self.assertAlmostEqual(flow["grid_load_kwh"], 0.20)
+
 
     def test_unreachable_buy_deadline_rejects_instead_of_silently_lowering_target(self):
         with self.assertRaisesRegex(RuntimeError, "BUY_TARGET_UNREACHABLE:slot=0"):
