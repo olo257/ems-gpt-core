@@ -919,12 +919,7 @@ def economic_buy_charge_caps(rows: list[dict], required_targets: list[float],
                and not strict_database_bool(row.get("sale_window", False), "sale_window")
                for row in rows]
     for index, row in enumerate(rows):
-        # The BUY window is the permission to import; price availability is
-        # handled by window construction/market data, not as a second charge
-        # gate here.  Otherwise a BUY slot with a missing price silently
-        # falls back to the SOC bridge cap and can make its deadline
-        # unreachable despite available inverter capacity.
-        if allowed[index]:
+        if allowed[index] and row.get("price_buy_pln_kwh") is not None:
             result[index] = cap
     return result
 
@@ -1319,8 +1314,13 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 unavoidable_grid_load = _unavoidable_grid_load_allowed(
                     grid_load, current_unit, next_unit, first_unit, max_down,
                     unit_kwh, eta_d)
+                grid_load_during_buy_charge = (
+                    grid_charge_allowed
+                    and grid_charge > max(1e-9, float(minimum_grid_charge_kwh))
+                )
                 if (grid_load > unit_kwh * eta_d + 1e-9
-                        and not unavoidable_grid_load):
+                        and not unavoidable_grid_load
+                        and not grid_load_during_buy_charge):
                     continue
                 voluntary_grid_load = (
                     0.0 if unavoidable_grid_load else max(0.0, grid_load))

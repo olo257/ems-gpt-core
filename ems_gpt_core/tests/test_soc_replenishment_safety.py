@@ -354,7 +354,7 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'No feasible SOC state'):
             self.optimize(rows, self.safety(rows), initial=20.0)
 
-    def test_buy_charge_does_not_allow_import_for_house_load(self):
+    def test_buy_charge_keeps_house_import_separate_from_battery_buy(self):
         rows = self.rows(1)
         rows[0].update(forecast_load_kwh=0.5, buy_window=True)
         profile = _soc_reachability_profile(
@@ -366,9 +366,9 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             5.0, 15, [15.0], 15.0, 0.1, 100.0,
             required_soc_pcts=[15.0], battery_sales_enabled=False)
         flow = plan['flows'][0]
-        self.assertGreater(flow['battery_to_load_kwh'], 0.0)
-        self.assertLessEqual(flow['grid_load_kwh'], 0.05)
-        self.assertEqual(flow['grid_charge_kwh'], 0.0)
+        self.assertAlmostEqual(flow['grid_load_kwh'], 0.5)
+        self.assertAlmostEqual(flow['voluntary_grid_load_kwh'], 0.5)
+        self.assertGreater(flow['grid_charge_kwh'], 0.02)
 
     def test_invalid_measured_soc_above_100_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'INVALID_INITIAL_SOC'):

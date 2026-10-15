@@ -70,13 +70,13 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         self.assertEqual(caps[4:10], targets[4:10])
         self.assertEqual(caps[10:], [100.0] * 2)
 
-    def test_missing_price_does_not_block_full_volume_in_buy_window(self):
+    def test_missing_price_does_not_create_an_unpriced_charge_cap(self):
         rows = self.rows(cheap=1.15, dear=1.05)
         rows[0]['price_buy_pln_kwh'] = None
         caps = economic_buy_charge_caps(rows, [15.0] * len(rows))
-        self.assertEqual(caps[0], 100.0)
+        self.assertEqual(caps[0], 15.0)
 
-    def test_sell_blocks_buy_but_missing_price_does_not_reduce_buy_volume(self):
+    def test_sell_blocks_buy_and_missing_price_keeps_contract_cap(self):
         rows = self.rows()
         for row in rows[10:]:
             row['sale_window'] = True
@@ -89,7 +89,7 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         caps = economic_buy_charge_caps(rows, [30.0] * 12)
         self.assertEqual(caps[:4], [100.0] * 4)
         self.assertEqual(caps[4:10], [30.0] * 6)
-        self.assertEqual(caps[10:], [100.0] * 2)
+        self.assertEqual(caps[10:], [30.0] * 2)
 
     def test_optional_cap_does_not_become_required_deadline(self):
         rows = self.rows()
@@ -146,7 +146,7 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         self.assertLessEqual(max(f['soc_end_pct'] for f in result['flows']), 100.0)
         self.assertGreater(sum(f['grid_charge_kwh'] for f in result['flows'][10:]), 0.1)
 
-    def test_battery_buy_does_not_authorize_home_import(self):
+    def test_buy_charge_keeps_battery_and_house_energy_separate(self):
         rows = self.rows()
         for row in rows:
             row['forecast_load_kwh'] = 0.0
@@ -154,8 +154,10 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         _, result = self.optimize(rows)
         self.assertTrue(any(f['grid_charge_kwh'] > 0.02
                             for f in result['flows']))
+        self.assertAlmostEqual(result['flows'][0]['grid_charge_kwh'], 1.25)
+        self.assertAlmostEqual(result['flows'][0]['grid_load_kwh'], 0.3)
         self.assertTrue(all(f['grid_load_kwh'] <= 0.05
-                            for f in result['flows']))
+                            for f in result['flows'][1:]))
         self.assertEqual(voluntary_load_without_charging_indices(
             rows, result['flows'], 0.05, 0.02), set())
 

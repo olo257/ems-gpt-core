@@ -788,7 +788,7 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(contract["targets"][1], 15.0)
         self.assertEqual(contract["due"][1], 3)
 
-    def test_unselected_expensive_buy_does_not_reset_cheap_buy_target(self):
+    def test_every_buy_window_uses_full_volume_without_resetting_prior_target(self):
         rows = []
         for index in range(16):
             rows.append({
@@ -813,10 +813,11 @@ class PairedArbitrageTests(unittest.TestCase):
         result = optimize_energy_horizon(
             rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0] * len(rows), 15.0, 0.25, 100.0,
-            contract["targets"], due, due)
+            contract["targets"], due, due,
+            grid_charge_caps=[100.0] * len(rows))
 
         self.assertGreater(sum(result["flows"][i]["grid_charge_kwh"] for i in range(4)), 3.0)
-        self.assertEqual(result["flows"][8]["grid_charge_kwh"], 0.0)
+        self.assertAlmostEqual(result["flows"][8]["grid_charge_kwh"], 1.25)
         self.assertGreater(contract["targets"][3], contract["targets"][8])
 
     def test_partial_pv_reduces_target_but_does_not_erase_remaining_need(self):
@@ -1444,18 +1445,20 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertLessEqual(first["grid_load_kwh"], 0.25 * 15.0 / 100.0 * 0.95 + 1e-9)
         self.assertGreater(first["battery_to_load_kwh"], 0.20)
 
-    def test_disabled_sale_cannot_authorize_grid_import_for_native_load(self):
+    def test_buy_charge_keeps_native_load_out_of_battery_buy_volume(self):
         row = {"price_buy_pln_kwh": 3.0, "price_sell_pln_kwh": 0.0,
                "buy_window": True, "sale_window": False,
                "forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.0}
         result = optimize_energy_horizon(
             [row], 50.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0], 15.0, 0.10, 100.0,
-            battery_sales_enabled=False)
+            battery_sales_enabled=False, grid_charge_caps=[100.0],
+            minimum_grid_charge_kwh=0.02)
         flow = result["flows"][0]
-        self.assertEqual(flow["grid_charge_kwh"], 0.0)
-        self.assertLessEqual(flow["grid_load_kwh"], 0.001)
-        self.assertGreater(flow["battery_to_load_kwh"], 0.0)
+        self.assertAlmostEqual(flow["grid_charge_kwh"], 1.25)
+        self.assertAlmostEqual(flow["grid_load_kwh"], 0.10)
+        self.assertAlmostEqual(flow["voluntary_grid_load_kwh"], 0.10)
+        self.assertEqual(flow["battery_to_load_kwh"], 0.0)
 
     def test_overlapping_buy_and_sell_cannot_charge(self):
         row = {"price_buy_pln_kwh": -1.0, "price_sell_pln_kwh": 1.0,
@@ -1524,7 +1527,7 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertEqual(result["flows"][0]["soc_end_pct"], 25.0)
 
-    def test_token_charge_cannot_unlock_purchase_for_native_load(self):
+    def test_full_buy_charge_can_supply_home_load_separately(self):
         rows = [
             {"price_buy_pln_kwh": price, "price_sell_pln_kwh": 0.0,
              "sale_window": False, "buy_window": True,
@@ -1538,15 +1541,12 @@ class PairedArbitrageTests(unittest.TestCase):
             rows, 24.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0] * len(rows), 30.0, 0.25, 100.0)
 
-        charging = [flow for flow in result["flows"]
-                    if flow["grid_charge_kwh"] > 1e-9]
-        self.assertTrue(charging)
-        self.assertTrue(all(flow["grid_load_kwh"] <= 0.05
+        self.assertTrue(all(flow["grid_charge_kwh"] > 1.0
                             for flow in result["flows"]))
-        self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
-        self.assertEqual(result["flows"][1]["grid_charge_kwh"], 0.0)
-        self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
-        self.assertEqual(result["flows"][1]["grid_charge_kwh"], 0.0)
+        self.assertAlmostEqual(result["flows"][0]["grid_load_kwh"], 0.10)
+        self.assertAlmostEqual(result["flows"][1]["grid_load_kwh"], 0.10)
+        self.assertTrue(all(flow["grid_load_kwh"] == 0.0
+                            for flow in result["flows"][2:]))
 
     def test_daily_close_keeps_historical_soc_boundary(self):
         rows = [

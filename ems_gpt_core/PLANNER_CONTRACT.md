@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.39. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.41. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -70,9 +70,13 @@ ekonomiczne wykorzystanie zakupów w granicach tego kontraktu. Przebieg
 ekonomiczny nie może obniżać wymaganych rezerw ani celu zamknięcia doby.
 W każdym dozwolonym oknie BUY planner wykorzystuje pełny dostępny wolumen
 ładowania baterii, ograniczony jej pojemnością, mocą falownika i limitem
-importu obiektu. Brak ceny w wierszu okna nie obniża tego limitu: okno BUY
-pozostaje zgodą RCE na zakup, a luka cenowa nie może po cichu blokować
-ładowania ani czynić osiągalnego celu SOC nieosiągalnym.
+importu obiektu. Do horyzontu trafiają tylko sloty z kompletnymi cenami RCE;
+brak ceny nie tworzy nieodpłatnego ani dozwolonego zakupu.
+Podczas rzeczywistego ładowania baterii w BUY sieć może osobno zasilać
+prognozowane zużycie domu w tym samym slocie, z zachowaniem łącznego limitu
+importu obiektu. Ten przepływ pozostaje `grid_load_kwh`, nie jest liczony jako
+zakup do baterii (`planned_buy_kwh` / `grid_charge_kwh`) i nie uprawnia do
+importu na zużycie w slocie bez faktycznego ładowania.
 Wykonawca otrzymuje najwyższy target rzeczywiście wybranego ciągu zakupów już
 od pierwszego slotu tego ciągu. Wymagany SOC na końcu okna jest sprawdzany
 osobno; opcjonalny szczyt wcześniejszego ładowania nie jest nowym wymogiem SOC.
@@ -149,8 +153,9 @@ BUY, limity importu oraz zakaz sprzedaży poza SELL pozostają twarde.
 - Planer przypisuje planowany zakup wyłącznie do `grid_charge_kwh` w
   dozwolonym oknie BUY. Import ten ładuje baterię i pozostaje odrębny od
   `grid_load_kwh`.
-- Zwykły, możliwy do uniknięcia import na zużycie domu jest zabroniony w BUY
-  i poza BUY, również przy aktywnym moście SOC lub równoczesnym ładowaniu.
+- Zwykły, możliwy do uniknięcia import na zużycie domu jest zabroniony poza
+  BUY oraz w BUY bez rzeczywistego ładowania baterii. Gdy slot BUY rzeczywiście
+  ładuje baterię, osobny przepływ `grid_load_kwh` może pokryć bieżący load.
 - Rzeczywisty niedobór mocy może pozostać w `grid_load_kwh` tylko wtedy, gdy
   bateria osiąga limit rozładowania w slocie albo jej SOC dochodzi do rezerwy
   technicznej (w tym gdy stan początkowy jest już poniżej rezerwy). Jest to
@@ -490,7 +495,7 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 - Testy regresyjne kodu nie są równoznaczne z odbiorem produkcyjnym: po aktualizacji trzeba osobno potwierdzić wersję przebiegu planera w zapisanych slotach, okna BUY, planowane kWh zakupu i osiągalność SOC.
 
 
-### Zakup pełnego dostępnego wolumenu w BUY — 0.40.39
+### Zakup pełnego dostępnego wolumenu w BUY — 0.40.41
 
 Każdy slot BUY, który nie jest SELL, wykorzystuje najwyższą fizycznie możliwą
 moc ładowania baterii. Wolumen ograniczają pojemność baterii, limit ładowania
@@ -505,7 +510,10 @@ ostatni zaakceptowany plan; nie obniża celu po cichu.
 
 Przepływ `grid_charge_kwh` służy wyłącznie zwiększeniu SOC baterii w BUY.
 Możliwy do uniknięcia `grid_load_kwh` powyżej progu technicznego jest
-zabroniony także w BUY i przy wymaganym moście SOC. Nieunikniony residual
+zabroniony poza BUY oraz w BUY bez rzeczywistego ładowania. Jeśli bateria jest
+ładowana z sieci, ten slot może osobno pokryć `grid_load_kwh` domu, z zachowaniem
+limitu importu obiektu. Taki load nie zwiększa `grid_charge_kwh` ani
+`planned_buy_kwh`. Nieunikniony residual
 odbiorów jest dozwolony wyłącznie przy limicie mocy rozładowania albo rezerwie
 SOC; pozostaje fizycznym importem domu i nigdy nie staje się BUY ani ładowaniem
 baterii. Poza tymi fizycznymi granicami planer zgłasza niewykonalność zamiast
