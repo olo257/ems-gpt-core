@@ -74,12 +74,14 @@ pojemności baterii i limitów mocy. Ilość zakupu wybiera pełny bilans horyzo
 podniesienie opcjonalnego sufitu nie wymusza zakupu do 100%.
 Wykonawca otrzymuje najwyższy target rzeczywiście wybranego ciągu zakupów już
 od pierwszego slotu tego ciągu. Wymagany SOC na końcu okna jest sprawdzany
-osobno; opcjonalny szczyt wcześniejszego ładowania nie jest nowym wymogiem
-SOC na końcu okna. Targetem końca każdej
-doby jest ważona średnia rzeczywistych zamknięć SOC z 7/14/28 dni. Wymagany
-SOC w slotach przed zamknięciem wynika z bilansu wstecznego: target zamknięcia,
-prognozowane zużycie i PV, sprawności, rezerwa oraz fizyczna dostępność
-ładowania w oknach BUY. Nie ma stałego progu SOC dla ostatniego okna BUY.
+osobno; opcjonalny szczyt wcześniejszego ładowania nie jest nowym wymogiem SOC.
+Historyczny punkt odniesienia końca doby wynosi 40–45% SOC i chroni przed jego
+zaniżaniem. Jeśli pierwsze okno BUY kolejnej lokalnej doby zaczyna się w jej
+pierwszym slocie, poprzedni cel dobowy jest wymagany na końcu tego ciągłego
+okna, a nie przed północą. Wcześniejszy SOC nadal wynika z bilansu wstecznego
+zużycia, PV, sprawności, rezerwy oraz fizycznej dostępności ładowania BUY, więc
+plan utrzymuje energię do najbliższego PV/BUY i nie wymusza drogiego zakupu
+przed tańszym oknem.
 Każde przyszłe okno doby (w tym jutro po 14:00) jest uwzględniane wyłącznie,
 gdy kompletne ceny RCE i prognozy znajdują się w ciągłym horyzoncie planu.
 Niewykonalność celu jest raportowana jako niedobór, bez cichego obniżenia celu
