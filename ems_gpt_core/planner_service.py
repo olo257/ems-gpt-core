@@ -281,11 +281,11 @@ def _soc_reachability_profile(
                         continue
                     grid_charge = 0.0
                     grid_load = max(0.0, deficit-battery_to_load)
-                # Every planned grid import must charge the battery. If
-                # quantized battery discharge cannot cover home load, this state
-                # is infeasible; do not hide a residual behind SOC tolerance.
+                # Reject deliberate grid-to-home supply, including safety
+                # bridge exceptions and charging overlap. Keep only one SOC
+                # quantum for physical accounting/rounding tolerance.
                 voluntary_grid_load = max(0.0, grid_load)
-                if grid_load > 1e-9:
+                if grid_load > unit_kwh * eta_discharge + 1e-9:
                     continue
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
                     continue
@@ -635,7 +635,7 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             if grid_inventory[0][0] <= 1e-9:
                 grid_inventory.pop(0)
         grid_load = max(0.0, float(flow.get("grid_load_kwh") or 0.0))
-        if grid_load > 1e-9:
+        if grid_load > unit_kwh * eta_d + 1e-9:
             grid_load_inventory.append([
                 grid_load, float(row.get("price_buy_pln_kwh") or 0.0),
             ])
@@ -1306,8 +1306,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     pv_export = surplus if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_export)
                     battery_charge_internal = 0.0
-                # Grid import is charge-only. Reject every residual home
-                # import rather than treating SOC quantization as an allowance.
+                # Grid import is charge-only. Permit at most one SOC quantum
+                # of numerical residual from discrete SOC accounting.
                 voluntary_grid_load = max(0.0, grid_load)
                 if grid_load > 1e-9:
                     continue
