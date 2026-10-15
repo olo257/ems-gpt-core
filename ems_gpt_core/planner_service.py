@@ -1309,7 +1309,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # Grid import is charge-only. Permit at most one SOC quantum
                 # of numerical residual from discrete SOC accounting.
                 voluntary_grid_load = max(0.0, grid_load)
-                if grid_load > 1e-9:
+                if grid_load > unit_kwh * eta_d + 1e-9:
                     continue
                 # The physical site limit still applies to total imports.
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
