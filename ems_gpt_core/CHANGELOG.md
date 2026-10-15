@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.36 — cel SOC po nocnym BUY przed CWU
+
+- Przesunięto historyczny cel zamknięcia 40–45% na koniec ostatniego ciągłego okna BUY przed 06:00, także gdy okno zaczyna się po północy.
+- Niezależny most SOC nadal pokrywa prognozowane zużycie, w tym codzienne CWU od 06:00, do następnego PV/BUY.
+- Dodano regresje dla nocnych okien BUY oraz zakupów zaczynających się dopiero o 06:00.
+
 ## 0.40.35 — zakup wyłącznie do baterii, SOC dobowy i nocne BUY
 
 - Usunięto wyjątki Pass 4 dopuszczające import dla domu jako most SOC; import z sieci służy ładowaniu baterii w BUY.

@@ -5,13 +5,13 @@ import math
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from types import SimpleNamespace
 from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_35"
+PLANNER_VERSION = "CORE_0_40_36"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -732,12 +732,14 @@ def end_of_day_soc_target(historical_soc_pct: float, reserve_pct: float,
 
 def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
                                  daily_terminal_soc: dict) -> tuple[list[float], set[int]]:
-    """Apply historical close SOC after an imminent next-day BUY opportunity.
+    """Apply historical close SOC after an early next-day BUY opportunity.
 
     The independent safety bridge remains in force before replenishment. If a
-    local day begins with a continuous permitted BUY window, defer the previous
-    day's historical target until that window ends so it cannot force an earlier
-    and more expensive charge.
+    permitted BUY window occurs before the daily 06:00 DHW start, defer the
+    previous day's historical target until the end of the last such window.
+    This keeps the historical terminal target from forcing a charge before a
+    cheaper night window; the independent bridge still covers load through the
+    next PV/BUY opportunity, including the 06:00 DHW cycle.
     """
     if len(rows) != len(safety_pcts):
         raise ValueError("rows and safety SOC lengths differ")
@@ -756,24 +758,42 @@ def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
         if first_next < len(rows):
             first_row = rows[first_next]
             first_day = first_row.get("local_day") or first_row["slot_start"].date()
-            first_is_buy = (
-                first_day != row_day
-                and strict_database_bool(first_row.get("buy_window", False), "buy_window")
-                and not strict_database_bool(first_row.get("sale_window", False), "sale_window")
-            )
-            if first_is_buy:
-                target_index = first_next
-                while target_index + 1 < len(rows):
-                    candidate = rows[target_index + 1]
+            if first_day != row_day:
+                early_buy_ends = []
+                cursor = first_next
+                while cursor < len(rows):
+                    candidate = rows[cursor]
                     candidate_day = candidate.get("local_day") or candidate["slot_start"].date()
+                    if candidate_day != first_day:
+                        break
+                    local_start = candidate.get("slot_start_local") or candidate["slot_start"]
+                    if isinstance(local_start, str):
+                        local_start = datetime.fromisoformat(local_start)
+                    if local_start.time() >= time(6, 0):
+                        break
                     candidate_is_buy = (
-                        candidate_day == first_day
-                        and strict_database_bool(candidate.get("buy_window", False), "buy_window")
+                        strict_database_bool(candidate.get("buy_window", False), "buy_window")
                         and not strict_database_bool(candidate.get("sale_window", False), "sale_window")
                     )
                     if not candidate_is_buy:
-                        break
-                    target_index += 1
+                        cursor += 1
+                        continue
+                    window_end = cursor
+                    while window_end + 1 < len(rows):
+                        following = rows[window_end + 1]
+                        following_day = following.get("local_day") or following["slot_start"].date()
+                        following_start = following.get("slot_start_local") or following["slot_start"]
+                        if isinstance(following_start, str):
+                            following_start = datetime.fromisoformat(following_start)
+                        if (following_day != first_day or following_start.time() >= time(6, 0)
+                                or not strict_database_bool(following.get("buy_window", False), "buy_window")
+                                or strict_database_bool(following.get("sale_window", False), "sale_window")):
+                            break
+                        window_end += 1
+                    early_buy_ends.append(window_end)
+                    cursor = window_end + 1
+                if early_buy_ends:
+                    target_index = early_buy_ends[-1]
 
         required[target_index] = max(
             required[target_index], daily_terminal_soc[row_day])

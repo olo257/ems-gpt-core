@@ -175,6 +175,53 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertEqual(required[24], 17.0)
         self.assertEqual(required[25], 17.0)
 
+    def test_early_morning_buy_defers_close_until_last_window_before_dhw(self):
+        rows = self.rows(25, start=datetime(2026, 10, 2, 23, 45))
+        # The next local day has two separated night BUY windows. A 40–45%
+        # historical close must be due after the later window ending at 05:30,
+        # before the recurring 06:00 DHW start.
+        rows[9]['buy_window'] = True   # 02:00
+        rows[10]['buy_window'] = True  # 02:15
+        rows[21]['buy_window'] = True  # 05:00
+        rows[22]['buy_window'] = True  # 05:15; window closes at 05:30
+        safety = self.safety(rows)
+        required, closes = daily_close_soc_requirements(
+            rows, safety, {rows[0]['local_day']: 42.0,
+                           rows[-1]['local_day']: 42.0})
+
+        self.assertEqual(closes, {22, 24})
+        self.assertEqual(required[0], safety[0])
+        self.assertEqual(required[22], 42.0)
+
+    def test_morning_dhw_baseline_raises_bridge_without_double_counting_hp(self):
+        rows = self.rows(28, start=datetime(2026, 10, 2, 23, 45))
+        for index in range(9, 23):
+            rows[index]['buy_window'] = True
+        no_dhw = self.safety(rows)
+        # Observed 06:00 CWU electricity stays in forecast_load_kwh. The
+        # separate HP field remains zero because this is not HP_HEAT_DHW.
+        rows[25]['forecast_load_kwh'] = 0.315
+        rows[26]['forecast_load_kwh'] = 0.360
+        rows[25]['forecast_heat_pump_load_kwh'] = 0.0
+        rows[26]['forecast_heat_pump_load_kwh'] = 0.0
+        with_dhw = self.safety(rows)
+
+        self.assertGreater(with_dhw[22], no_dhw[22])
+        self.assertEqual(rows[25]['forecast_heat_pump_load_kwh'], 0.0)
+        self.assertEqual(rows[26]['forecast_heat_pump_load_kwh'], 0.0)
+
+    def test_buy_at_or_after_dhw_start_does_not_defer_daily_close(self):
+        rows = self.rows(27, start=datetime(2026, 10, 2, 23, 45))
+        rows[25]['buy_window'] = True  # 06:00 is too late for the DHW bridge
+        safety = self.safety(rows)
+        required, closes = daily_close_soc_requirements(
+            rows, safety, {rows[0]['local_day']: 42.0,
+                           rows[-1]['local_day']: 42.0})
+
+        self.assertEqual(closes, {0, 26})
+        self.assertEqual(required[0], 42.0)
+        self.assertEqual(required[25], safety[25])
+
     def test_overnight_load_can_raise_daily_close_above_history(self):
         rows = self.rows(6)
         for row in rows[1:]:
