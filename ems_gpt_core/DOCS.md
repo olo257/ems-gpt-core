@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.31**.
+Status: obowiązująca. Wersja wydania: **0.40.35**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -181,14 +181,12 @@ zmniejszone. Możliwy przychód ze sprzedaży nie może pominąć CWU ani EV.
 Historyczne średnie końcowego SOC 7/14/28 dni są liczone niezależnie z pełnych,
 rzeczywiście zamkniętych dób. Doba z brakiem lub `MISSING_OUTAGE` nie jest
 próbką. Krótszy zakres odbudowy agregatów nie może ograniczać horyzontu 14/28.
-Docelowy SOC na końcu każdej planowanej doby wynosi 40–45%: ważona średnia
-7/14/28 dni jest ograniczana do tego pasma, aby błędne historyczne zamknięcia
-nie zaniżały zapasu. Nie jest to dodatkowy próg przed porannym SELL. Bilans
-zużycia domu/HP, PV i możliwości ładowania wyznacza trajektorię do tego celu;
-rzeczywiste wymaganie może być wyższe, jeśli wynika z przyszłego obciążenia.
-Niezależny bilans bezpieczeństwa nadal chroni minimum 15% plus bufor przed
-PV/BUY (`soc_replenishment_buffer_pct`, domyślnie 2 p.p.). Wymagania są
-zaokrąglane w górę do kroku SOC.
+Historyczny zakres 40–45% chroni przed zaniżaniem SOC. Gdy pierwsze okno BUY
+nowej lokalnej doby zaczyna się o północy, cel poprzedniej doby jest rozliczany
+na końcu tego ciągłego okna, aby nie wymuszać wcześniejszego droższego zakupu.
+Do czasu BUY niezależny bilans bezpieczeństwa utrzymuje zapas na prognozowane
+zużycie domu/HP do najbliższego PV/BUY. Wymagania są zaokrąglane w górę do
+kroku SOC.
 
 ### AI Observer — audyt w tle
 
