@@ -372,11 +372,13 @@ class BatteryDispatchConflictTests(unittest.TestCase):
         now = datetime(2026, 10, 14, 13, 0)
         states = {
             "sensor.inverter_battery": {"state": "22"},
-            "number.inverter_program_3_soc": {"state": "32"},
-            "select.inverter_program_3_charging": {"state": "Grid" if grid_on else "Disabled"},
             "switch.inverter_battery_grid_charging": {"state": "on" if grid_on else "off"},
             "select.inverter_work_mode": {"state": "Zero Export To Load"},
         }
+        for program in range(1, 7):
+            states[f"number.inverter_program_{program}_soc"] = {"state": "80"}
+            states[f"select.inverter_program_{program}_charging"] = {
+                "state": "Grid" if grid_on else "Disabled"}
         class Cursor:
             rowcount = 1
             def __enter__(self): return self
@@ -429,10 +431,11 @@ class BatteryDispatchConflictTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             _, states, calls = self.dispatch(directory, [
                 self.command("BATTERY_IMPORT", "ON"), self.command("SELL_BAT", "OFF")])
-        self.assertEqual(states["select.inverter_program_3_charging"]["state"], "Grid")
+        for program in range(1, 7):
+            self.assertEqual(states[f"select.inverter_program_{program}_charging"]["state"], "Grid")
+            self.assertEqual(states[f"number.inverter_program_{program}_soc"]["state"], "32")
         self.assertEqual(states["switch.inverter_battery_grid_charging"]["state"], "on")
         self.assertEqual([call[1] for call in calls if call[0] == "script"], ["export_off", "import_on"])
-        self.assertEqual(calls[0], ("script", "export_off", {}))
 
     def test_later_sell_off_preserves_running_buy_without_new_on(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -443,7 +446,9 @@ class BatteryDispatchConflictTests(unittest.TestCase):
     def test_import_off_disables_grid_source(self):
         with tempfile.TemporaryDirectory() as directory:
             _, states, _ = self.dispatch(directory, [self.command("BATTERY_IMPORT", "OFF")], grid_on=True)
-        self.assertEqual(states["select.inverter_program_3_charging"]["state"], "Disabled")
+        for program in range(1, 7):
+            self.assertEqual(states[f"select.inverter_program_{program}_charging"]["state"], "Disabled")
+            self.assertEqual(states[f"number.inverter_program_{program}_soc"]["state"], "10")
         self.assertEqual(states["switch.inverter_battery_grid_charging"]["state"], "off")
 
     def test_failed_off_blocks_new_buy(self):
