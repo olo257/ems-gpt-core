@@ -1402,10 +1402,25 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                         "slot_cost_pln": slot_cost})
         if not next_costs:
             raise RuntimeError(f"No feasible SOC state at horizon slot {index}")
+        future_buy_load = False
         if grid_charge_allowed:
-            # A BUY slot uses the maximum physically feasible battery charge.
-            # Keeping only the highest reachable SOC state prevents the price
-            # objective from deferring available volume to a later window.
+            window_end = index
+            while (window_end + 1 < len(rows)
+                   and buy_permissions[window_end + 1]):
+                window_end += 1
+            future_buy_load = any(
+                max(0.0, float(rows[future].get("forecast_load_kwh") or 0.0))
+                + max(0.0, float(rows[future].get("forecast_heat_pump_load_kwh") or 0.0))
+                > 1e-9
+                for future in range(index + 1, window_end + 1)
+            )
+        if grid_charge_allowed and not future_buy_load:
+            # Use the maximum available BUY charge when no later native load
+            # in this same window needs headroom. If a later BUY slot serves
+            # the house, retain lower SOC paths too: hitting the charge cap
+            # early can leave no positive battery-charge transition to qualify
+            # that later slot's separate grid_load, making an otherwise
+            # reachable window-end target appear unreachable.
             highest_reachable_unit = max(next_costs)
             next_costs = {highest_reachable_unit: next_costs[highest_reachable_unit]}
             next_predecessors = {

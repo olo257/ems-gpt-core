@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.44 — osiągalny target BUY przy późniejszym obciążeniu domu
+
+- Zachowano alternatywne ścieżki SOC, gdy ładowanie do sufitu w pierwszym slocie
+  okna BUY uniemożliwiałoby późniejsze ładowanie podczas zasilania domu z sieci.
+- Target końcowy okna pozostaje twardy; limit zakupu nadal wynika z dynamicznego
+  targetu SOC. Dodano test regresyjny dla błędu `BUY_TARGET_UNREACHABLE`.
+
 ## 0.40.43 — dynamiczny target od początku ciągłego okna BUY
 
 - Przeniesiono najwyższy target SOC wyliczony dla danego ciągłego okna BUY na jego pierwszy slot.

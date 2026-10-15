@@ -91,6 +91,26 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         self.assertTrue(all(flow['soc_end_pct'] <= 40.0 + 1e-9
                             for flow in result['flows']))
 
+    def test_future_house_load_preserves_headroom_for_window_end_target(self):
+        rows = [dict(slot_start=i, slot_end=i + 1,
+                     price_buy_pln_kwh=1.0,
+                     price_sell_pln_kwh=0.0, buy_window=True,
+                     sale_window=False,
+                     forecast_load_kwh=0.5 if i == 1 else 0.0,
+                     forecast_pv_total_kwh=0.0) for i in range(2)]
+        targets = [40.0, 40.0]
+        result = optimize_energy_horizon(
+            rows, 32.5, 15.0, 15.0, 0.9, 0.95, 0.0, 0.0, 5.0, 15,
+            [15.0] * 2, 40.0, 0.1, 100.0,
+            targets, set(), {1}, [15.0] * 2,
+            battery_sales_enabled=False, grid_charge_caps=targets,
+            minimum_grid_charge_kwh=0.02)
+
+        self.assertLess(result['flows'][0]['soc_end_pct'], 40.0)
+        self.assertEqual(result['flows'][1]['soc_end_pct'], 40.0)
+        self.assertGreater(result['flows'][1]['grid_charge_kwh'], 0.02)
+        self.assertGreater(result['flows'][1]['grid_load_kwh'], 0.0)
+
     def test_buy_slot_caps_follow_the_target_instead_of_soc_100(self):
         rows = self.rows(cheap=1.15, dear=1.05)
         targets = [20.0, 25.0, 30.0, 35.0] + [15.0] * 6 + [30.0, 40.0]

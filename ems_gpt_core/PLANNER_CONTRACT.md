@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.43. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.44. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -69,7 +69,11 @@ i terminy uzupełnienia. Dopiero potem optymalizator wybiera przepływy i
 ekonomiczne wykorzystanie zakupów w granicach tego kontraktu. Przebieg
 ekonomiczny nie może obniżać wymaganych rezerw ani celu zamknięcia doby.
 W każdym dozwolonym slocie BUY planer wykorzystuje maksymalny dostępny wolumen
-ładowania wyłącznie do osiągnięcia wyliczonego dla tego slotu `soc_charge_target_pct`.
+ładowania wyłącznie do osiągnięcia wyliczonego dla tego slotu `soc_charge_target_pct`,
+z zachowaniem wykonalności wymaganego SOC na końcu okna i późniejszego obciążenia
+domu w tym samym oknie. Planer zachowuje alternatywne trajektorie SOC, gdy
+natychmiastowe osiągnięcie sufitu uniemożliwiłoby późniejsze ładowanie wraz z
+oddzielnym zasilaniem domu z sieci.
 Target jest twardym sufitem zakupu, nie celem ładowania do 100%; może być dynamiczny,
 gdy SOC ma pokryć prognozowane zużycie do kolejnego okna PV/BUY. Ładowanie ograniczają
 też pojemność baterii, moc falownika i limit importu obiektu. Do horyzontu trafiają tylko sloty z kompletnymi cenami RCE;

@@ -109,8 +109,12 @@ class BuyDeadlineRegressionTests(unittest.TestCase):
         for flow in result["flows"][4:]:
             self.assertGreater(flow["grid_charge_kwh"], 0.0)
             self.assertAlmostEqual(flow["grid_load_kwh"], 0.20)
-        self.assertGreater(result["flows"][4]["grid_charge_kwh"], 1.2)
-        self.assertLess(result["flows"][5]["grid_charge_kwh"], 0.5)
+        # Retain charging headroom before the second slot: charging to 40% in
+        # slot 4 would leave no battery charge in slot 5 to qualify its separate
+        # house-load import, so the window-end target would become unreachable.
+        self.assertGreater(result["flows"][4]["grid_charge_kwh"], 0.0)
+        self.assertLess(result["flows"][4]["grid_charge_kwh"], 1.2)
+        self.assertGreater(result["flows"][5]["grid_charge_kwh"], 0.0)
 
 
     def test_unreachable_buy_deadline_rejects_instead_of_silently_lowering_target(self):
