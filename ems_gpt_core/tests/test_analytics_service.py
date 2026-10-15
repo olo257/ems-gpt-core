@@ -81,7 +81,7 @@ class AnalyticsQualityWindowTests(unittest.TestCase):
         row = {
             "actual_load_kwh": 1.25,
             "detail_actual_ev_kwh": 0.50,
-            "actual_heat_pump_electric_kwh": 0.25,
+            "actual_heating_consumed_kwh": 0.25,
         }
         self.assertEqual(_native_load_kwh(row), 0.5)
 

@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.38. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.39. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -481,7 +481,7 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 - Cel SOC wynika z przyszłego bilansu obciążeń, prognoz PV i wymaganej rezerwy do kolejnej realnej możliwości uzupełnienia energii (PV albo BUY). Średnia historyczna 7/14/28 dni dotyczy celu końca doby, a nie stałego celu w każdym slocie.
 - Najpierw wyznacza się wymaganą trajektorię SOC i deficyty energii, następnie fizycznie możliwe ilości ładowania w konkretnych slotach BUY. Samo oznaczenie okna BUY nie oznacza jeszcze zakupionej energii.
 - Ładowanie baterii ma limit 5 kW, czyli maksymalnie 1,25 kWh na slot 15-minutowy, łącznie dla PV i sieci. Dopuszczalna moc importu z sieci 12 kW nie zwiększa limitu ładowania baterii.
-- Zakup z sieci może ładować baterię tylko w BUY i nie ponad właściwy SOC target. Produkcja PV może ładować baterię ponad target, do 100% SOC.
+- Zakup z sieci ładuje baterię w każdym dostępnym slocie BUY do fizycznego limitu; PV może ładować baterię poza limitem zakupu, do 100% SOC.
 - Przed publikacją walidacja sprawdza planowane kWh importu, sumę ładowania PV + sieć, ciągłość trajektorii SOC i osiągnięcie wymaganego celu przed jego terminem.
 - Nie wolno po cichu obniżać wymaganego SOC ani usuwać terminów jego osiągnięcia tylko po to, aby zaakceptować niewykonalny plan. Niewykonalność musi być jawnie zgłoszona i nie może skutkować publikacją wadliwego kandydata.
 - Warunek kompletności RCE dotyczy doby importowanej (zwykle 96 slotów), ale horyzont planera i jego widok obejmują wszystkie dostępne, ciągłe sloty bieżącej i następnej doby; limit 96 rekordów w UI nie jest kontraktem planowania.
@@ -489,7 +489,18 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 - Testy regresyjne kodu nie są równoznaczne z odbiorem produkcyjnym: po aktualizacji trzeba osobno potwierdzić wersję przebiegu planera w zapisanych slotach, okna BUY, planowane kWh zakupu i osiągalność SOC.
 
 
-### Zakup tylko na ładowanie — 0.40.38
+### Zakup pełnego dostępnego wolumenu w BUY — 0.40.39
+
+Każdy slot BUY, który nie jest SELL, wykorzystuje najwyższą fizycznie możliwą
+moc ładowania baterii. Wolumen ograniczają pojemność baterii, limit ładowania
+5 kW łącznie z PV oraz limit importu obiektu 12 kW. Sloty poza BUY nigdy nie
+ładują baterii z sieci. Koszt ani tańsze późniejsze okno nie odraczają zakupu.
+
+Wymagany SOC na końcu okna BUY pozostaje twardym warunkiem. Jeśli nie da się go
+osiągnąć przy pełnym dostępnym wolumenie, planer odrzuca kandydata i zachowuje
+ostatni zaakceptowany plan; nie obniża celu po cichu.
+
+### Zakup tylko na ładowanie
 
 Przepływ `grid_charge_kwh` służy wyłącznie zwiększeniu SOC baterii w BUY.
 Możliwy do uniknięcia `grid_load_kwh` powyżej progu technicznego jest

@@ -153,8 +153,8 @@ class PairedArbitrageTests(unittest.TestCase):
             rows, 20.0, 10.0, 10.0, 0.90, 0.95, 0.0, 0.05,
             5.0, 15, [10.0, 10.0], 30.0, 0.25, 100.0)
 
-        self.assertEqual(result["flows"][-1]["soc_end_pct"], 30.0)
-        self.assertEqual(result["achieved_terminal_soc_pct"], 30.0)
+        self.assertEqual(result["flows"][-1]["soc_end_pct"], 42.5)
+        self.assertEqual(result["achieved_terminal_soc_pct"], 42.5)
         self.assertEqual(result["terminal_shortfall_pct"], 0.0)
 
     def test_substep_pv_is_not_counted_as_charge_without_soc_transition(self):
@@ -874,7 +874,7 @@ class PairedArbitrageTests(unittest.TestCase):
                 rows, 30.0, 15.0, 15.0, 0.9, 0.95, 0.08, 0.05,
                 5.0, 15, [15.0], 15.0, 0.25, 100.0, [30.0], {0})
 
-    def test_due_target_is_capped_to_reachable_soc_in_rolling_replan(self):
+    def test_unreachable_due_target_rejects_rolling_replan(self):
         rows = [
             {"price_buy_pln_kwh": 0.50, "price_sell_pln_kwh": 0.0,
              "buy_window": False, "sale_window": False,
@@ -884,17 +884,11 @@ class PairedArbitrageTests(unittest.TestCase):
              "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0},
         ]
 
-        result = optimize_energy_horizon(
-            rows, 20.0, 15.0, 15.0, 0.95, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0, 15.0], 15.0, 0.25, 100.0,
-            [20.0, 80.0], {1}, {1})
-
-        self.assertLess(result["effective_target_pcts"][1], 80.0)
-        self.assertEqual(
-            result["flows"][1]["soc_end_pct"],
-            result["effective_target_pcts"][1],
-        )
-        self.assertGreater(result["flows"][1]["grid_charge_kwh"], 0.0)
+        with self.assertRaisesRegex(RuntimeError, "BUY_TARGET_UNREACHABLE:slot=1"):
+            optimize_energy_horizon(
+                rows, 20.0, 15.0, 15.0, 0.95, 0.95, 0.08, 0.05,
+                5.0, 15, [15.0, 15.0], 15.0, 0.25, 100.0,
+                [20.0, 80.0], {1}, {1})
 
     def test_database_flags_are_strict_true_false_for_historical_rows(self):
         self.assertIs(strict_database_bool(False, "buy_window"), False)
@@ -953,7 +947,7 @@ class PairedArbitrageTests(unittest.TestCase):
         floors,targets=derive_soc_commitments(result["flows"],15.0,15.0,15.0,90.0,95.0)
         self.assertEqual(floors[0],15.0)
         self.assertGreater(targets[0],floors[0])
-        self.assertAlmostEqual(targets[0],result["flows"][0]["soc_end_pct"])
+        self.assertLessEqual(targets[0],result["flows"][0]["soc_end_pct"])
         self.assertEqual(targets[5],targets[0])
         self.assertEqual(targets[6],15.0)
 

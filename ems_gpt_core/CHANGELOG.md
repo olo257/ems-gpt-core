@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.39 — pełny dostępny zakup w każdym BUY
+
+- W każdym slocie BUY planer ładuje baterię maksymalnym dostępnym wolumenem, z uwzględnieniem pojemności, limitu mocy i limitu importu.
+- Niewykonalny cel końca okna BUY odrzuca kandydata; planer nie publikuje już niższego, osiągalnego SOC jako pozornego sukcesu.
+- Dodano regresje pełnego wykorzystania wolumenu BUY i twardego odrzucenia nieosiągalnego celu.
+
 ## 0.40.38 — fizyczny residual obciążenia przy limicie baterii
 
 - Reachability i optymalizator dopuszczają nieunikniony import na odbiory wyłącznie przy osiągnięciu limitu mocy rozładowania lub rezerwy SOC.

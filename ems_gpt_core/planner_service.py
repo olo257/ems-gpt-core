@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 44122)
+Total output lines: 3137
+
 from __future__ import annotations
 
 import json
@@ -11,7 +14,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_38"
+PLANNER_VERSION = "CORE_0_40_39"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -904,59 +907,23 @@ def economic_buy_charge_caps(rows: list[dict], required_targets: list[float],
                              capacity_kwh: float = 15.0, eta_c: float = 0.9,
                              eta_d: float = 0.95, max_power_kw: float = 5.0,
                              slot_minutes: int = 15) -> list[float]:
-    """Permit cheaper earlier BUY to replace dearer later BUY, without new floors.
+    """Allow the full available battery charge in every permitted BUY slot.
 
-    These are optional DP ceilings, not deadlines or executor targets. The
-    complete energy balance chooses the actual extra energy; execution receives
-    only the peak of its selected consecutive charging run.
+    BUY is an instruction to use available battery charging capacity, limited
+    by physical SOC, inverter power and the site's total import limit. The
+    optimized dispatch still chooses the feasible trajectory and never adds
+    grid charging outside an RCE BUY window.
     """
     if len(rows) != len(required_targets):
         raise ValueError("ECONOMIC_BUY_CAP_LENGTH_MISMATCH")
     cap = min(100.0, max(0.0, float(max_soc_pct)))
     result = [min(cap, float(value)) for value in required_targets]
-    # An optional price allowance must still correspond to forecast demand,
-    # not speculative stockpiling (particularly at a negative price). Compute
-    # the bridge with future BUY removed, but retain usable PV and all original
-    # requirements. Its ceiling permits replacing future purchases only.
-    capacity = max(0.001, float(capacity_kwh))
-    demand_caps = [0.0] * len(rows)
-    next_kwh = 0.0
-    for index in range(len(rows) - 1, -1, -1):
-        after_kwh = max(next_kwh, capacity * result[index] / 100.0)
-        demand_caps[index] = min(cap, math.ceil(after_kwh / capacity * 1000.0 - 1e-9) / 10.0)
-        row = rows[index]
-        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
-                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
-        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
-        deficit = max(0.0, load - pv) / max(0.01, eta_d)
-        pv_supply = min(max_power_kw * slot_minutes / 60.0,
-                        max(0.0, pv - load)) * max(0.01, eta_c)
-        next_kwh = max(0.0, after_kwh + deficit - pv_supply)
     allowed = [strict_database_bool(row.get("buy_window", False), "buy_window")
                and not strict_database_bool(row.get("sale_window", False), "sale_window")
                for row in rows]
-    # Equalize the existing requirement throughout every uninterrupted BUY
-    # window before considering an optional price-driven increase.
-    start = 0
-    while start < len(rows):
-        if not allowed[start]:
-            start += 1
-            continue
-        end = start + 1
-        while end < len(rows) and allowed[end]:
-            end += 1
-        window_target = max(result[start:end])
-        for index in range(start, end):
-            result[index] = window_target
-        start = end
-    future_max_price = None
-    for index in range(len(rows) - 1, -1, -1):
-        if not allowed[index] or rows[index].get("price_buy_pln_kwh") is None:
-            continue
-        price = float(rows[index]["price_buy_pln_kwh"])
-        if future_max_price is not None and price < future_max_price - 1e-9:
-            result[index] = max(result[index], demand_caps[index])
-        future_max_price = price if future_max_price is None else max(price, future_max_price)
+    for index, row in enumerate(rows):
+        if allowed[index] and row.get("price_buy_pln_kwh") is not None:
+            result[index] = cap
     return result
 
 
@@ -1413,6 +1380,14 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                         "slot_cost_pln": slot_cost})
         if not next_costs:
             raise RuntimeError(f"No feasible SOC state at horizon slot {index}")
+        if grid_charge_allowed:
+            # A BUY slot uses the maximum physically feasible battery charge.
+            # Keeping only the highest reachable SOC state prevents the price
+            # objective from deferring available volume to a later window.
+            highest_reachable_unit = max(next_costs)
+            next_costs = {highest_reachable_unit: next_costs[highest_reachable_unit]}
+            next_predecessors = {
+                highest_reachable_unit: next_predecessors[highest_reachable_unit]}
         effective_target_unit = requested_target_unit
         if minimum_soc_targets is not None and index in target_due_indices:
             # Determine the due SOC from transitions that survived the full
@@ -1430,14 +1405,13 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     unit: predecessor for unit, predecessor in next_predecessors.items()
                     if unit in eligible}
             else:
-                # Keep the physically reachable state rather than reject the
-                # entire production plan. Record the actual due SOC separately
-                # from the requested target, preserving the original demand.
+                # Do not publish a plan that silently misses the requested
+                # battery replenishment commitment.
                 best_reachable_unit = max(next_costs)
-                next_costs = {best_reachable_unit: next_costs[best_reachable_unit]}
-                next_predecessors = {
-                    best_reachable_unit: next_predecessors[best_reachable_unit]}
-                effective_target_unit = best_reachable_unit
+                raise RuntimeError(
+                    f"BUY_TARGET_UNREACHABLE:slot={index}:"
+                    f"requested={requested_target_unit * step:.3f}:"
+                    f"reachable={best_reachable_unit * step:.3f}")
         effective_target_pcts.append(effective_target_unit * step)
         costs, predecessors = next_costs, predecessors+[next_predecessors]
     candidates = [(cost, unit) for unit, cost in costs.items() if unit >= terminal_unit]
@@ -1541,321 +1515,7 @@ def derive_soc_commitments(flows: list[dict], capacity_kwh: float,
     for index in range(len(flows) - 1, -1, -1):
         flow = flows[index]
         soc_end = max(reserve_pct, float(flow.get("soc_end_pct") or reserve_pct))
-        battery_sell = max(0.0, float(flow.get("battery_sell_kwh") or 0.0))
-        # Target is the energy required after this slot to execute every
-        # accepted future flow until the next replenishment represented by the
-        # optimizer. It is deliberately calculated backwards, not copied from
-        # the current floor or from the current SOC trajectory.
-        required_pct = required_after / capacity * 100.0
-        targets[index] = min(target_cap_pct, max(reserve_pct, required_pct))
-        # Floor limits deliberate battery export only. Native load may still
-        # discharge to the technical reserve.
-        if battery_sell > 1e-9:
-            floors[index] = min(floor_cap_pct, soc_end)
-        charge = max(0.0, float(flow.get("battery_charge_internal_kwh") or 0.0))
-        discharge = max(0.0, float(flow.get("battery_discharge_internal_kwh") or 0.0))
-        required_after = max(reserve_kwh, required_after + discharge - charge)
-    return floors, targets
-
-
-def bridge_soc_commitments(rows: list[dict], flows: list[dict], capacity_kwh: float,
-                           reserve_pct: float, eta_c: float, eta_d: float,
-                           max_grid_slot_kwh: float, uncertainty_weight: float,
-                           floor_cap_pct: float,
-                           target_cap_pct: float,
-                           sale_floor_pct: list[float] | None = None,
-                           terminal_soc_pct: float | None = None,
-                           soc_step_pct: float = 0.25) -> tuple[list[float], list[float]]:
-    """SOC needed until the next forecast PV or planned battery BUY.
-
-    A sale does not create a literal buy-back debt.  Its energy is recovered
-    by forecast PV first; grid BUY covers only the remaining bridge deficit.
-    The target in a BUY slot is never lower than the optimizer's planned SOC
-    after that charge, otherwise the executor would stop before the plan is met.
-    """
-    capacity = max(0.001, float(capacity_kwh))
-    reserve = max(0.0, min(100.0, float(reserve_pct)))
-    floor_cap = max(reserve, min(100.0, float(floor_cap_pct)))
-    target_cap = max(floor_cap, min(100.0, float(target_cap_pct)))
-    soc_step = max(0.001, float(soc_step_pct))
-    charge_efficiency = max(0.01, float(eta_c))
-    discharge_efficiency = max(0.01, float(eta_d))
-    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
-    floors = [reserve] * len(rows)
-    targets = [reserve] * len(rows)
-
-    replenishment = []
-    for row in rows:
-        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
-                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
-        pv_surplus = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0) - load)
-        replenishment.append(
-            strict_database_bool(row.get("buy_window", False), "buy_window")
-            or pv_surplus > 1e-9)
-
-    cluster_end = [None] * len(rows)
-    index = 0
-    while index < len(rows):
-        if not replenishment[index]:
-            index += 1
-            continue
-        end = index
-        while end + 1 < len(rows) and replenishment[end + 1]:
-            end += 1
-        for member in range(index, end + 1):
-            cluster_end[member] = end
-        index = end + 1
-
-    for index in range(len(rows)):
-        floors[index] = min(floor_cap, max(
-            reserve,
-            float(sale_floor_pct[index]) if sale_floor_pct is not None else reserve,
-        ))
-        start = cluster_end[index] if cluster_end[index] is not None else index
-        need_kwh = 0.0
-        has_next_replenishment = False
-        for future in range(start + 1, len(rows)):
-            if replenishment[future]:
-                has_next_replenishment = True
-                break
-            row = rows[future]
-            load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
-                    + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
-            pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
-            deficit = max(0.0, load - pv) / discharge_efficiency
-            surplus = max(0.0, pv - load) * charge_efficiency
-            sale_internal = (max(0.0, float(flows[future].get("battery_sell_kwh") or 0.0))
-                             / discharge_efficiency)
-            need_kwh = max(
-                0.0,
-                need_kwh + deficit * (1.0 + uncertainty) + sale_internal
-                - surplus * max(0.0, 1.0 - uncertainty),
-            )
-        base_pct = (reserve if has_next_replenishment or terminal_soc_pct is None
-                    else max(reserve, min(target_cap, float(terminal_soc_pct))))
-        raw_target = min(target_cap, base_pct + need_kwh / capacity * 100.0)
-        # Target is an executable SOC ceiling.  The optimizer and inverter use
-        # discrete SOC steps, therefore round the required energy upward to the
-        # same step before validating or publishing it.
-        targets[index] = min(
-            target_cap,
-            math.ceil(raw_target / soc_step - 1e-9) * soc_step,
-        )
-    return floors, targets
-
-
-def backward_target_commitments(rows: list[dict], capacity_kwh: float,
-                                reserve_pct: float, eta_c: float, eta_d: float,
-                                uncertainty_weight: float, target_cap_pct: float,
-                                terminal_soc_pct: float,
-                                soc_step_pct: float = 0.25,
-                                selected_buy_indices: set[int] | None = None,
-                                max_charge_kw: float = 5.0,
-                                slot_minutes: int = 15) -> dict:
-    """Build the executable SOC contract before dispatch decisions.
-
-    The pass walks the 15-minute table backwards.  Future PV surplus is
-    reserved against future load before it may become flexible surplus.  A
-    contiguous BUY window is a possible replenishment boundary, not an order
-    to import.  The returned target is the minimum energy which must remain at
-    the end of each slot; charging uses the same value as its upper ceiling.
-    """
-    if not rows:
-        return {"targets": [], "due": [], "source": [], "reserved_pv_kwh": []}
-    capacity = max(0.001, float(capacity_kwh))
-    reserve = max(0.0, min(100.0, float(reserve_pct)))
-    reserve_kwh = capacity * reserve / 100.0
-    cap = max(reserve, min(100.0, float(target_cap_pct)))
-    terminal_kwh = capacity * max(reserve, min(cap, float(terminal_soc_pct))) / 100.0
-    charge_efficiency = max(0.01, float(eta_c))
-    discharge_efficiency = max(0.01, float(eta_d))
-    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
-    step = max(0.001, float(soc_step_pct))
-    buy = [strict_database_bool(row.get("buy_window", False), "buy_window") for row in rows]
-    if selected_buy_indices is None:
-        selected_buy_indices = {i for i, value in enumerate(buy) if value}
-    selected_buy_indices = {i for i in selected_buy_indices if 0 <= i < len(rows) and buy[i]}
-    # Only a BUY window actually selected by the economic dispatch is a
-    # replenishment boundary. Merely being marked BUY is permission, not an
-    # obligation to postpone energy until that (possibly expensive) window.
-    selected_buy_starts = {
-        i for i in selected_buy_indices
-        if i == 0 or i - 1 not in selected_buy_indices
-    }
-    selected_buy_end = {}
-    for start in selected_buy_starts:
-        end = start
-        while end + 1 in selected_buy_indices:
-            end += 1
-        selected_buy_end[start] = end
-
-    targets = [reserve] * len(rows)
-    due = [None] * len(rows)
-    source = ["HORIZON"] * len(rows)
-    reserved_pv = [0.0] * len(rows)
-    required_after = terminal_kwh
-    next_due = rows[-1].get("slot_end") or rows[-1].get("slot_start")
-    next_source = "HORIZON"
-    for i in range(len(rows) - 1, -1, -1):
-        row = rows[i]
-        raw_pct = required_after / capacity * 100.0
-        targets[i] = min(cap, math.ceil(raw_pct / step - 1e-9) * step)
-        due[i] = next_due
-        source[i] = next_source
-        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
-                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
-        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
-        deficit_internal = max(0.0, load - pv) / discharge_efficiency * (1.0 + uncertainty)
-        surplus_internal = max(0.0, pv - load) * charge_efficiency * max(0.0, 1.0 - uncertainty)
-        before_surplus = required_after + deficit_internal
-        used_surplus = min(max(0.0, before_surplus - reserve_kwh), surplus_internal)
-        reserved_pv[i] = used_surplus / charge_efficiency
-        required_before = max(reserve_kwh, before_surplus - used_surplus)
-        if i in selected_buy_starts:
-            # BUY sets the due point for the remaining requirement, but must
-            # not lower the ceiling in earlier slots. Earlier PV has priority
-            # and may economically displace grid energy bought in this window.
-            end = selected_buy_end[i]
-            next_due = rows[end].get("slot_end") or rows[end].get("slot_start")
-            next_source = "BUY"
-            # A selected BUY is an executable replenishment boundary.  The
-            # slots before it only need enough energy to reach that window;
-            # they must not inherit the requirement for the rest of the
-            # horizon.  The BUY slot itself keeps the full post-window target
-            # calculated above and the optimizer validates it at window end.
-            buy_capacity_internal = ((end - i + 1) * max(0.0, float(max_charge_kw))
-                                     * max(1, int(slot_minutes)) / 60.0
-                                     * charge_efficiency)
-            required_before = max(reserve_kwh, required_before - buy_capacity_internal)
-        elif (surplus_internal > 1e-9 and used_surplus > 1e-9
-              and before_surplus - used_surplus <= reserve_kwh + 1e-9):
-            # PV closes the bridge only when its conservative usable surplus
-            # covers the complete remaining requirement.  Partial PV reduces
-            # the target but cannot erase an unfunded remainder.
-            next_due = row.get("slot_end") or row.get("slot_start")
-            next_source = "PV"
-            required_before = reserve_kwh
-        required_after = required_before
-    # ``target`` has two deliberately separate executor meanings: it is the
-    # charge ceiling in every slot and becomes a hard minimum only at the end
-    # of a selected replenishment window.  Before such a BUY, usable PV must
-    # be allowed to displace the future grid charge.  Give all preceding rows
-    # assigned to that BUY the window's final ceiling; do not turn it into an
-    # earlier minimum (``target_due_indices`` controls that independently).
-    for start in selected_buy_starts:
-        buy_target = targets[start]
-        buy_due = rows[selected_buy_end[start]].get("slot_end") or rows[selected_buy_end[start]].get("slot_start")
-        for i in range(start - 1, -1, -1):
-            if source[i] != "BUY" or due[i] != buy_due:
-                break
-            targets[i] = max(targets[i], buy_target)
-    # PV is a replenishment *window*, not a single late slot.  The largest SOC
-    # requirement reached within one continuous daylight block is its charge
-    # ceiling from the first forecast PV.  Split at an actually selected BUY,
-    # because grid replenishment starts a new energy bridge.  Without this
-    # pass, early morning surplus is exported while a later slot in the same
-    # PV window still carries the energy requirement for the evening/night.
-    window_start = None
-    for boundary in range(len(rows) + 1):
-        pv_active = (boundary < len(rows)
-                     and float(rows[boundary].get("forecast_pv_total_kwh") or 0.0) > 1e-9
-                     and boundary not in selected_buy_starts)
-        if pv_active and window_start is None:
-            window_start = boundary
-        if window_start is not None and not pv_active:
-            window_end = boundary - 1
-            window_target = max(targets[window_start:window_end + 1])
-            for index in range(window_start, window_end + 1):
-                targets[index] = max(targets[index], window_target)
-            window_start = None
-
-    # When a later PV slot closes the backward bridge, preceding non-PV rows
-    # assigned to that due point inherit the already propagated window ceiling.
-    due_index = {
-        row.get("slot_end") or row.get("slot_start"): i
-        for i, row in enumerate(rows)
-    }
-    for i in range(len(rows)):
-        if source[i] != "PV" or due[i] not in due_index:
-            continue
-        closing_index = due_index[due[i]]
-        targets[i] = max(targets[i], targets[closing_index])
-    return {"targets": targets, "due": due, "source": source,
-            "reserved_pv_kwh": reserved_pv}
-
-
-def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
-                        capacity_kwh: float, reserve_pct: float,
-                        eta_c: float, eta_d: float,
-                        uncertainty_weight: float, terminal_soc_pct: float,
-                        target_cap_pct: float,
-                        soc_step_pct: float = 0.25,
-                        daily_terminal_soc_pcts: list[float] | None = None) -> dict:
-    """Build independent required, charge-target and sale contracts.
-
-    The economic pass supplies an exact grid-energy allocation.  The backward
-    pass subtracts only that allocated energy, never the theoretical capacity
-    of a BUY window.  Therefore a replenishment boundary cannot reset an
-    unfunded requirement to the technical reserve.
-    """
-    if len(rows) != len(economic_flows):
-        raise ValueError("SOC_CONTRACT_FLOW_LENGTH_MISMATCH")
-    if not rows:
-        return {"required": [], "charge_targets": [], "due": [],
-                "source": [], "reserved_pv_kwh": [], "buy_due_indices": set()}
-    capacity = max(0.001, float(capacity_kwh))
-    reserve = max(0.0, min(100.0, float(reserve_pct)))
-    cap = max(reserve, min(100.0, float(target_cap_pct)))
-    reserve_kwh = capacity * reserve / 100.0
-    required_after = capacity * max(
-        reserve, min(cap, float(terminal_soc_pct))) / 100.0
-    charge_efficiency = max(0.01, float(eta_c))
-    discharge_efficiency = max(0.01, float(eta_d))
-    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
-    step = max(0.001, float(soc_step_pct))
-    required = [reserve] * len(rows)
-    required_after_slot = [reserve] * len(rows)
-    charge_targets = [reserve] * len(rows)
-    due = [None] * len(rows)
-    source = ["HORIZON"] * len(rows)
-    reserved_pv = [0.0] * len(rows)
-
-    selected_buy = {
-        i for i, flow in enumerate(economic_flows)
-        if float(flow.get("grid_charge_kwh") or 0.0) > 1e-9
-    }
-    buy_due_indices = {
-        i for i in selected_buy
-        if i + 1 == len(rows) or i + 1 not in selected_buy
-    }
-    next_due = rows[-1].get("slot_end") or rows[-1].get("slot_start")
-    next_source = "HORIZON"
-    for i in range(len(rows) - 1, -1, -1):
-        if daily_terminal_soc_pcts is not None:
-            required_after = max(
-                required_after,
-                capacity * max(reserve, min(
-                    cap, float(daily_terminal_soc_pcts[i]))) / 100.0,
-            )
-        raw_required_pct = required_after / capacity * 100.0
-        required_after_slot[i] = max(reserve, min(cap, raw_required_pct))
-        flow = economic_flows[i]
-        # Keep the independently calculated balance contract intact.
-        # Feasibility is handled by the constrained optimization/recovery pass;
-        # an earlier economic trajectory must not lower the required SOC.
-        rounded_required = math.ceil(raw_required_pct / step - 1e-9) * step
-        required[i] = max(reserve, min(cap, rounded_required))
-        due[i] = next_due
-        source[i] = next_source
-        row = rows[i]
-        # The economic pass has already closed the physical balance.  Build
-        # the mandatory bridge from its exact battery flows, not from the raw
-        # load/PV deficit.  Recounting the complete deficit here also counted
-        # unavoidable grid supply after the battery reached reserve and could
-        # demand an SOC that was impossible to reach in the current slot.
-        # Deliberate battery sale is intentionally excluded: it is optional
-        # energy above the contract, never a reason to raise required SOC.
-        native_discharge_internal = (
+        battery_sell = max(0.0, float(flow.get("battery_s…4122 tokens truncated…        native_discharge_internal = (
             max(0.0, float(flow.get("battery_to_load_kwh") or 0.0))
             / discharge_efficiency * (1.0 + uncertainty)
         )

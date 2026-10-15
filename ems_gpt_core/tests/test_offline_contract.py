@@ -139,8 +139,8 @@ class OfflineContractTests(unittest.TestCase):
             "orphan_grid_hold",
         ):
             self.assertNotIn(obsolete, planner)
-        self.assertIn("required_floor_unit", planner)
-        self.assertIn("current_energy - max(first_unit, required_unit) * unit_kwh", planner)
+        self.assertIn("floor_pct = max(reserve, min(100.0, float(sale_floor_pct[index])))", planner)
+        self.assertIn("current_energy-battery_sell/eta_d < capacity*floor_pct/100-1e-9", planner)
         self.assertIn("max_grid_import_kw=max_grid_import_kw", planner)
         self.assertNotIn("enforced_target_unit", planner)
 
@@ -171,7 +171,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("backward_target_commitments(", planner)
         self.assertIn("daily_close_soc_requirements(", planner)
         self.assertIn("required_soc_pcts=enforced_daily_required", planner)
-        self.assertIn("daily_terminal_soc_unreachable", planner)
+        self.assertIn("current_day_terminal_soc_unreachable", planner)
         self.assertIn("waived_daily_closes", planner)
         self.assertIn("Wagi końcowego SOC 7/14/28 dni muszą sumować się do 100%", executor)
 
@@ -213,7 +213,7 @@ class OfflineContractTests(unittest.TestCase):
     def test_daily_soc_recovery_disables_sales_before_waiving_target(self):
         planner = MODULE_SOURCES["planner_service.py"]
         disable = planner.index("if battery_sales_enabled:")
-        waive = planner.index("enforced_daily_required[failed_index] = safety_required_soc[failed_index]")
+        waive = planner.index("enforced_daily_required[failed_index] = recoverable_required")
         self.assertLess(disable, waive)
         self.assertIn('"battery_sales_disabled_for_daily_soc"', planner)
 
@@ -440,7 +440,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("checks[\"n\"]==len(source)", planner)
         self.assertIn("MISSING_LOAD_FORECAST", planner)
         self.assertNotIn("ORDER BY slot_start LIMIT 192", materialization)
-        self.assertIn("LIMIT 288", materialization)
+        self.assertIn("LIMIT 2688", materialization)
         self.assertIn("ostatni ciągły niezamknięty slot", PLANNER_CONTRACT)
         self.assertIn("Replan nie może kończyć się na granicy dnia", PLANNER_CONTRACT)
 
@@ -690,7 +690,8 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_hp_load_is_coupled_into_soc_and_recharge_plan(self):
         self.assertIn('planned_heating_kwh = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25', SOURCE)
-        self.assertIn('max(\n                    planned_heating_kwh, historical_dhw_kwh)', SOURCE)
+        self.assertIn('work["forecast_heat_pump_load_kwh"] = planned_heating_kwh', SOURCE)
+        self.assertIn('work["forecast_heat_pump_dhw_load_kwh"] = historical_dhw_kwh', SOURCE)
         self.assertIn('hp_load = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25', SOURCE)
         self.assertIn("load = native_load + hp_load", SOURCE)
         self.assertIn("load=native_load+hp_load", SOURCE)
