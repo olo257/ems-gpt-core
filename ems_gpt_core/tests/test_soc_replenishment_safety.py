@@ -60,54 +60,48 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             hard_target_indices=set(), target_due_indices={1},
             required_soc_pcts=[17.0, 17.0], battery_sales_enabled=False)
 
-        # The 1 kWh house load and battery charge can share the 12 kW
-        # connection limit (3 kWh per 15-minute slot). The requested 100% SOC
-        # remains physically unreachable in this single slot, so the planner
-        # reports the best feasible SOC instead of failing the full plan.
+        # The house load is served from the battery. The planner cannot count
+        # direct grid supply to the house as an attainable BUY charge target.
         flow = plan["flows"][1]
         self.assertLess(plan["effective_target_pcts"][1], 100.0)
         self.assertAlmostEqual(flow["soc_end_pct"], plan["effective_target_pcts"][1])
         self.assertGreaterEqual(flow["soc_end_pct"], 17.0)
-        self.assertAlmostEqual(flow["grid_charge_kwh"], 1.25)
-        self.assertGreater(flow["grid_load_kwh"], 0.0)
-        self.assertLessEqual(flow["grid_charge_kwh"] + flow["grid_load_kwh"], 3.0 + 1e-9)
-        self.assertLessEqual(flow["grid_charge_kwh"] / 0.25, 5.0 + 1e-9)
+        self.assertGreater(flow["battery_to_load_kwh"], 0.95)
+        self.assertLessEqual(flow["grid_load_kwh"], 0.05)
+        self.assertEqual(flow["grid_charge_kwh"], 0.0)
 
-    def test_buy_combined_import_respects_12kw_grid_limit(self):
+    def test_buy_charge_alone_respects_12kw_grid_limit(self):
         rows = self.rows(1, start=datetime(2026, 10, 10, 14, 0))
         rows[0]["buy_window"] = True
-        rows[0]["forecast_load_kwh"] = 2.0
         plan = optimize_energy_horizon(
             rows, 69.0, 15.0, 17.0, 0.9, 0.95, 0.08, 0.05,
-            5.0, 15, [17.0], 17.0, 0.1, 100.0,
+            20.0, 15, [17.0], 17.0, 0.1, 100.0,
             minimum_soc_targets=[100.0], hard_target_indices=set(),
             target_due_indices={0}, required_soc_pcts=[17.0],
             battery_sales_enabled=False, max_grid_import_kw=12.0)
 
         flow = plan["flows"][0]
-        self.assertAlmostEqual(flow["grid_load_kwh"], 2.0)
-        self.assertAlmostEqual(flow["grid_charge_kwh"], 1.0)
-        self.assertAlmostEqual(flow["grid_load_kwh"] + flow["grid_charge_kwh"], 3.0)
-        self.assertLessEqual(flow["grid_charge_kwh"], 1.25)
-        self.assertAlmostEqual(flow["soc_end_pct"], 75.0)
+        self.assertEqual(flow["grid_load_kwh"], 0.0)
+        self.assertAlmostEqual(flow["grid_charge_kwh"], 3.0)
+        self.assertLessEqual(flow["grid_charge_kwh"], 12.0 * 0.25 + 1e-9)
+        self.assertAlmostEqual(flow["soc_end_pct"], 87.0)
 
-    def test_reachability_matches_combined_grid_import_limit(self):
+    def test_reachability_counts_only_battery_grid_charge(self):
         rows = self.rows(1, start=datetime(2026, 10, 10, 14, 0))
         rows[0]["buy_window"] = True
-        rows[0]["forecast_load_kwh"] = 2.0
 
         profile = _soc_reachability_profile(
-            rows, 69.0, 15.0, 17.0, 0.9, 0.95, 5.0, 15, 0.1,
-            [75.0], max_grid_import_kw=12.0)
-        self.assertAlmostEqual(profile["reachable_soc_ceiling_pcts"][0], 75.0)
-        self.assertAlmostEqual(profile["feasible_soc_path_pcts"][0], 75.0)
+            rows, 69.0, 15.0, 17.0, 0.9, 0.95, 20.0, 15, 0.1,
+            [87.0], max_grid_import_kw=12.0)
+        self.assertAlmostEqual(profile["reachable_soc_ceiling_pcts"][0], 87.0)
+        self.assertAlmostEqual(profile["feasible_soc_path_pcts"][0], 87.0)
 
         recovery = validate_recoverable_soc_requirements(
-            rows, [75.0], 69.0, 17.0, 100.0, capacity_kwh=15.0,
-            eta_c=0.9, eta_d=0.95, max_power_kw=5.0, slot_minutes=15,
+            rows, [87.0], 69.0, 17.0, 100.0, capacity_kwh=15.0,
+            eta_c=0.9, eta_d=0.95, max_power_kw=20.0, slot_minutes=15,
             soc_step_pct=0.1, max_grid_import_kw=12.0)
         self.assertEqual(recovery["unreachable_indices"], [])
-        self.assertAlmostEqual(recovery["required_soc_pcts"][0], 75.0)
+        self.assertAlmostEqual(recovery["required_soc_pcts"][0], 87.0)
 
     def test_unreachable_close_uses_best_reachable_soc_and_keeps_reserve(self):
         rows = self.rows(2)
