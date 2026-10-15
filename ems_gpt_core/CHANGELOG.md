@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.40 — pełny zakup także przy braku ceny w slocie BUY
+
+- Okno BUY wyznacza zgodę na ładowanie; brak ceny w pojedynczym wierszu nie ogranicza wolumenu do bieżącego targetu SOC.
+- Każdy slot BUY wykorzystuje pełną fizycznie dostępną moc ładowania w ramach pojemności baterii i limitu importu.
+- Dodano regresję okna BUY z brakującą ceną.
+
 ## 0.40.39 — pełny dostępny zakup w każdym BUY
 
 - W każdym slocie BUY planer ładuje baterię maksymalnym dostępnym wolumenem, z uwzględnieniem pojemności, limitu mocy i limitu importu.
