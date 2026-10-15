@@ -68,10 +68,11 @@ sprawności, rezerwa oraz dopuszczone przez RCE okna BUY wyznaczają wymagane SO
 i terminy uzupełnienia. Dopiero potem optymalizator wybiera przepływy i
 ekonomiczne wykorzystanie zakupów w granicach tego kontraktu. Przebieg
 ekonomiczny nie może obniżać wymaganych rezerw ani celu zamknięcia doby.
-Opcjonalny sufit ładowania jest oddzielony od obowiązkowego wymogu i terminu:
-tańszy wcześniejszy BUY może zastąpić droższy późniejszy BUY, do fizycznej
-pojemności baterii i limitów mocy. Ilość zakupu wybiera pełny bilans horyzontu;
-podniesienie opcjonalnego sufitu nie wymusza zakupu do 100%.
+W każdym dozwolonym oknie BUY planner wykorzystuje pełny dostępny wolumen
+ładowania baterii, ograniczony jej pojemnością, mocą falownika i limitem
+importu obiektu. Brak ceny w wierszu okna nie obniża tego limitu: okno BUY
+pozostaje zgodą RCE na zakup, a luka cenowa nie może po cichu blokować
+ładowania ani czynić osiągalnego celu SOC nieosiągalnym.
 Wykonawca otrzymuje najwyższy target rzeczywiście wybranego ciągu zakupów już
 od pierwszego slotu tego ciągu. Wymagany SOC na końcu okna jest sprawdzany
 osobno; opcjonalny szczyt wcześniejszego ładowania nie jest nowym wymogiem SOC.

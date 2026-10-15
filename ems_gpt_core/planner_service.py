@@ -919,7 +919,12 @@ def economic_buy_charge_caps(rows: list[dict], required_targets: list[float],
                and not strict_database_bool(row.get("sale_window", False), "sale_window")
                for row in rows]
     for index, row in enumerate(rows):
-        if allowed[index] and row.get("price_buy_pln_kwh") is not None:
+        # The BUY window is the permission to import; price availability is
+        # handled by window construction/market data, not as a second charge
+        # gate here.  Otherwise a BUY slot with a missing price silently
+        # falls back to the SOC bridge cap and can make its deadline
+        # unreachable despite available inverter capacity.
+        if allowed[index]:
             result[index] = cap
     return result
 

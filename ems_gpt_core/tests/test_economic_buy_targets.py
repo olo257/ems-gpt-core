@@ -70,7 +70,13 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         self.assertEqual(caps[4:10], targets[4:10])
         self.assertEqual(caps[10:], [100.0] * 2)
 
-    def test_sell_or_missing_price_does_not_offer_later_buy(self):
+    def test_missing_price_does_not_block_full_volume_in_buy_window(self):
+        rows = self.rows(cheap=1.15, dear=1.05)
+        rows[0]['price_buy_pln_kwh'] = None
+        caps = economic_buy_charge_caps(rows, [15.0] * len(rows))
+        self.assertEqual(caps[0], 100.0)
+
+    def test_sell_blocks_buy_but_missing_price_does_not_reduce_buy_volume(self):
         rows = self.rows()
         for row in rows[10:]:
             row['sale_window'] = True
@@ -82,7 +88,8 @@ class EconomicBuyTargetsTests(unittest.TestCase):
             row['price_buy_pln_kwh'] = None
         caps = economic_buy_charge_caps(rows, [30.0] * 12)
         self.assertEqual(caps[:4], [100.0] * 4)
-        self.assertEqual(caps[4:], [30.0] * 8)
+        self.assertEqual(caps[4:10], [30.0] * 6)
+        self.assertEqual(caps[10:], [100.0] * 2)
 
     def test_optional_cap_does_not_become_required_deadline(self):
         rows = self.rows()
