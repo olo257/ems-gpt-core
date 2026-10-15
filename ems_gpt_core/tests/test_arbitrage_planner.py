@@ -235,6 +235,56 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertAlmostEqual(result["extra_native_import_kwh"], 0.30)
         self.assertAlmostEqual(result["extra_grid_charge_cost_pln"], 0.28)
 
+    def test_sale_counterfactual_rejects_sale_below_prior_grid_load_value(self):
+        rows = [
+            {"price_buy_pln_kwh": 2.24145, "price_sell_pln_kwh": 1.19390},
+            {"price_buy_pln_kwh": 2.24145, "price_sell_pln_kwh": 1.64145},
+        ]
+        sale = {"objective_pln": -1.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.30,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+            {"battery_sell_kwh": 0.125833, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+        ]}
+        keep = {"objective_pln": 0.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.30,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+        ]}
+
+        result = assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90,
+            eta_d=0.95, degradation=0.08)
+
+        self.assertFalse(result["eligible"])
+        self.assertGreater(result["grid_load_sale_loss_pln"], 0.0)
+
+    def test_sale_counterfactual_allows_sale_above_prior_grid_load_value(self):
+        rows = [
+            {"price_buy_pln_kwh": 2.0, "price_sell_pln_kwh": 0.0},
+            {"price_buy_pln_kwh": 2.0, "price_sell_pln_kwh": 2.5},
+        ]
+        sale = {"objective_pln": -1.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.30,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+            {"battery_sell_kwh": 0.125833, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+        ]}
+        keep = {"objective_pln": 0.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.30,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+        ]}
+
+        result = assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90,
+            eta_d=0.95, degradation=0.08)
+
+        self.assertTrue(result["eligible"])
+        self.assertEqual(result["grid_load_sale_loss_pln"], 0.0)
+
     def test_sale_counterfactual_requires_net_gain_at_same_terminal_soc(self):
         rows = [{"price_buy_pln_kwh": 1.4}]
         sale = {"objective_pln": 0.9, "flows": [
