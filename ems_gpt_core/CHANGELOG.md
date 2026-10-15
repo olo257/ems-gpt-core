@@ -2,6 +2,7 @@
 
 ## 0.40.33 — blokada sprzedaży poniżej wartości importu do domu
 
+- Przywrócono ekonomiczną kontrolę Pass 4: opcjonalny import domu zachowujący energię baterii jest dopuszczalny tylko wtedy, gdy późniejsza sprzedaż pokrywa bieżącą cenę zakupu, sprawność rozładowania, degradację i minimalną marżę.
 - Sprzedaż baterii jest blokowana, jeśli energia wcześniej pobrana z sieci do zasilania domu zostaje później sprzedana poniżej jej ceny zakupu, z uwzględnieniem degradacji i minimalnej marży.
 - Ocena działa także, gdy plan sprzedaży i wariant bez sprzedaży mają ten sam import domu, czyli gdy poprzednia kontrola różnicy importu nie wykrywała straty.
 - Dodano regresje dla sprzedaży poniżej i powyżej wartości wcześniejszego importu; konfiguracja planera pozostaje bez zmian.
