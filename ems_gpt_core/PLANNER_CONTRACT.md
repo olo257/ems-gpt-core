@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.35. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.36. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -76,9 +76,9 @@ Wykonawca otrzymuje najwyższy target rzeczywiście wybranego ciągu zakupów ju
 od pierwszego slotu tego ciągu. Wymagany SOC na końcu okna jest sprawdzany
 osobno; opcjonalny szczyt wcześniejszego ładowania nie jest nowym wymogiem SOC.
 Historyczny punkt odniesienia końca doby wynosi 40–45% SOC i chroni przed jego
-zaniżaniem. Jeśli pierwsze okno BUY kolejnej lokalnej doby zaczyna się w jej
-pierwszym slocie, poprzedni cel dobowy jest wymagany na końcu tego ciągłego
-okna, a nie przed północą. Wcześniejszy SOC nadal wynika z bilansu wstecznego
+zaniżaniem. Jeśli okno BUY kolejnej lokalnej doby przypada przed codziennym
+startem CWU o 06:00, poprzedni cel dobowy jest wymagany po ostatnim ciągłym
+oknie BUY przed 06:00, a nie przed północą. Wcześniejszy SOC nadal wynika z bilansu wstecznego
 zużycia, PV, sprawności, rezerwy oraz fizycznej dostępności ładowania BUY, więc
 plan utrzymuje energię do najbliższego PV/BUY i nie wymusza drogiego zakupu
 przed tańszym oknem.
@@ -212,12 +212,12 @@ wynikający z konserwatywnej korekty zużycia i PV.
 
 Historyczny punkt odniesienia SOC na zamknięcie doby wynosi 40–45%.
 Ważona średnia rzeczywistych zamknięć 7/14/28 dni jest ograniczana do tego
-pasma, aby błędne historyczne zamknięcia nie zaniżały zapasu. Jeśli pierwsze
-okno BUY nowej lokalnej doby zaczyna się w jej pierwszym slocie, cel poprzedniej
-doby jest wymagany na końcu tego ciągłego okna, a nie przed północą. Do tego
-czasu niezależny bilans bezpieczeństwa utrzymuje zapas na prognozowane zużycie
-do najbliższego PV/BUY; planer nie wymusza wcześniejszego zakupu przed tańszym
-oknem.
+pasma, aby błędne historyczne zamknięcia nie zaniżały zapasu. Jeśli okno BUY
+nowej lokalnej doby przypada przed codziennym startem CWU o 06:00, cel
+poprzedniej doby jest wymagany po ostatnim ciągłym oknie BUY przed 06:00,
+a nie przed północą. Do tego czasu niezależny bilans bezpieczeństwa utrzymuje
+zapas na prognozowane zużycie, w tym CWU, do najbliższego PV/BUY; planer nie
+wymusza wcześniejszego zakupu przed tańszym oknem.
 
 Niezależny bilans bezpieczeństwa wymaga co najmniej 15% (lub wyższego minimum
 konfiguracji) plus `soc_replenishment_buffer_pct` (domyślnie 2 p.p.) w każdym
@@ -478,7 +478,7 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 - Testy regresyjne kodu nie są równoznaczne z odbiorem produkcyjnym: po aktualizacji trzeba osobno potwierdzić wersję przebiegu planera w zapisanych slotach, okna BUY, planowane kWh zakupu i osiągalność SOC.
 
 
-### Zakup tylko na ładowanie — 0.40.35
+### Zakup tylko na ładowanie — 0.40.36
 
 Przepływ `grid_charge_kwh` służy wyłącznie zwiększeniu SOC baterii w BUY.
 Planowany `grid_load_kwh` powyżej progu technicznego jest zabroniony w każdym
