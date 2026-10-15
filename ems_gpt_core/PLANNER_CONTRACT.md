@@ -260,7 +260,7 @@ Target nie jest progiem sprzedaży i nie może być kopiowany z floor. Powinien
 być zwykle wyższy od floor i nigdy nie przekracza 100%. Wymaganie mostu ponad
 pojemność jest fizycznie niemożliwe i nie może zostać przekształcone w cel
 zakupu do 100%. Planer zachowuje techniczną rezerwę, wyłącza sprzedaż baterii
-i jawnie raportuje niewykonalność, gdy bilans zużycia wymagałby importu na dom.
+i jawnie raportuje niewykonalność, gdy bilans wymagałby możliwego do uniknięcia importu na dom poza fizycznym limitem mocy baterii lub rezerwą SOC.
 
 Planowany zakup energii służy wyłącznie ładowaniu baterii. Planer nie może
 zamieniać fizycznego `grid_load_kwh` w `planned_buy_kwh` ani kupować energii
@@ -492,8 +492,9 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 ### Zakup tylko na ładowanie — 0.40.38
 
 Przepływ `grid_charge_kwh` służy wyłącznie zwiększeniu SOC baterii w BUY.
-Planowany `grid_load_kwh` powyżej progu technicznego jest zabroniony w każdym
-slotcie, także gdy działa BUY lub wymagany jest most SOC. Jeżeli nie można
-zbilansować obciążenia przez PV i rozładowanie baterii przy zachowaniu
-ograniczeń SOC, planer zgłasza niewykonalność zamiast tworzyć plan z importem
-dla domu.
+Możliwy do uniknięcia `grid_load_kwh` powyżej progu technicznego jest
+zabroniony także w BUY i przy wymaganym moście SOC. Nieunikniony residual
+odbiorów jest dozwolony wyłącznie przy limicie mocy rozładowania albo rezerwie
+SOC; pozostaje fizycznym importem domu i nigdy nie staje się BUY ani ładowaniem
+baterii. Poza tymi fizycznymi granicami planer zgłasza niewykonalność zamiast
+ukrywać niedobór.
