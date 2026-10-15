@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.42 — sufit BUY równy wyliczonemu targetowi SOC
+
+- Ujednolicono limity ładowania z sieci: target wyliczony dla slotu BUY ogranicza zakup i nie jest zastępowany limitem 100% SOC.
+- Planer nadal wybiera maksymalny fizycznie dostępny wolumen w ramach dynamicznego targetu; po jego osiągnięciu ładowanie siecią wynosi zero.
+- Dodano regresje dla targetu 40%, targetów zmiennych slot po slocie, współbieżnego zasilania domu oraz kwantyzacji SOC.
+
 ## 0.40.41 — ładowanie BUY nie blokuje zasilania domu
 
 - Usunięto sprzeczność, przez którą dodatni import na zużycie domu w slocie BUY unieważniał równoczesne ładowanie baterii.
