@@ -246,6 +246,20 @@ def build_executor(a: ExecutorAdapters):
                 "original_soc_pct": float(configured_original),
                 "target_soc_pct": round(requested)}
 
+    def set_active_program_charging(now: datetime, option: str) -> dict:
+        """Set the active Deye TOU program charging source explicitly."""
+        program = active_tou_program(now, tou_program_snapshot())
+        if not program:
+            raise RuntimeError("ACTIVE_TOU_PROGRAM_UNAVAILABLE")
+        program_number = int(program["program"])
+        entity_id = f"select.inverter_program_{program_number}_charging"
+        response = ha_service_response("select", "select_option", {
+            "entity_id": entity_id, "option": option,
+        })
+        if response is None:
+            raise RuntimeError("ACTIVE_TOU_CHARGING_WRITE_FAILED")
+        return {"program": program_number, "entity_id": entity_id, "option": option}
+
     def set_all_program_targets(target_pct: float) -> list[dict]:
         """Apply the active BUY target to all six Deye TOU programs."""
         requested = max(0.0, min(100.0, float(target_pct)))
