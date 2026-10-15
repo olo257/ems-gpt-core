@@ -281,12 +281,11 @@ def _soc_reachability_profile(
                         continue
                     grid_charge = 0.0
                     grid_load = max(0.0, deficit-battery_to_load)
-                # Grid imports are reserved for battery charging. Any
-                # nontechnical native-load import makes this state unreachable,
-                # including a supposed safety-bridge exception or a concurrent
-                # battery charge.
+                # Every planned grid import must charge the battery. If
+                # quantized battery discharge cannot cover home load, this state
+                # is infeasible; do not hide a residual behind SOC tolerance.
                 voluntary_grid_load = max(0.0, grid_load)
-                if grid_load > unit_kwh * eta_discharge + 1e-9:
+                if grid_load > 1e-9:
                     continue
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
                     continue
@@ -1307,11 +1306,10 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     pv_export = surplus if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_export)
                     battery_charge_internal = 0.0
-                # Every grid import assigned to household consumption is
-                # forbidden; BUY may increase only battery SOC. A single SOC
-                # quantum remains the technical accounting tolerance.
+                # Grid import is charge-only. Reject every residual home
+                # import rather than treating SOC quantization as an allowance.
                 voluntary_grid_load = max(0.0, grid_load)
-                if grid_load > unit_kwh * eta_d + 1e-9:
+                if grid_load > 1e-9:
                     continue
                 # The physical site limit still applies to total imports.
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
