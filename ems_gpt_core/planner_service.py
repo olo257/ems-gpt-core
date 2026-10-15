@@ -904,12 +904,12 @@ def economic_buy_charge_caps(rows: list[dict], required_targets: list[float],
                              capacity_kwh: float = 15.0, eta_c: float = 0.9,
                              eta_d: float = 0.95, max_power_kw: float = 5.0,
                              slot_minutes: int = 15) -> list[float]:
-    """Allow the full available battery charge in every permitted BUY slot.
+    """Allow the available battery charge in BUY only up to its SOC target.
 
-    BUY is an instruction to use available battery charging capacity, limited
-    by physical SOC, inverter power and the site's total import limit. The
-    optimized dispatch still chooses the feasible trajectory and never adds
-    grid charging outside an RCE BUY window.
+    The target is the charge ceiling. A BUY slot uses the maximum physically
+    feasible volume only while it can still move SOC toward that target; BUY
+    must never raise a 40% target to 100%. Physical SOC, inverter power and
+    the site's total import limit remain hard constraints.
     """
     if len(rows) != len(required_targets):
         raise ValueError("ECONOMIC_BUY_CAP_LENGTH_MISMATCH")
@@ -920,7 +920,7 @@ def economic_buy_charge_caps(rows: list[dict], required_targets: list[float],
                for row in rows]
     for index, row in enumerate(rows):
         if allowed[index] and row.get("price_buy_pln_kwh") is not None:
-            result[index] = cap
+            result[index] = min(cap, max(0.0, float(required_targets[index])))
     return result
 
 
@@ -1247,10 +1247,13 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                       max(reserve, min(float(max_soc_pct),
                           float(minimum_soc_targets[index]))))
         requested_target_unit = int(math.ceil(target_pct / step - 1e-9))
+        # The slot's planner target is always the hard ceiling on grid charge.
+        # A separate grid cap may tighten that limit, but can never raise it.
         grid_cap_pct = (target_pct if grid_charge_caps is None else
-                        max(reserve, min(float(max_soc_pct), float(grid_charge_caps[index]))))
+                        min(target_pct, max(reserve, min(
+                            float(max_soc_pct), float(grid_charge_caps[index])))))
         grid_cap_unit = (requested_target_unit if grid_charge_caps is None else
-                         int(math.floor(grid_cap_pct / step + 1e-9)))
+                         int(math.ceil(grid_cap_pct / step - 1e-9)))
         required_pct = (reserve if required_soc_pcts is None else
                         max(0.0, min(float(max_soc_pct),
                             float(required_soc_pcts[index]))))

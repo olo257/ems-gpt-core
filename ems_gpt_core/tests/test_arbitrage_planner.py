@@ -816,8 +816,12 @@ class PairedArbitrageTests(unittest.TestCase):
             contract["targets"], due, due,
             grid_charge_caps=[100.0] * len(rows))
 
-        self.assertGreater(sum(result["flows"][i]["grid_charge_kwh"] for i in range(4)), 3.0)
-        self.assertAlmostEqual(result["flows"][8]["grid_charge_kwh"], 1.25)
+        for i, flow in enumerate(result["flows"]):
+            if rows[i]["buy_window"]:
+                self.assertLessEqual(flow["soc_end_pct"],
+                                     result["effective_target_pcts"][i] + 1e-7)
+        self.assertGreater(sum(result["flows"][i]["grid_charge_kwh"] for i in range(4)), 0.0)
+        self.assertLessEqual(result["flows"][8]["grid_charge_kwh"], 1.25)
         self.assertGreater(contract["targets"][3], contract["targets"][8])
 
     def test_partial_pv_reduces_target_but_does_not_erase_remaining_need(self):
