@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_31"
+PLANNER_VERSION = "CORE_0_40_33"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -624,6 +624,8 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
     # this, SOC above the terminal target can look free: a plan can buy energy,
     # later export it below cost, and still meet the terminal SOC contract.
     grid_inventory: list[list[float]] = []  # internal kWh, cost PLN/internal kWh
+    grid_load_inventory: list[list[float]] = []  # native-load kWh, avoided import PLN/kWh
+    grid_load_sale_loss = 0.0
     grid_origin_sale_kwh = 0.0
     grid_origin_sale_revenue = 0.0
     grid_origin_sale_cost = 0.0
@@ -645,9 +647,24 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             native_discharge -= used
             if grid_inventory[0][0] <= 1e-9:
                 grid_inventory.pop(0)
+        grid_load = max(0.0, float(flow.get("grid_load_kwh") or 0.0))
+        if grid_load > 1e-9:
+            grid_load_inventory.append([
+                grid_load, float(row.get("price_buy_pln_kwh") or 0.0),
+            ])
         battery_sale = max(0.0, float(flow.get("battery_sell_kwh") or 0.0))
         sale_internal = battery_sale / discharge_efficiency
+        sale_output_remaining = battery_sale
         sale_price = float(row.get("price_sell_pln_kwh") or 0.0)
+        while sale_output_remaining > 1e-9 and grid_load_inventory:
+            used = min(sale_output_remaining, grid_load_inventory[0][0])
+            required_price = (grid_load_inventory[0][1]
+                              + float(degradation) + float(min_margin))
+            grid_load_sale_loss += used * max(0.0, required_price - sale_price)
+            grid_load_inventory[0][0] -= used
+            sale_output_remaining -= used
+            if grid_load_inventory[0][0] <= 1e-9:
+                grid_load_inventory.pop(0)
         while sale_internal > 1e-9 and grid_inventory:
             used = min(sale_internal, grid_inventory[0][0])
             revenue = used * sale_price * discharge_efficiency
@@ -693,7 +710,8 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
     eligible = (sold <= 1e-9 or
                 (gain is not None and gain > 1e-6
                  and extra_native_import <= tolerance_kwh + 1e-9
-                 and grid_origin_sale_loss <= 1e-6))
+                 and grid_origin_sale_loss <= 1e-6
+                 and grid_load_sale_loss <= 1e-6))
     return {"eligible": eligible, "sold_kwh": round(sold, 6),
             "gross_gain_pln": round(gross_gain, 6),
             "net_gain_pln": round(gain, 6) if gain is not None else None,
@@ -703,6 +721,7 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             "extra_native_import_kwh": round(extra_native_import, 6),
             "extra_grid_charge_kwh": round(extra_grid_charge, 6),
             "extra_grid_charge_cost_pln": round(extra_grid_charge_cost, 6),
+            "grid_load_sale_loss_pln": round(grid_load_sale_loss, 6),
             "grid_origin_sale_kwh": round(grid_origin_sale_kwh, 6),
             "grid_origin_sale_revenue_pln": round(grid_origin_sale_revenue, 6),
             "grid_origin_sale_cost_pln": round(grid_origin_sale_cost, 6),
@@ -1134,6 +1153,17 @@ def allocate_slot_discharge(energy_kwh: float, capacity_kwh: float,
     return sale_internal, native_internal
 
 
+def economic_grid_hold_allowed(buy_price: float, future_sell_price: float | None,
+                               eta_d: float, degradation: float,
+                               min_margin: float) -> bool:
+    """Whether a future battery export pays for grid-supplied native load."""
+    if future_sell_price is None or float(future_sell_price) <= 0.0:
+        return False
+    net_sale_value = float(future_sell_price) * max(0.01, min(1.0, float(eta_d)))
+    net_sale_value -= max(0.0, float(degradation))
+    return net_sale_value + 1e-9 >= float(buy_price) + max(0.0, float(min_margin))
+
+
 def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             capacity_kwh: float, reserve_pct: float,
                             eta_c: float, eta_d: float, degradation: float,
@@ -1183,6 +1213,24 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         if value and (index + 1 == len(buy_permissions) or not buy_permissions[index + 1])
     }
     target_due_indices = buy_window_ends if target_due_indices is None else set(target_due_indices)
+    # Pass 4 economic hold: grid may serve native load to preserve battery
+    # energy for a later export only when that export's net value beats the
+    # current import tariff after discharge losses, degradation and margin.
+    # Safety energy required by the active SOC bridge is handled separately;
+    # this guard applies only to optional energy above that bridge.
+    future_sell_prices: list[float | None] = [None] * len(rows)
+    best_future_sell: float | None = None
+    for future_index in range(len(rows) - 1, -1, -1):
+        future_sell_prices[future_index] = best_future_sell
+        future_row = rows[future_index]
+        future_sell = future_row.get("price_sell_pln_kwh")
+        if (battery_sales_enabled and future_sell is not None
+                and float(future_sell) > 0.0
+                and strict_database_bool(
+                    future_row.get("sale_window", False), "sale_window")):
+            price = float(future_sell)
+            best_future_sell = (
+                price if best_future_sell is None else max(best_future_sell, price))
     predecessors: list[dict[int, tuple[int, dict]]] = []
     effective_target_pcts: list[float] = []
     for index, row in enumerate(rows):
@@ -1285,6 +1333,26 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # input stays within the configured connection limit.
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
                     continue
+                # Reject optional grid supply that merely holds battery energy
+                # for a later sale unless the sale clears the import cost.
+                # Grid supply needed because of the hard required-SOC bridge
+                # remains available; a later sale of energy funded by that
+                # import is checked by the sale/no-sale counterfactual.
+                required_energy = max(
+                    capacity * reserve / 100.0, required_unit * unit_kwh)
+                above_required_internal = min(
+                    max_internal_discharge,
+                    max(0.0, current_energy - required_energy),
+                )
+                required_grid_load = max(
+                    0.0, deficit - above_required_internal * eta_d)
+                optional_grid_hold = max(0.0, grid_load - required_grid_load)
+                if (grid_charge <= max(1e-9, minimum_grid_charge_kwh)
+                        and optional_grid_hold > unit_kwh * eta_d + 1e-9):
+                    future_sell = future_sell_prices[index]
+                    if not economic_grid_hold_allowed(
+                            buy_price, future_sell, eta_d, degradation, min_margin):
+                        continue
                 # Outside deliberate charging, prefer the battery for native
                 # load when usable SOC is available. A single SOC quantum may
                 # leave a small numerical residual that cannot be discharged

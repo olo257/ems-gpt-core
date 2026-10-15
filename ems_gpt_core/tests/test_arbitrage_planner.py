@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 
 from planner_service import (
     assess_sale_plan_against_no_sale,
+    economic_grid_hold_allowed,
     allocate_slot_discharge,
     backward_target_commitments,
     build_soc_contracts,
@@ -234,6 +235,56 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertFalse(result["eligible"])
         self.assertAlmostEqual(result["extra_native_import_kwh"], 0.30)
         self.assertAlmostEqual(result["extra_grid_charge_cost_pln"], 0.28)
+
+    def test_sale_counterfactual_rejects_sale_below_prior_grid_load_value(self):
+        rows = [
+            {"price_buy_pln_kwh": 2.24145, "price_sell_pln_kwh": 1.19390},
+            {"price_buy_pln_kwh": 2.24145, "price_sell_pln_kwh": 1.64145},
+        ]
+        sale = {"objective_pln": -1.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.30,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+            {"battery_sell_kwh": 0.125833, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+        ]}
+        keep = {"objective_pln": 0.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.30,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+        ]}
+
+        result = assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90,
+            eta_d=0.95, degradation=0.08)
+
+        self.assertFalse(result["eligible"])
+        self.assertGreater(result["grid_load_sale_loss_pln"], 0.0)
+
+    def test_sale_counterfactual_allows_sale_above_prior_grid_load_value(self):
+        rows = [
+            {"price_buy_pln_kwh": 2.0, "price_sell_pln_kwh": 0.0},
+            {"price_buy_pln_kwh": 2.0, "price_sell_pln_kwh": 2.5},
+        ]
+        sale = {"objective_pln": -1.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.30,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+            {"battery_sell_kwh": 0.125833, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+        ]}
+        keep = {"objective_pln": 0.0, "flows": [
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.30,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+            {"battery_sell_kwh": 0.0, "grid_load_kwh": 0.0,
+             "grid_charge_kwh": 0.0, "soc_end_pct": 80.0},
+        ]}
+
+        result = assess_sale_plan_against_no_sale(
+            sale, keep, rows, 0.05, 15.0, 0.90,
+            eta_d=0.95, degradation=0.08)
+
+        self.assertTrue(result["eligible"])
+        self.assertEqual(result["grid_load_sale_loss_pln"], 0.0)
 
     def test_sale_counterfactual_requires_net_gain_at_same_terminal_soc(self):
         rows = [{"price_buy_pln_kwh": 1.4}]
@@ -1368,6 +1419,32 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(contract["charge_targets"][0],
                          contract["charge_targets"][1])
         self.assertGreater(contract["charge_targets"][0], 15.0)
+
+    def test_pass_four_compares_grid_hold_with_future_sale_value(self):
+        # Earlier BUY-to-house energy cannot be held for a cheaper later SELL.
+        self.assertFalse(economic_grid_hold_allowed(
+            2.24145, 1.64145, 0.95, 0.08, 0.05))
+        self.assertTrue(economic_grid_hold_allowed(
+            2.24145, 3.00, 0.95, 0.08, 0.05))
+        self.assertFalse(economic_grid_hold_allowed(
+            2.24145, None, 0.95, 0.08, 0.05))
+
+    def test_pass_four_rejects_unprofitable_grid_hold_in_optimizer(self):
+        rows = [
+            {"price_buy_pln_kwh": 2.24145, "price_sell_pln_kwh": 0.0,
+             "buy_window": False, "sale_window": False,
+             "forecast_load_kwh": 0.30, "forecast_pv_total_kwh": 0.0},
+            {"price_buy_pln_kwh": 1.20, "price_sell_pln_kwh": 1.64145,
+             "buy_window": False, "sale_window": True,
+             "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0},
+        ]
+        result = optimize_energy_horizon(
+            rows, 60.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0, 15.0], 40.0, 0.25, 100.0)
+        first = result["flows"][0]
+        # One SOC quantum can remain as a dispatch rounding residual.
+        self.assertLessEqual(first["grid_load_kwh"], 0.25 * 15.0 / 100.0 * 0.95 + 1e-9)
+        self.assertGreater(first["battery_to_load_kwh"], 0.20)
 
     def test_disabled_sale_cannot_authorize_grid_import_for_native_load(self):
         row = {"price_buy_pln_kwh": 3.0, "price_sell_pln_kwh": 0.0,
