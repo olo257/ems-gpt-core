@@ -246,23 +246,49 @@ def build_executor(a: ExecutorAdapters):
                 "original_soc_pct": float(configured_original),
                 "target_soc_pct": round(requested)}
 
-    def set_active_program_charging(now: datetime, option: str) -> dict:
-        """Set the active Deye TOU program charging source explicitly."""
-        program = active_tou_program(now, tou_program_snapshot())
-        if not program:
-            raise RuntimeError("ACTIVE_TOU_PROGRAM_UNAVAILABLE")
-        program_number = int(program["program"])
-        entity_id = f"select.inverter_program_{program_number}_charging"
-        response = ha_service_response("select", "select_option", {
-            "entity_id": entity_id, "option": option,
-        })
-        if response is None:
-            raise RuntimeError("ACTIVE_TOU_CHARGING_WRITE_FAILED")
-        return {"program": program_number, "entity_id": entity_id, "option": option}
-
-    def restore_program_targets() -> list[dict]:
-        """Restore every TOU target changed by EMS; retain failed entries for retry."""
+    def set_all_program_targets(target_pct: float) -> list[dict]:
+        """Apply the active BUY target to all six Deye TOU programs."""
+        requested = max(0.0, min(100.0, float(target_pct)))
         restore = read_program_restore()
+        restore.update({str(program): True for program in range(1, 7)})
+        write_program_restore(restore)
+        updates, failed = [], []
+        for program in range(1, 7):
+            entity_id = f"number.inverter_program_{program}_soc"
+            response = ha_service_response("number", "set_value", {
+                "entity_id": entity_id, "value": round(requested),
+            })
+            if response is None:
+                failed.append(str(program))
+            else:
+                updates.append({"program": program, "entity_id": entity_id,
+                                "target_soc_pct": round(requested)})
+        if failed:
+            raise RuntimeError("TOU_SOC_WRITE_FAILED:" + ",".join(failed))
+        return updates
+
+    def set_all_program_charging(option: str) -> list[dict]:
+        """Set the charging source on every Deye TOU program."""
+        updates, failed = [], []
+        for program in range(1, 7):
+            entity_id = f"select.inverter_program_{program}_charging"
+            response = ha_service_response("select", "select_option", {
+                "entity_id": entity_id, "option": option,
+            })
+            if response is None:
+                failed.append(str(program))
+            else:
+                updates.append({"program": program, "entity_id": entity_id,
+                                "option": option})
+        if failed:
+            raise RuntimeError("TOU_CHARGING_WRITE_FAILED:" + ",".join(failed))
+        return updates
+
+    def restore_program_targets(all_programs: bool = False) -> list[dict]:
+        """Restore configured TOU targets; retain failed entries for retry."""
+        restore = read_program_restore()
+        if all_programs:
+            restore.update({str(program): True for program in range(1, 7)})
         restored, pending = [], {}
         baselines = deye_program_soc_baselines(OPTIONS)
         for program_number in restore:
@@ -893,9 +919,20 @@ def build_executor(a: ExecutorAdapters):
                         }, "WARNING")
                         continue
                     try:
-                        set_active_program_charging(now, "Grid")
-                        target_update = set_active_program_target(now, float(target))
+                        target_update = set_all_program_targets(float(target))
+                        charging_updates = set_all_program_charging("Grid")
+                        target_update = {"programs": target_update,
+                                         "charging": charging_updates}
                     except (RuntimeError, TypeError, ValueError) as exc:
+                        # Fail closed if any TOU register could not be prepared.
+                        off_entity = process_map.get("OFF")
+                        if isinstance(off_entity, str) and off_entity.startswith("script."):
+                            ha_service_response("script", off_entity.split(".", 1)[1], {})
+                        try:
+                            set_all_program_charging("Disabled")
+                        except RuntimeError:
+                            pass
+                        restore_program_targets(all_programs=True)
                         cur.execute("UPDATE ems_gpt_core_commands SET status='FAILED',acknowledgement_json=%s WHERE command_id=%s",
                                     (json.dumps({"reason": str(exc)}), command["command_id"]))
                         record_event("battery_import_target_failed", "executor", {
@@ -939,13 +976,15 @@ def build_executor(a: ExecutorAdapters):
                                     or str(grid_state.get("state") or "").lower() == "off")
                     if disable_grid:
                         try:
-                            set_active_program_charging(now, "Disabled")
+                            set_all_program_charging("Disabled")
                         except RuntimeError as exc:
                             battery_off_failed = True
                             record_event("battery_program_grid_disable_failed", "executor", {
                                 "reason": str(exc), "slot_start": current_slot,
                             }, "ERROR")
-                    restored_targets = restore_program_targets_if_idle()
+                        restored_targets = restore_program_targets(all_programs=True)
+                    else:
+                        restored_targets = restore_program_targets_if_idle()
                 cur.execute("""UPDATE ems_gpt_core_commands SET status='DISPATCHED',dispatched_at=NOW(6),
                   acknowledgement_json=%s WHERE command_id=%s AND status='READY_FOR_CONNECTOR'""",
                   (json.dumps({"entity_id": entity_id, "ha_response": response,
