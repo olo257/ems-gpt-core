@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_33"
+PLANNER_VERSION = "CORE_0_40_35"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -270,7 +270,6 @@ def _soc_reachability_profile(
                 max_internal_discharge,
                 max(0.0, current_energy - required_floor_unit * unit_kwh),
             )
-            unavoidable_grid_load = max(0.0, deficit - usable_internal * eta_discharge)
             lower_state = current if current < first_unit else first_unit
             for following in range(max(lower_state, current-max_down),
                                     min(last_unit, current+max_up)+1):
@@ -292,15 +291,14 @@ def _soc_reachability_profile(
                         continue
                     grid_charge = 0.0
                     grid_load = max(0.0, deficit-battery_to_load)
-                voluntary_grid_load = max(0.0, grid_load-unavoidable_grid_load)
-                # Match optimizer physics: in BUY, home load and battery
-                # charging may share the grid, within the connection limit.
-                # Without this check reachability overstates charge capacity;
-                # without allowing shared import it understates it.
-                if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
+                # Grid imports are reserved for battery charging. Any
+                # nontechnical native-load import makes this state unreachable,
+                # including a supposed safety-bridge exception or a concurrent
+                # battery charge.
+                voluntary_grid_load = max(0.0, grid_load)
+                if grid_load > unit_kwh * eta_discharge + 1e-9:
                     continue
-                if (grid_charge <= 1e-9
-                        and voluntary_grid_load > unit_kwh * eta_discharge + 1e-9):
+                if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
                     continue
                 floor_shortfall = (0.0 if required_soc_pcts is None else
                     max(0.0, float(required_soc_pcts[index]) - following * step))
@@ -1204,9 +1202,9 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     target_due_indices = buy_window_ends if target_due_indices is None else set(target_due_indices)
     # Pass 4 does not authorize importing household consumption to preserve
     # battery energy for a later sale. Grid purchases charge the battery only.
-    # Any physically unavoidable supply under the active safety bridge is
-    # handled separately; battery buy/sell economics use FIFO cost basis and
-    # the sale-versus-no-sale counterfactual below.
+    # Native load must be covered by PV or battery energy; no safety-bridge
+    # exception permits grid imports to the home. Battery buy/sell economics
+    # use FIFO cost basis and the sale-versus-no-sale counterfactual below.
     predecessors: list[dict[int, tuple[int, dict]]] = []
     effective_target_pcts: list[float] = []
     for index, row in enumerate(rows):
@@ -1285,41 +1283,14 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     pv_export = surplus if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_export)
                     battery_charge_internal = 0.0
-                # Grid energy that is physically unavoidable after PV and all
-                # battery energy available above the technical reserve have
-                # been exhausted is a residual flow, not an EMS BUY decision.
-                # Reject only *voluntary* grid supply that preserves usable
-                # battery energy.  This distinction keeps the horizon feasible
-                # when a replan starts at minimum SOC while preserving the
-                # contract that planned BUY exists only to charge the battery.
-                # Preserve the active SOC bridge as well as the inverter reserve.
-                # Grid supplied home load is unavoidable when battery discharge
-                # would cross this slot's required SOC floor.
-                usable_internal = min(
-                    max_internal_discharge,
-                    max(0.0, current_energy - max(first_unit, required_unit) * unit_kwh),
-                )
-                unavoidable_grid_load = max(
-                    0.0, deficit - usable_internal * eta_d,
-                )
-                voluntary_grid_load = max(0.0, grid_load - unavoidable_grid_load)
-                # The site's import limit applies to home load and battery
-                # charging together. During BUY, the home may be supplied by
-                # the grid while the battery charges, provided that combined
-                # input stays within the configured connection limit.
+                # Every grid import assigned to household consumption is
+                # forbidden; BUY may increase only battery SOC. A single SOC
+                # quantum remains the technical accounting tolerance.
+                voluntary_grid_load = max(0.0, grid_load)
+                if grid_load > unit_kwh * eta_d + 1e-9:
+                    continue
+                # The physical site limit still applies to total imports.
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
-                    continue
-                # Concurrent grid charging never authorizes optional grid
-                # supply to native load. Only the physically unavoidable part
-                # associated with the SOC safety bridge is allowed.
-                if voluntary_grid_load > unit_kwh * eta_d + 1e-9:
-                    continue
-                # Outside deliberate charging, prefer the battery for native
-                # load when usable SOC is available. A single SOC quantum may
-                # leave a small numerical residual that cannot be discharged
-                # without violating the no-battery-export rule.
-                if (grid_charge <= max(1e-9, minimum_grid_charge_kwh)
-                        and voluntary_grid_load > unit_kwh * eta_d + 1e-9):
                     continue
                 # During deliberate export the complete slot, including the
                 # native load, must close at or above both independent
