@@ -840,7 +840,7 @@ class PairedArbitrageTests(unittest.TestCase):
         rows = [
             {"price_buy_pln_kwh": 0.90, "price_sell_pln_kwh": 0.35,
              "buy_window": index == 2, "sale_window": False,
-             "forecast_load_kwh": 0.285,
+             "forecast_load_kwh": 0.0 if index == 2 else 0.285,
              "forecast_pv_total_kwh": 0.80 if index < 2 else 0.0,
              "slot_start": index, "slot_end": index + 1}
             for index in range(5)
@@ -1184,7 +1184,7 @@ class PairedArbitrageTests(unittest.TestCase):
             {"price_buy_pln_kwh": 1.0 if index == 0 else 4.0,
              "price_sell_pln_kwh": 2.0,
              "buy_window": index == 0,
-             "forecast_load_kwh": 0.30,
+             "forecast_load_kwh": 0.0 if index == 0 else 0.30,
              "forecast_pv_total_kwh": 0.80 if 6 <= index < 12 else 0.0}
             for index in range(20)
         ]
@@ -1521,20 +1521,22 @@ class PairedArbitrageTests(unittest.TestCase):
             {"price_buy_pln_kwh": price, "price_sell_pln_kwh": 0.0,
              "sale_window": False, "buy_window": True,
              "forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.0}
-            for price in (0.80, 0.70, 0.20, 0.30)
+            for index, price in enumerate((0.80, 0.70, 0.20, 0.30))
         ]
+        for index in (2, 3):
+            rows[index]["forecast_load_kwh"] = 0.0
 
         result = optimize_energy_horizon(
-            rows, 20.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            rows, 24.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0] * len(rows), 30.0, 0.25, 100.0)
 
         charging = [flow for flow in result["flows"]
                     if flow["grid_charge_kwh"] > 1e-9]
         self.assertTrue(charging)
-        self.assertTrue(all(
-            flow["grid_load_kwh"] <= 0.05
-            for flow in result["flows"]
-        ))
+        self.assertTrue(all(flow["grid_load_kwh"] <= 0.05
+                            for flow in result["flows"]))
+        self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
+        self.assertEqual(result["flows"][1]["grid_charge_kwh"], 0.0)
         self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertEqual(result["flows"][1]["grid_charge_kwh"], 0.0)
 
