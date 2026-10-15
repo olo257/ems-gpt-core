@@ -24,6 +24,7 @@ Status: isolated development branch; no production integration or execution righ
 - Maintain safe SOC until next PV/BUY opportunity and at the terminal horizon.
 - Compare terminal battery inventory on a consistent valuation basis.
 - Reject any candidate increasing unplanned household grid import.
+- Do not preserve battery energy by importing for household load when the later battery export price is below the import tariff plus degradation and required margin; apply the check even when the no-sale counterfactual has the same household import.
 
 This document specifies isolation and test criteria; it does not change production planner behavior.
 
