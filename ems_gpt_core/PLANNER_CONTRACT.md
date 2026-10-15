@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.36. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.37. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -478,7 +478,7 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 - Testy regresyjne kodu nie są równoznaczne z odbiorem produkcyjnym: po aktualizacji trzeba osobno potwierdzić wersję przebiegu planera w zapisanych slotach, okna BUY, planowane kWh zakupu i osiągalność SOC.
 
 
-### Zakup tylko na ładowanie — 0.40.36
+### Zakup tylko na ładowanie — 0.40.37
 
 Przepływ `grid_charge_kwh` służy wyłącznie zwiększeniu SOC baterii w BUY.
 Planowany `grid_load_kwh` powyżej progu technicznego jest zabroniony w każdym
