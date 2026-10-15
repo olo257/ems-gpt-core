@@ -733,6 +733,13 @@ def end_of_day_soc_target(historical_soc_pct: float, reserve_pct: float,
 
 def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
                                  daily_terminal_soc: dict) -> tuple[list[float], set[int]]:
+    """Apply historical close SOC after an imminent next-day BUY opportunity.
+
+    The independent safety bridge remains in force before replenishment. If a
+    local day begins with a continuous permitted BUY window, defer the previous
+    day's historical target until that window ends so it cannot force an earlier
+    and more expensive charge.
+    """
     if len(rows) != len(safety_pcts):
         raise ValueError("rows and safety SOC lengths differ")
     required = list(safety_pcts)
@@ -742,9 +749,36 @@ def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
         next_day = ((rows[index + 1].get("local_day")
                      or rows[index + 1]["slot_start"].date())
                     if index + 1 < len(rows) else None)
-        if next_day != row_day:
-            required[index] = max(safety_pcts[index], daily_terminal_soc[row_day])
-            closes.add(index)
+        if next_day == row_day:
+            continue
+
+        target_index = index
+        first_next = index + 1
+        if first_next < len(rows):
+            first_row = rows[first_next]
+            first_day = first_row.get("local_day") or first_row["slot_start"].date()
+            first_is_buy = (
+                first_day != row_day
+                and strict_database_bool(first_row.get("buy_window", False), "buy_window")
+                and not strict_database_bool(first_row.get("sale_window", False), "sale_window")
+            )
+            if first_is_buy:
+                target_index = first_next
+                while target_index + 1 < len(rows):
+                    candidate = rows[target_index + 1]
+                    candidate_day = candidate.get("local_day") or candidate["slot_start"].date()
+                    candidate_is_buy = (
+                        candidate_day == first_day
+                        and strict_database_bool(candidate.get("buy_window", False), "buy_window")
+                        and not strict_database_bool(candidate.get("sale_window", False), "sale_window")
+                    )
+                    if not candidate_is_buy:
+                        break
+                    target_index += 1
+
+        required[target_index] = max(
+            required[target_index], daily_terminal_soc[row_day])
+        closes.add(target_index)
     return required, closes
 
 
