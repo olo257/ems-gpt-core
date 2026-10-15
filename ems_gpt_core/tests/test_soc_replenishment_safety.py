@@ -56,14 +56,14 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         plan = optimize_energy_horizon(
             rows, 69.0, 15.0, 17.0, 0.9, 0.95, 0.08, 0.05,
             5.0, 15, [17.0, 17.0], 17.0, 0.1, 100.0,
-            minimum_soc_targets=[17.0, 100.0],
+            minimum_soc_targets=[17.0, 62.0],
             hard_target_indices=set(), target_due_indices={1},
             required_soc_pcts=[17.0, 17.0], battery_sales_enabled=False)
 
         # The house load is served from the battery. The planner cannot count
         # direct grid supply to the house as an attainable BUY charge target.
         flow = plan["flows"][1]
-        self.assertLess(plan["effective_target_pcts"][1], 100.0)
+        self.assertEqual(plan["effective_target_pcts"][1], 62.0)
         self.assertAlmostEqual(flow["soc_end_pct"], plan["effective_target_pcts"][1])
         self.assertGreaterEqual(flow["soc_end_pct"], 17.0)
         self.assertGreater(flow["battery_to_load_kwh"], 0.95)
@@ -76,7 +76,7 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         plan = optimize_energy_horizon(
             rows, 69.0, 15.0, 17.0, 0.9, 0.95, 0.08, 0.05,
             20.0, 15, [17.0], 17.0, 0.1, 100.0,
-            minimum_soc_targets=[100.0], hard_target_indices=set(),
+            minimum_soc_targets=[87.0], hard_target_indices=set(),
             target_due_indices={0}, required_soc_pcts=[17.0],
             battery_sales_enabled=False, max_grid_import_kw=12.0)
 

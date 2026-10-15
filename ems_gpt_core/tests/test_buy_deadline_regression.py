@@ -31,18 +31,29 @@ def dispatch(rows, initial, targets, due):
 
 
 class BuyDeadlineRegressionTests(unittest.TestCase):
+    def test_buy_window_uses_all_available_battery_charge_volume(self):
+        rows = [slot(True), slot(True)]
+        result = optimize_energy_horizon(
+            rows, 40.0, 15.0, 15.0, 0.9, 0.95,
+            0.0, 0.0, 5.0, 15, [15.0, 15.0], 15.0, 0.1, 100.0,
+            minimum_soc_targets=[40.0, 40.0],
+            hard_target_indices=set(), target_due_indices=set(),
+            required_soc_pcts=[15.0, 15.0], battery_sales_enabled=False,
+            grid_charge_caps=[100.0, 100.0], max_grid_import_kw=12.0,
+        )
+        self.assertAlmostEqual(result["flows"][0]["grid_charge_kwh"], 1.25)
+        self.assertAlmostEqual(result["flows"][1]["grid_charge_kwh"], 1.25)
+        self.assertAlmostEqual(result["flows"][1]["soc_end_pct"], 55.0)
+
     def test_buy_21_to_28_percent_is_feasible(self):
         result = dispatch([slot(True)], 21.0, [28.0], {0})
         self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertGreaterEqual(result["flows"][0]["soc_end_pct"], 28.0)
 
 
-    def test_unreachable_buy_deadline_keeps_reachable_plan_and_reports_shortfall(self):
-        result = dispatch([slot(True)], 21.0, [50.0], {0})
-        self.assertLess(result["effective_target_pcts"][0], 50.0)
-        self.assertEqual(result["requested_target_pcts"][0], 50.0)
-        self.assertGreater(result["flows"][0]["grid_charge_kwh"], 0.0)
-        self.assertLessEqual(result["flows"][0]["grid_charge_kwh"], 1.25 + 1e-9)
+    def test_unreachable_buy_deadline_rejects_instead_of_silently_lowering_target(self):
+        with self.assertRaisesRegex(RuntimeError, "BUY_TARGET_UNREACHABLE:slot=0"):
+            dispatch([slot(True)], 21.0, [50.0], {0})
 
 
     def test_no_buy_outside_buy_window(self):

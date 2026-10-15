@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_38"
+PLANNER_VERSION = "CORE_0_40_39"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -904,59 +904,23 @@ def economic_buy_charge_caps(rows: list[dict], required_targets: list[float],
                              capacity_kwh: float = 15.0, eta_c: float = 0.9,
                              eta_d: float = 0.95, max_power_kw: float = 5.0,
                              slot_minutes: int = 15) -> list[float]:
-    """Permit cheaper earlier BUY to replace dearer later BUY, without new floors.
+    """Allow the full available battery charge in every permitted BUY slot.
 
-    These are optional DP ceilings, not deadlines or executor targets. The
-    complete energy balance chooses the actual extra energy; execution receives
-    only the peak of its selected consecutive charging run.
+    BUY is an instruction to use available battery charging capacity, limited
+    by physical SOC, inverter power and the site's total import limit. The
+    optimized dispatch still chooses the feasible trajectory and never adds
+    grid charging outside an RCE BUY window.
     """
     if len(rows) != len(required_targets):
         raise ValueError("ECONOMIC_BUY_CAP_LENGTH_MISMATCH")
     cap = min(100.0, max(0.0, float(max_soc_pct)))
     result = [min(cap, float(value)) for value in required_targets]
-    # An optional price allowance must still correspond to forecast demand,
-    # not speculative stockpiling (particularly at a negative price). Compute
-    # the bridge with future BUY removed, but retain usable PV and all original
-    # requirements. Its ceiling permits replacing future purchases only.
-    capacity = max(0.001, float(capacity_kwh))
-    demand_caps = [0.0] * len(rows)
-    next_kwh = 0.0
-    for index in range(len(rows) - 1, -1, -1):
-        after_kwh = max(next_kwh, capacity * result[index] / 100.0)
-        demand_caps[index] = min(cap, math.ceil(after_kwh / capacity * 1000.0 - 1e-9) / 10.0)
-        row = rows[index]
-        load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
-                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
-        pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
-        deficit = max(0.0, load - pv) / max(0.01, eta_d)
-        pv_supply = min(max_power_kw * slot_minutes / 60.0,
-                        max(0.0, pv - load)) * max(0.01, eta_c)
-        next_kwh = max(0.0, after_kwh + deficit - pv_supply)
     allowed = [strict_database_bool(row.get("buy_window", False), "buy_window")
                and not strict_database_bool(row.get("sale_window", False), "sale_window")
                for row in rows]
-    # Equalize the existing requirement throughout every uninterrupted BUY
-    # window before considering an optional price-driven increase.
-    start = 0
-    while start < len(rows):
-        if not allowed[start]:
-            start += 1
-            continue
-        end = start + 1
-        while end < len(rows) and allowed[end]:
-            end += 1
-        window_target = max(result[start:end])
-        for index in range(start, end):
-            result[index] = window_target
-        start = end
-    future_max_price = None
-    for index in range(len(rows) - 1, -1, -1):
-        if not allowed[index] or rows[index].get("price_buy_pln_kwh") is None:
-            continue
-        price = float(rows[index]["price_buy_pln_kwh"])
-        if future_max_price is not None and price < future_max_price - 1e-9:
-            result[index] = max(result[index], demand_caps[index])
-        future_max_price = price if future_max_price is None else max(price, future_max_price)
+    for index, row in enumerate(rows):
+        if allowed[index] and row.get("price_buy_pln_kwh") is not None:
+            result[index] = cap
     return result
 
 
@@ -1413,6 +1377,14 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                         "slot_cost_pln": slot_cost})
         if not next_costs:
             raise RuntimeError(f"No feasible SOC state at horizon slot {index}")
+        if grid_charge_allowed:
+            # A BUY slot uses the maximum physically feasible battery charge.
+            # Keeping only the highest reachable SOC state prevents the price
+            # objective from deferring available volume to a later window.
+            highest_reachable_unit = max(next_costs)
+            next_costs = {highest_reachable_unit: next_costs[highest_reachable_unit]}
+            next_predecessors = {
+                highest_reachable_unit: next_predecessors[highest_reachable_unit]}
         effective_target_unit = requested_target_unit
         if minimum_soc_targets is not None and index in target_due_indices:
             # Determine the due SOC from transitions that survived the full
@@ -1430,14 +1402,13 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     unit: predecessor for unit, predecessor in next_predecessors.items()
                     if unit in eligible}
             else:
-                # Keep the physically reachable state rather than reject the
-                # entire production plan. Record the actual due SOC separately
-                # from the requested target, preserving the original demand.
+                # Do not publish a plan that silently misses the requested
+                # battery replenishment commitment.
                 best_reachable_unit = max(next_costs)
-                next_costs = {best_reachable_unit: next_costs[best_reachable_unit]}
-                next_predecessors = {
-                    best_reachable_unit: next_predecessors[best_reachable_unit]}
-                effective_target_unit = best_reachable_unit
+                raise RuntimeError(
+                    f"BUY_TARGET_UNREACHABLE:slot={index}:"
+                    f"requested={requested_target_unit * step:.3f}:"
+                    f"reachable={best_reachable_unit * step:.3f}")
         effective_target_pcts.append(effective_target_unit * step)
         costs, predecessors = next_costs, predecessors+[next_predecessors]
     candidates = [(cost, unit) for unit, cost in costs.items() if unit >= terminal_unit]
