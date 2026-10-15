@@ -10,7 +10,6 @@ sys.path.insert(0, str(ROOT))
 
 from planner_service import (
     assess_sale_plan_against_no_sale,
-    economic_grid_hold_allowed,
     allocate_slot_discharge,
     backward_target_commitments,
     build_soc_contracts,
@@ -1420,21 +1419,12 @@ class PairedArbitrageTests(unittest.TestCase):
                          contract["charge_targets"][1])
         self.assertGreater(contract["charge_targets"][0], 15.0)
 
-    def test_pass_four_compares_grid_hold_with_future_sale_value(self):
-        # Earlier BUY-to-house energy cannot be held for a cheaper later SELL.
-        self.assertFalse(economic_grid_hold_allowed(
-            2.24145, 1.64145, 0.95, 0.08, 0.05))
-        self.assertTrue(economic_grid_hold_allowed(
-            2.24145, 3.00, 0.95, 0.08, 0.05))
-        self.assertFalse(economic_grid_hold_allowed(
-            2.24145, None, 0.95, 0.08, 0.05))
-
-    def test_pass_four_rejects_unprofitable_grid_hold_in_optimizer(self):
+    def test_pass_four_never_uses_grid_for_optional_load_even_with_profitable_sale(self):
         rows = [
             {"price_buy_pln_kwh": 2.24145, "price_sell_pln_kwh": 0.0,
              "buy_window": False, "sale_window": False,
              "forecast_load_kwh": 0.30, "forecast_pv_total_kwh": 0.0},
-            {"price_buy_pln_kwh": 1.20, "price_sell_pln_kwh": 1.64145,
+            {"price_buy_pln_kwh": 1.20, "price_sell_pln_kwh": 3.00,
              "buy_window": False, "sale_window": True,
              "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0},
         ]
@@ -1442,7 +1432,7 @@ class PairedArbitrageTests(unittest.TestCase):
             rows, 60.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0, 15.0], 40.0, 0.25, 100.0)
         first = result["flows"][0]
-        # One SOC quantum can remain as a dispatch rounding residual.
+        # A profitable later sale still cannot authorize grid supply to the house.
         self.assertLessEqual(first["grid_load_kwh"], 0.25 * 15.0 / 100.0 * 0.95 + 1e-9)
         self.assertGreater(first["battery_to_load_kwh"], 0.20)
 
@@ -1542,8 +1532,8 @@ class PairedArbitrageTests(unittest.TestCase):
                     if flow["grid_charge_kwh"] > 1e-9]
         self.assertTrue(charging)
         self.assertTrue(all(
-            flow["grid_charge_kwh"] + 1e-9 >= flow["grid_load_kwh"]
-            for flow in charging
+            flow["grid_load_kwh"] <= 0.05
+            for flow in result["flows"]
         ))
         self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertEqual(result["flows"][1]["grid_charge_kwh"], 0.0)
