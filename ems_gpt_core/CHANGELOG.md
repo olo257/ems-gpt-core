@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.34 — zakupy tylko do baterii i Observer 24 h
+
+- Pass 4 nie dopuszcza dobrowolnego importu do zasilania domu w celu zachowania SOC na późniejszą sprzedaż; dotyczy to także slotów z równoczesnym ładowaniem baterii.
+- Opłacalność sprzedaży energii z baterii pozostaje weryfikowana przez FIFO kosztu zakupu energii do baterii oraz porównanie planu sprzedaży z wariantem bez sprzedaży.
+- Historia i przyszłe sloty analizowane przez Observer są ograniczone do ostatnich 24 godzin; wskaźniki odchyleń prognoz są liczone w tym samym oknie.
+
+# EMS-GPT Core — historia zmian
+
 ## 0.40.33 — blokada sprzedaży poniżej wartości importu do domu
 
 - Przywrócono ekonomiczną kontrolę Pass 4: opcjonalny import domu zachowujący energię baterii jest dopuszczalny tylko wtedy, gdy późniejsza sprzedaż pokrywa bieżącą cenę zakupu, sprawność rozładowania, degradację i minimalną marżę.
