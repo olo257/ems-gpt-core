@@ -98,7 +98,8 @@ def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=
               "actual_buy_kwh": row.get("actual_buy_kwh"), "planned_buy_kwh": row.get("planned_buy_kwh")}
              for row in off_window_buys[:12]])
 
-    # PV bias is evaluated by local day, not by an isolated noisy slot.
+    # The database query bounds this input to a rolling 24-hour window.
+    # Aggregate the full window so crossing midnight does not discard data.
     by_day = defaultdict(lambda: {"forecast": 0.0, "actual": 0.0, "slots": 0})
     for row in history_rows:
         day = _day(row.get("slot_start"))
@@ -109,17 +110,18 @@ def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=
         by_day[day]["forecast"] += max(0.0, forecast)
         by_day[day]["actual"] += max(0.0, actual)
         by_day[day]["slots"] += 1
-    recent_days = sorted(by_day)[-1:]
+    recent_days = sorted(by_day)
     sample = [by_day[day] for day in recent_days]
     forecast_sum = sum(day["forecast"] for day in sample)
     actual_sum = sum(day["actual"] for day in sample)
+    window_slots = sum(day["slots"] for day in sample)
     under_days = [day.isoformat() for day in recent_days
-                  if by_day[day]["slots"] >= 8
-                  and by_day[day]["actual"] - by_day[day]["forecast"] >= 0.5
-                  and by_day[day]["actual"] > by_day[day]["forecast"] * 1.2]
+                  if by_day[day]["actual"] > by_day[day]["forecast"]]
     pv_under_pct = (100 * (actual_sum - forecast_sum) / forecast_sum
                     if forecast_sum > 1.0 else None)
-    if len(under_days) >= 1 and pv_under_pct is not None and pv_under_pct >= 20:
+    if (window_slots >= 8 and actual_sum - forecast_sum >= 0.5
+            and actual_sum > forecast_sum * 1.2
+            and pv_under_pct is not None and pv_under_pct >= 20):
         add("pv_forecast_underestimation_24h", round(pv_under_pct, 2), 20, "WARNING",
             "Prognoza PV jest systematycznie zaniżana. Sprawdź osobno PV1 i PV2 oraz korektę prognozy; nie zmieniaj planera na podstawie pojedynczego dnia.",
             {"days": [day.isoformat() for day in recent_days], "underestimated_days": under_days,
@@ -142,15 +144,15 @@ def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=
                 daily_series[day]["forecast"] += max(0.0, forecast)
                 daily_series[day]["actual"] += max(0.0, actual)
                 daily_series[day]["slots"] += 1
-        days = sorted(daily_series)[-1:]
+        days = sorted(daily_series)
         forecasts = sum(daily_series[day]["forecast"] for day in days)
         actuals = sum(daily_series[day]["actual"] for day in days)
+        window_slots = sum(daily_series[day]["slots"] for day in days)
         repeat_days = [day.isoformat() for day in days
-                       if daily_series[day]["slots"] >= 8
-                       and daily_series[day]["actual"] - daily_series[day]["forecast"] >= 0.5
-                       and daily_series[day]["actual"] > daily_series[day]["forecast"] * 1.2]
+                       if daily_series[day]["actual"] > daily_series[day]["forecast"]]
         bias = 100 * (actuals - forecasts) / forecasts if forecasts > 1.0 else None
-        if len(repeat_days) >= 1 and bias is not None and bias >= 20:
+        if (window_slots >= 8 and actuals - forecasts >= 0.5
+                and actuals > forecasts * 1.2 and bias is not None and bias >= 20):
             add(f"{series_name}_forecast_underestimation_24h", round(bias, 2), 20, "WARNING",
                 f"Prognoza {label} jest systematycznie zaniżana. Sprawdź jej źródło i korektę; nie zmieniaj automatycznie planera.",
                 {"days": [day.isoformat() for day in days], "underestimated_days": repeat_days,
