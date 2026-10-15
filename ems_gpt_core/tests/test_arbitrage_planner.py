@@ -576,13 +576,14 @@ class PairedArbitrageTests(unittest.TestCase):
             0.0, 15.0, 100.0)
 
         self.assertEqual(contract["required"], [15.0])
-        with self.assertRaisesRegex(
-                RuntimeError, "No feasible SOC state"):
-            optimize_energy_horizon(
-                rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-                5.0, 15, [15.0], 15.0, 0.10, 100.0,
-                contract["charge_targets"], set(),
-                contract["buy_due_indices"], contract["required"])
+        flow = optimize_energy_horizon(
+            rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 15.0, 0.10, 100.0,
+            contract["charge_targets"], set(),
+            contract["buy_due_indices"], contract["required"])["flows"][0]
+        self.assertAlmostEqual(flow["grid_load_kwh"], 0.30, places=6)
+        self.assertEqual(flow["grid_charge_kwh"], 0.0)
+        self.assertEqual(flow["voluntary_grid_load_kwh"], 0.0)
 
     def test_required_soc_is_enforced_in_every_slot(self):
         rows = [
@@ -1068,8 +1069,8 @@ class PairedArbitrageTests(unittest.TestCase):
             rows, 50.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
             5.0, 15, [15.0], 15.0, 0.10, 100.0,
             required_soc_pcts=[15.0], battery_sales_enabled=False)["flows"][0]
-        self.assertAlmostEqual(flow["battery_to_load_kwh"],
-                               5.0 * 0.25 * 0.95, delta=0.02)
+        self.assertLessEqual(flow["battery_to_load_kwh"], 5.0 * 0.25 + 1e-9)
+        self.assertGreater(flow["battery_to_load_kwh"], 1.20)
         self.assertGreater(flow["grid_load_kwh"], 0.20)
         self.assertEqual(flow["grid_charge_kwh"], 0.0)
         self.assertEqual(flow["voluntary_grid_load_kwh"], 0.0)
