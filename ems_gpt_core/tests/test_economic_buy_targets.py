@@ -138,12 +138,13 @@ class EconomicBuyTargetsTests(unittest.TestCase):
 
     def test_battery_buy_does_not_authorize_home_import(self):
         rows = self.rows()
-        for row in rows[:4]:
-            row['forecast_load_kwh'] = 0.3
+        for row in rows:
+            row['forecast_load_kwh'] = 0.0
+        rows[0]['forecast_load_kwh'] = 0.3
         _, result = self.optimize(rows)
         self.assertTrue(any(f['grid_charge_kwh'] > 0.02
                             for f in result['flows']))
-        self.assertTrue(all(f['grid_load_kwh'] <= 0.05
+        self.assertTrue(all(f['grid_load_kwh'] <= 1e-9
                             for f in result['flows']))
         self.assertEqual(voluntary_load_without_charging_indices(
             rows, result['flows'], 0.05, 0.02), set())
@@ -152,7 +153,7 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         rows = self.rows()
         rows[0]['forecast_load_kwh'] = 0.3
         with self.assertRaisesRegex(
-                RuntimeError, 'SOC_NO_PHYSICALLY_REACHABLE_STATE:0'):
+                RuntimeError, 'No feasible SOC state at horizon slot 0'):
             self.optimize(rows, initial=15.0)
 
     def test_unbacked_native_import_stays_forbidden(self):
