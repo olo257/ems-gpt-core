@@ -576,13 +576,14 @@ class PairedArbitrageTests(unittest.TestCase):
             0.0, 15.0, 100.0)
 
         self.assertEqual(contract["required"], [15.0])
-        with self.assertRaisesRegex(
-                RuntimeError, "No feasible SOC state"):
-            optimize_energy_horizon(
-                rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-                5.0, 15, [15.0], 15.0, 0.10, 100.0,
-                contract["charge_targets"], set(),
-                contract["buy_due_indices"], contract["required"])
+        flow = optimize_energy_horizon(
+            rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 15.0, 0.10, 100.0,
+            contract["charge_targets"], set(),
+            contract["buy_due_indices"], contract["required"])["flows"][0]
+        self.assertAlmostEqual(flow["grid_load_kwh"], 0.30, places=6)
+        self.assertEqual(flow["grid_charge_kwh"], 0.0)
+        self.assertEqual(flow["voluntary_grid_load_kwh"], 0.0)
 
     def test_required_soc_is_enforced_in_every_slot(self):
         rows = [
@@ -1035,7 +1036,7 @@ class PairedArbitrageTests(unittest.TestCase):
                 required, set(), {0, 41}, required,
                 battery_sales_enabled=False, max_grid_import_kw=12.0)
 
-    def test_minimum_soc_does_not_authorize_grid_import_for_load(self):
+    def test_reserve_allows_only_unavoidable_house_load_residual(self):
         rows = [{
             "price_buy_pln_kwh": 3.0,
             "price_sell_pln_kwh": 0.0,
@@ -1044,9 +1045,36 @@ class PairedArbitrageTests(unittest.TestCase):
             "forecast_load_kwh": 0.30,
             "forecast_pv_total_kwh": 0.0,
         }]
-        with self.assertRaisesRegex(
-                RuntimeError, "No feasible SOC state"):
-            self.optimize(rows, 15.0, 15.0, [15.0])
+        flow = self.optimize(rows, 15.0, 15.0, [15.0])["flows"][0]
+        self.assertAlmostEqual(flow["grid_load_kwh"], 0.30, places=6)
+        self.assertEqual(flow["grid_charge_kwh"], 0.0)
+        self.assertEqual(flow["voluntary_grid_load_kwh"], 0.0)
+        self.assertEqual(flow["battery_to_load_kwh"], 0.0)
+
+    def test_power_limited_load_is_physical_residual_not_planned_buy(self):
+        rows = [{
+            "price_buy_pln_kwh": 3.0,
+            "price_sell_pln_kwh": 0.0,
+            "buy_window": False,
+            "sale_window": False,
+            "forecast_load_kwh": 1.50,
+            "forecast_pv_total_kwh": 0.0,
+        }]
+        recovery = validate_recoverable_soc_requirements(
+            rows, [15.0], 50.0, 15.0, 100.0, capacity_kwh=15.0,
+            eta_c=0.90, eta_d=0.95, max_power_kw=5.0,
+            slot_minutes=15, soc_step_pct=0.10)
+        self.assertEqual(recovery["capacity_limited_indices"], [])
+        flow = optimize_energy_horizon(
+            rows, 50.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+            5.0, 15, [15.0], 15.0, 0.10, 100.0,
+            required_soc_pcts=[15.0], battery_sales_enabled=False)["flows"][0]
+        self.assertLessEqual(flow["battery_to_load_kwh"], 5.0 * 0.25 + 1e-9)
+        self.assertGreater(flow["battery_to_load_kwh"], 1.20)
+        self.assertGreater(flow["grid_load_kwh"], 0.20)
+        self.assertEqual(flow["grid_charge_kwh"], 0.0)
+        self.assertEqual(flow["voluntary_grid_load_kwh"], 0.0)
+
 
     def test_future_sale_never_allows_grid_hold_for_native_load(self):
         rows=[

@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.38 — fizyczny residual obciążenia przy limicie baterii
+
+- Reachability i optymalizator dopuszczają nieunikniony import na odbiory wyłącznie przy osiągnięciu limitu mocy rozładowania lub rezerwy SOC.
+- Residual pozostaje w `grid_load_kwh`; nie zwiększa planowanego BUY ani `grid_charge_kwh` i nie chroni SOC przed późniejszą sprzedażą.
+- Dodano regresje limitu mocy i rezerwy oraz zaktualizowano kontrakt planera.
+
 ## 0.40.37 — naprawa przeliczenia planera
 
 - Rozdzielono moduł zegara monotonicznego od `datetime.time`; wcześniejszy import nadpisywał nazwę `time` i zatrzymywał każde przeliczenie już w fazie STARTUP.

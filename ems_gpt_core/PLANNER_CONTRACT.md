@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.37. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.38. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -145,15 +145,22 @@ BUY, limity importu oraz zakaz sprzedaży poza SELL pozostają twarde.
 
 ### Zakup z sieci wyłącznie do ładowania baterii
 
-- Planer może przypisać import z sieci wyłącznie do `grid_charge_kwh` w
-  dozwolonym oknie BUY.
-- `grid_load_kwh` nie może pokrywać prognozowanego zużycia domu ani w BUY, ani
-  poza BUY. Dotyczy to również aktywnego mostu SOC i slotów z równoczesnym
-  ładowaniem baterii.
-- Jeżeli PV i bateria nie pokrywają zużycia bez importu na dom, kandydat planu
-  jest niewykonalny; planer nie może ukrywać niedoboru pod przepływem sieciowym.
-- Pozostaje wyłącznie techniczna resztka do 0,05 kWh, która wynika z kwantyzacji
-  SOC. Nie może ona otworzyć okna BUY ani uzasadnić ładowania.
+- Planer przypisuje planowany zakup wyłącznie do `grid_charge_kwh` w
+  dozwolonym oknie BUY. Import ten ładuje baterię i pozostaje odrębny od
+  `grid_load_kwh`.
+- Zwykły, możliwy do uniknięcia import na zużycie domu jest zabroniony w BUY
+  i poza BUY, również przy aktywnym moście SOC lub równoczesnym ładowaniu.
+- Rzeczywisty niedobór mocy może pozostać w `grid_load_kwh` tylko wtedy, gdy
+  bateria osiąga limit rozładowania w slocie albo jej SOC dochodzi do rezerwy
+  technicznej (w tym gdy stan początkowy jest już poniżej rezerwy). Jest to
+  fizyczny import na bieżące odbiory, a nie decyzja zakupowa planera.
+- Taki residual nie może zwiększyć `planned_buy_kwh` ani `grid_charge_kwh`,
+  tworzyć BUY, uzasadniać ładowania ani zachowywać baterii do późniejszej
+  sprzedaży. Pozostaje jawnie zapisany jako `grid_load_kwh`; Pass 4 nadal
+  odrzuca możliwy do uniknięcia grid-to-home.
+- Tolerancja jednego kwantu SOC służy wyłącznie rozliczeniu zaokrągleń.
+  Każdy import, wraz z ładowaniem i obciążeniem domu, nadal podlega fizycznemu
+  limitowi sieci, mocy baterii, pojemności, SOC i sprawności.
 - Import baterii wraz z innymi przepływami nadal musi spełniać fizyczny limit
   sieci, moc baterii, pojemność, SOC i ograniczenia sprawności.
 
@@ -253,10 +260,14 @@ Target nie jest progiem sprzedaży i nie może być kopiowany z floor. Powinien
 być zwykle wyższy od floor i nigdy nie przekracza 100%. Wymaganie mostu ponad
 pojemność jest fizycznie niemożliwe i nie może zostać przekształcone w cel
 zakupu do 100%. Planer zachowuje techniczną rezerwę, wyłącza sprzedaż baterii
-i jawnie raportuje niewykonalność, gdy bilans zużycia wymagałby importu na dom.
+i jawnie raportuje niewykonalność, gdy bilans wymagałby możliwego do uniknięcia importu na dom poza fizycznym limitem mocy baterii lub rezerwą SOC.
 
-Zakup energii służy wyłącznie ładowaniu baterii. Planer nie może kupować energii
-na bieżące zużycie ani w celu zachowania baterii do późniejszej sprzedaży.
+Planowany zakup energii służy wyłącznie ładowaniu baterii. Planer nie może
+zamieniać fizycznego `grid_load_kwh` w `planned_buy_kwh` ani kupować energii
+na bieżące zużycie lub w celu zachowania baterii do późniejszej sprzedaży.
+Niedobór pokrywany przez sieć po osiągnięciu limitu mocy rozładowania albo
+rezerwy SOC pozostaje wyłącznie fizycznym `grid_load_kwh` i nie jest komendą
+zakupu.
 
 ## 6. `soc_floor`
 
@@ -478,11 +489,12 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 - Testy regresyjne kodu nie są równoznaczne z odbiorem produkcyjnym: po aktualizacji trzeba osobno potwierdzić wersję przebiegu planera w zapisanych slotach, okna BUY, planowane kWh zakupu i osiągalność SOC.
 
 
-### Zakup tylko na ładowanie — 0.40.37
+### Zakup tylko na ładowanie — 0.40.38
 
 Przepływ `grid_charge_kwh` służy wyłącznie zwiększeniu SOC baterii w BUY.
-Planowany `grid_load_kwh` powyżej progu technicznego jest zabroniony w każdym
-slotcie, także gdy działa BUY lub wymagany jest most SOC. Jeżeli nie można
-zbilansować obciążenia przez PV i rozładowanie baterii przy zachowaniu
-ograniczeń SOC, planer zgłasza niewykonalność zamiast tworzyć plan z importem
-dla domu.
+Możliwy do uniknięcia `grid_load_kwh` powyżej progu technicznego jest
+zabroniony także w BUY i przy wymaganym moście SOC. Nieunikniony residual
+odbiorów jest dozwolony wyłącznie przy limicie mocy rozładowania albo rezerwie
+SOC; pozostaje fizycznym importem domu i nigdy nie staje się BUY ani ładowaniem
+baterii. Poza tymi fizycznymi granicami planer zgłasza niewykonalność zamiast
+ukrywać niedobór.

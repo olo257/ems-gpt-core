@@ -432,15 +432,17 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         for flow, floor in zip(plan['flows'], result['required_soc_pcts']):
             self.assertGreaterEqual(flow['soc_end_pct'] + 1e-9, floor)
 
-    def test_house_load_above_battery_power_is_infeasible_without_grid_import(self):
+    def test_house_load_above_battery_power_keeps_hard_soc_floor_reachable(self):
         rows = self.rows(2)
         rows[0]['buy_window'] = True
         rows[1]['forecast_load_kwh'] = 1.4523
-        with self.assertRaisesRegex(
-                RuntimeError, 'SOC_NO_PHYSICALLY_REACHABLE_STATE:1'):
-            _soc_reachability_profile(
-                rows, 85.4201, 15.0, 15.0, 0.9, 0.95, 5.0, 15, 0.1,
-                [92.9, 84.2])
+        recovery = validate_recoverable_soc_requirements(
+            rows, [92.9, 84.2], 85.4201, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.9, eta_d=0.95,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
+        self.assertEqual(recovery['capacity_limited_indices'], [])
+        self.assertGreaterEqual(recovery['reachable_soc_ceiling_pcts'][1], 84.2)
+        self.assertEqual(recovery['required_soc_pcts'], [92.9, 84.2])
 
     def test_requirements_do_not_clip_an_impossible_bridge(self):
         rows = self.rows(20)
