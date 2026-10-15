@@ -109,7 +109,7 @@ def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=
         by_day[day]["forecast"] += max(0.0, forecast)
         by_day[day]["actual"] += max(0.0, actual)
         by_day[day]["slots"] += 1
-    recent_days = sorted(by_day)[-7:]
+    recent_days = sorted(by_day)[-1:]
     sample = [by_day[day] for day in recent_days]
     forecast_sum = sum(day["forecast"] for day in sample)
     actual_sum = sum(day["actual"] for day in sample)
@@ -119,8 +119,8 @@ def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=
                   and by_day[day]["actual"] > by_day[day]["forecast"] * 1.2]
     pv_under_pct = (100 * (actual_sum - forecast_sum) / forecast_sum
                     if forecast_sum > 1.0 else None)
-    if len(under_days) >= 3 and pv_under_pct is not None and pv_under_pct >= 20:
-        add("pv_forecast_underestimation_7d", round(pv_under_pct, 2), 20, "WARNING",
+    if len(under_days) >= 1 and pv_under_pct is not None and pv_under_pct >= 20:
+        add("pv_forecast_underestimation_24h", round(pv_under_pct, 2), 20, "WARNING",
             "Prognoza PV jest systematycznie zaniżana. Sprawdź osobno PV1 i PV2 oraz korektę prognozy; nie zmieniaj planera na podstawie pojedynczego dnia.",
             {"days": [day.isoformat() for day in recent_days], "underestimated_days": under_days,
              "forecast_pv_kwh": round(forecast_sum, 3), "actual_pv_kwh": round(actual_sum, 3),
@@ -142,7 +142,7 @@ def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=
                 daily_series[day]["forecast"] += max(0.0, forecast)
                 daily_series[day]["actual"] += max(0.0, actual)
                 daily_series[day]["slots"] += 1
-        days = sorted(daily_series)[-7:]
+        days = sorted(daily_series)[-1:]
         forecasts = sum(daily_series[day]["forecast"] for day in days)
         actuals = sum(daily_series[day]["actual"] for day in days)
         repeat_days = [day.isoformat() for day in days
@@ -150,8 +150,8 @@ def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=
                        and daily_series[day]["actual"] - daily_series[day]["forecast"] >= 0.5
                        and daily_series[day]["actual"] > daily_series[day]["forecast"] * 1.2]
         bias = 100 * (actuals - forecasts) / forecasts if forecasts > 1.0 else None
-        if len(repeat_days) >= 3 and bias is not None and bias >= 20:
-            add(f"{series_name}_forecast_underestimation_7d", round(bias, 2), 20, "WARNING",
+        if len(repeat_days) >= 1 and bias is not None and bias >= 20:
+            add(f"{series_name}_forecast_underestimation_24h", round(bias, 2), 20, "WARNING",
                 f"Prognoza {label} jest systematycznie zaniżana. Sprawdź jej źródło i korektę; nie zmieniaj automatycznie planera.",
                 {"days": [day.isoformat() for day in days], "underestimated_days": repeat_days,
                  "forecast_kwh": round(forecasts, 3), "actual_kwh": round(actuals, 3)})
@@ -224,8 +224,8 @@ def audit_operational_rows(history_rows, future_rows, *, options, incident_rows=
                 {"day": day.isoformat(), "slot_start": close["slot_start"],
                  "soc_end_plan_pct": planned_close, "soc_required_pct": required})
 
-    return suggestions, {"pv_forecast_7d_bias_pct": None if pv_under_pct is None else round(pv_under_pct, 2),
-                         "pv_underestimated_days_7d": len(under_days),
+    return suggestions, {"pv_forecast_24h_bias_pct": None if pv_under_pct is None else round(pv_under_pct, 2),
+                         "pv_underestimated_days_24h": len(under_days),
                          "audited_history_slots": len(history_rows),
                          "audited_new_history_slots": len(incident_rows),
                          "audited_future_slots": len(future_rows)}
@@ -279,7 +279,7 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
           LEFT JOIN ems_gpt_core_process_execution hp_exec
             ON hp_exec.id=(SELECT MAX(hp_exec2.id) FROM ems_gpt_core_process_execution hp_exec2
                            WHERE hp_exec2.slot_start=s.slot_start AND hp_exec2.process_name='HP_HEAT_DHW')
-          WHERE s.actual_recorded_at IS NOT NULL AND s.slot_start>=DATE_SUB(NOW(6),INTERVAL 7 DAY)
+          WHERE s.actual_recorded_at IS NOT NULL AND s.slot_start>=DATE_SUB(NOW(6),INTERVAL 1 DAY)
           ORDER BY s.slot_start""")
         history_rows = list(cur.fetchall())
         if previous_watermark:
@@ -303,7 +303,7 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
                          "slot_start": watermark_key[1].isoformat()}
         prompt = {"contract": "EMS_AI_OBSERVER_0_39_12", "mode": "SHADOW_READ_ONLY",
                   "forbidden": ["PLAN_WRITE", "PPD_WRITE", "COMMAND_WRITE", "HA_SERVICE_CALL"],
-                  "analysis_scope": {"history_days": 7, "history_slots": len(history_rows),
+                  "analysis_scope": {"history_days": 1, "history_slots": len(history_rows),
                                      "new_history_slots": len(new_history_rows),
                                      "history_watermark": watermark,
                                      "future_slots": len(future_rows),
@@ -352,7 +352,7 @@ def run_ai_observer(source_ref: str | None = None, *, options, db, create_todo, 
     active_titles = []
     todo_scope = {
         "source_analytics_run_id": source_ref,
-        "history_days": 7,
+        "history_days": 1,
         "completed_slots_analyzed": operational_summary["audited_new_history_slots"],
         "future_slots_analyzed": operational_summary["audited_future_slots"],
         "areas": ["plan i wykonanie", "prognoza PV1/PV2 i zużycia",
