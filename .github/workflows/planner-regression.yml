@@ -26,6 +26,8 @@ jobs:
 
       - name: Economic BUY target regression tests
         run: python -m unittest discover -s ems_gpt_core/tests -p 'test_economic_buy_targets.py' -v
+      - name: SOC replenishment safety tests
+        run: python -m unittest discover -s ems_gpt_core/tests -p 'test_soc_replenishment_safety.py' -v
       - name: Pass 4 arbitrage economics tests
         run: python -m unittest discover -s ems_gpt_core/tests -p 'test_arbitrage_planner.py' -v
       - name: Observer 24-hour audit tests

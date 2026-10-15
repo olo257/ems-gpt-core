@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_33"
+PLANNER_VERSION = "CORE_0_40_35"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -260,17 +260,6 @@ def _soc_reachability_profile(
         next_scores = {}
         next_predecessors = {}
         for current, score in scores.items():
-            current_energy = current * unit_kwh
-            required_floor_unit = (
-                first_unit if required_soc_pcts is None else
-                max(first_unit, int(math.ceil(
-                    float(required_soc_pcts[index]) / step - 1e-9)))
-            )
-            usable_internal = min(
-                max_internal_discharge,
-                max(0.0, current_energy - required_floor_unit * unit_kwh),
-            )
-            unavoidable_grid_load = max(0.0, deficit - usable_internal * eta_discharge)
             lower_state = current if current < first_unit else first_unit
             for following in range(max(lower_state, current-max_down),
                                     min(last_unit, current+max_up)+1):
@@ -292,15 +281,13 @@ def _soc_reachability_profile(
                         continue
                     grid_charge = 0.0
                     grid_load = max(0.0, deficit-battery_to_load)
-                voluntary_grid_load = max(0.0, grid_load-unavoidable_grid_load)
-                # Match optimizer physics: in BUY, home load and battery
-                # charging may share the grid, within the connection limit.
-                # Without this check reachability overstates charge capacity;
-                # without allowing shared import it understates it.
-                if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
+                # Reject deliberate grid-to-home supply, including safety
+                # bridge exceptions and charging overlap. Keep only one SOC
+                # quantum for physical accounting/rounding tolerance.
+                voluntary_grid_load = max(0.0, grid_load)
+                if grid_load > unit_kwh * eta_discharge + 1e-9:
                     continue
-                if (grid_charge <= 1e-9
-                        and voluntary_grid_load > unit_kwh * eta_discharge + 1e-9):
+                if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
                     continue
                 floor_shortfall = (0.0 if required_soc_pcts is None else
                     max(0.0, float(required_soc_pcts[index]) - following * step))
@@ -648,7 +635,7 @@ def assess_sale_plan_against_no_sale(sale_plan: dict, no_sale_plan: dict,
             if grid_inventory[0][0] <= 1e-9:
                 grid_inventory.pop(0)
         grid_load = max(0.0, float(flow.get("grid_load_kwh") or 0.0))
-        if grid_load > 1e-9:
+        if grid_load > tolerance_kwh + 1e-9:
             grid_load_inventory.append([
                 grid_load, float(row.get("price_buy_pln_kwh") or 0.0),
             ])
@@ -745,6 +732,13 @@ def end_of_day_soc_target(historical_soc_pct: float, reserve_pct: float,
 
 def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
                                  daily_terminal_soc: dict) -> tuple[list[float], set[int]]:
+    """Apply historical close SOC after an imminent next-day BUY opportunity.
+
+    The independent safety bridge remains in force before replenishment. If a
+    local day begins with a continuous permitted BUY window, defer the previous
+    day's historical target until that window ends so it cannot force an earlier
+    and more expensive charge.
+    """
     if len(rows) != len(safety_pcts):
         raise ValueError("rows and safety SOC lengths differ")
     required = list(safety_pcts)
@@ -754,9 +748,36 @@ def daily_close_soc_requirements(rows: list[dict], safety_pcts: list[float],
         next_day = ((rows[index + 1].get("local_day")
                      or rows[index + 1]["slot_start"].date())
                     if index + 1 < len(rows) else None)
-        if next_day != row_day:
-            required[index] = max(safety_pcts[index], daily_terminal_soc[row_day])
-            closes.add(index)
+        if next_day == row_day:
+            continue
+
+        target_index = index
+        first_next = index + 1
+        if first_next < len(rows):
+            first_row = rows[first_next]
+            first_day = first_row.get("local_day") or first_row["slot_start"].date()
+            first_is_buy = (
+                first_day != row_day
+                and strict_database_bool(first_row.get("buy_window", False), "buy_window")
+                and not strict_database_bool(first_row.get("sale_window", False), "sale_window")
+            )
+            if first_is_buy:
+                target_index = first_next
+                while target_index + 1 < len(rows):
+                    candidate = rows[target_index + 1]
+                    candidate_day = candidate.get("local_day") or candidate["slot_start"].date()
+                    candidate_is_buy = (
+                        candidate_day == first_day
+                        and strict_database_bool(candidate.get("buy_window", False), "buy_window")
+                        and not strict_database_bool(candidate.get("sale_window", False), "sale_window")
+                    )
+                    if not candidate_is_buy:
+                        break
+                    target_index += 1
+
+        required[target_index] = max(
+            required[target_index], daily_terminal_soc[row_day])
+        closes.add(target_index)
     return required, closes
 
 
@@ -1204,9 +1225,9 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     target_due_indices = buy_window_ends if target_due_indices is None else set(target_due_indices)
     # Pass 4 does not authorize importing household consumption to preserve
     # battery energy for a later sale. Grid purchases charge the battery only.
-    # Any physically unavoidable supply under the active safety bridge is
-    # handled separately; battery buy/sell economics use FIFO cost basis and
-    # the sale-versus-no-sale counterfactual below.
+    # Native load must be covered by PV or battery energy; no safety-bridge
+    # exception permits grid imports to the home. Battery buy/sell economics
+    # use FIFO cost basis and the sale-versus-no-sale counterfactual below.
     predecessors: list[dict[int, tuple[int, dict]]] = []
     effective_target_pcts: list[float] = []
     for index, row in enumerate(rows):
@@ -1285,41 +1306,13 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     pv_export = surplus if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_export)
                     battery_charge_internal = 0.0
-                # Grid energy that is physically unavoidable after PV and all
-                # battery energy available above the technical reserve have
-                # been exhausted is a residual flow, not an EMS BUY decision.
-                # Reject only *voluntary* grid supply that preserves usable
-                # battery energy.  This distinction keeps the horizon feasible
-                # when a replan starts at minimum SOC while preserving the
-                # contract that planned BUY exists only to charge the battery.
-                # Preserve the active SOC bridge as well as the inverter reserve.
-                # Grid supplied home load is unavoidable when battery discharge
-                # would cross this slot's required SOC floor.
-                usable_internal = min(
-                    max_internal_discharge,
-                    max(0.0, current_energy - max(first_unit, required_unit) * unit_kwh),
-                )
-                unavoidable_grid_load = max(
-                    0.0, deficit - usable_internal * eta_d,
-                )
-                voluntary_grid_load = max(0.0, grid_load - unavoidable_grid_load)
-                # The site's import limit applies to home load and battery
-                # charging together. During BUY, the home may be supplied by
-                # the grid while the battery charges, provided that combined
-                # input stays within the configured connection limit.
+                # Grid import is charge-only. Permit at most one SOC quantum
+                # of numerical residual from discrete SOC accounting.
+                voluntary_grid_load = max(0.0, grid_load)
+                if grid_load > unit_kwh * eta_d + 1e-9:
+                    continue
+                # The physical site limit still applies to total imports.
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
-                    continue
-                # Concurrent grid charging never authorizes optional grid
-                # supply to native load. Only the physically unavoidable part
-                # associated with the SOC safety bridge is allowed.
-                if voluntary_grid_load > unit_kwh * eta_d + 1e-9:
-                    continue
-                # Outside deliberate charging, prefer the battery for native
-                # load when usable SOC is available. A single SOC quantum may
-                # leave a small numerical residual that cannot be discharged
-                # without violating the no-battery-export rule.
-                if (grid_charge <= max(1e-9, minimum_grid_charge_kwh)
-                        and voluntary_grid_load > unit_kwh * eta_d + 1e-9):
                     continue
                 # During deliberate export the complete slot, including the
                 # native load, must close at or above both independent

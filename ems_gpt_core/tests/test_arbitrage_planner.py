@@ -33,6 +33,7 @@ from planner_service import (
     historical_hp_power_kw,
     hp_heating_window_indices,
     bridge_soc_commitments,
+    daily_close_soc_requirements,
     derive_soc_commitments,
     soc_bridge_envelopes,
 )
@@ -575,13 +576,13 @@ class PairedArbitrageTests(unittest.TestCase):
             0.0, 15.0, 100.0)
 
         self.assertEqual(contract["required"], [15.0])
-        result = optimize_energy_horizon(
-            rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0], 15.0, 0.10, 100.0,
-            contract["charge_targets"], set(),
-            contract["buy_due_indices"], contract["required"])
-        self.assertEqual(result["flows"][0]["soc_end_pct"], 15.0)
-        self.assertGreater(result["flows"][0]["grid_load_kwh"], 0.0)
+        with self.assertRaisesRegex(
+                RuntimeError, "No feasible SOC state"):
+            optimize_energy_horizon(
+                rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+                5.0, 15, [15.0], 15.0, 0.10, 100.0,
+                contract["charge_targets"], set(),
+                contract["buy_due_indices"], contract["required"])
 
     def test_required_soc_is_enforced_in_every_slot(self):
         rows = [
@@ -1012,7 +1013,7 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["battery_to_load_kwh"],0.0)
         self.assertLessEqual(result["flows"][0]["grid_load_kwh"],0.06)
 
-    def test_grid_supplies_native_load_to_preserve_reachable_soc_bridge(self):
+    def test_grid_import_cannot_preserve_reachable_soc_bridge(self):
         rows = []
         start = datetime(2026, 10, 10, 14, 15)
         for index in range(42):
@@ -1026,27 +1027,15 @@ class PairedArbitrageTests(unittest.TestCase):
                 "forecast_pv_total_kwh": 0.0,
             })
         required = [17.0] * len(rows)
-        recovery = validate_recoverable_soc_requirements(
-            rows, required, 80.0, 15.0, 100.0,
-            capacity_kwh=15.0, eta_c=0.90, eta_d=0.95,
-            max_power_kw=5.0, slot_minutes=15, max_grid_import_kw=12.0)
-        self.assertEqual(recovery["unreachable_indices"], [])
+        with self.assertRaisesRegex(
+                RuntimeError, "No feasible SOC state"):
+            optimize_energy_horizon(
+                rows, 80.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
+                5.0, 15, [15.0] * len(rows), 17.0, 0.10, 100.0,
+                required, set(), {0, 41}, required,
+                battery_sales_enabled=False, max_grid_import_kw=12.0)
 
-        result = optimize_energy_horizon(
-            rows, 80.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * len(rows), 17.0, 0.10, 100.0,
-            recovery["required_soc_pcts"], set(), {0, 41},
-            recovery["required_soc_pcts"], battery_sales_enabled=False,
-            max_grid_import_kw=12.0)
-
-        self.assertGreater(
-            sum(flow["grid_load_kwh"] for flow in result["flows"][1:41]), 0.0)
-        for flow in result["flows"]:
-            self.assertGreaterEqual(flow["soc_end_pct"] + 1e-9, 17.0)
-            self.assertLessEqual(
-                flow["grid_load_kwh"] + flow["grid_charge_kwh"], 3.0 + 1e-9)
-
-    def test_minimum_soc_uses_only_unavoidable_grid_load_and_remains_feasible(self):
+    def test_minimum_soc_does_not_authorize_grid_import_for_load(self):
         rows = [{
             "price_buy_pln_kwh": 3.0,
             "price_sell_pln_kwh": 0.0,
@@ -1055,12 +1044,9 @@ class PairedArbitrageTests(unittest.TestCase):
             "forecast_load_kwh": 0.30,
             "forecast_pv_total_kwh": 0.0,
         }]
-        result = self.optimize(rows, 15.0, 15.0, [15.0])
-        flow = result["flows"][0]
-
-        self.assertAlmostEqual(flow["soc_end_pct"], 15.0)
-        self.assertAlmostEqual(flow["grid_load_kwh"], 0.30)
-        self.assertEqual(flow["grid_charge_kwh"], 0.0)
+        with self.assertRaisesRegex(
+                RuntimeError, "No feasible SOC state"):
+            self.optimize(rows, 15.0, 15.0, [15.0])
 
     def test_future_sale_never_allows_grid_hold_for_native_load(self):
         rows=[
@@ -1559,6 +1545,29 @@ class PairedArbitrageTests(unittest.TestCase):
             rows, flows, 15.0, 15.0, 0.90, 0.95, 0.0,
             40.0, 100.0, 0.25, [40.0, 40.0])
         self.assertEqual(contracts["required"], [40.0, 40.0])
+
+    def test_daily_target_moves_after_buy_at_start_of_next_day(self):
+        day1 = date(2026, 10, 15)
+        day2 = date(2026, 10, 16)
+        day3 = date(2026, 10, 17)
+        rows = [
+            {"slot_start": datetime(2026, 10, 15, 23, 45), "local_day": day1,
+             "buy_window": False, "sale_window": True},
+            {"slot_start": datetime(2026, 10, 16, 0, 0), "local_day": day2,
+             "buy_window": True, "sale_window": False},
+            {"slot_start": datetime(2026, 10, 16, 0, 15), "local_day": day2,
+             "buy_window": True, "sale_window": False},
+            {"slot_start": datetime(2026, 10, 16, 23, 45), "local_day": day2,
+             "buy_window": False, "sale_window": False},
+            {"slot_start": datetime(2026, 10, 17, 0, 0), "local_day": day3,
+             "buy_window": False, "sale_window": False},
+        ]
+
+        required, close_indices = daily_close_soc_requirements(
+            rows, [20.0] * len(rows), {day1: 42.0, day2: 44.0, day3: 40.0})
+
+        self.assertEqual(required, [20.0, 20.0, 42.0, 44.0, 40.0])
+        self.assertEqual(close_indices, {2, 3, 4})
 
     def test_grid_target_does_not_cap_pv_charging(self):
         rows = [{"price_buy_pln_kwh": 5.0, "price_sell_pln_kwh": 10.0,

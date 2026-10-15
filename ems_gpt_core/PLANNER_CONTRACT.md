@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.31. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.35. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -74,12 +74,14 @@ pojemności baterii i limitów mocy. Ilość zakupu wybiera pełny bilans horyzo
 podniesienie opcjonalnego sufitu nie wymusza zakupu do 100%.
 Wykonawca otrzymuje najwyższy target rzeczywiście wybranego ciągu zakupów już
 od pierwszego slotu tego ciągu. Wymagany SOC na końcu okna jest sprawdzany
-osobno; opcjonalny szczyt wcześniejszego ładowania nie jest nowym wymogiem
-SOC na końcu okna. Targetem końca każdej
-doby jest ważona średnia rzeczywistych zamknięć SOC z 7/14/28 dni. Wymagany
-SOC w slotach przed zamknięciem wynika z bilansu wstecznego: target zamknięcia,
-prognozowane zużycie i PV, sprawności, rezerwa oraz fizyczna dostępność
-ładowania w oknach BUY. Nie ma stałego progu SOC dla ostatniego okna BUY.
+osobno; opcjonalny szczyt wcześniejszego ładowania nie jest nowym wymogiem SOC.
+Historyczny punkt odniesienia końca doby wynosi 40–45% SOC i chroni przed jego
+zaniżaniem. Jeśli pierwsze okno BUY kolejnej lokalnej doby zaczyna się w jej
+pierwszym slocie, poprzedni cel dobowy jest wymagany na końcu tego ciągłego
+okna, a nie przed północą. Wcześniejszy SOC nadal wynika z bilansu wstecznego
+zużycia, PV, sprawności, rezerwy oraz fizycznej dostępności ładowania BUY, więc
+plan utrzymuje energię do najbliższego PV/BUY i nie wymusza drogiego zakupu
+przed tańszym oknem.
 Każde przyszłe okno doby (w tym jutro po 14:00) jest uwzględniane wyłącznie,
 gdy kompletne ceny RCE i prognozy znajdują się w ciągłym horyzoncie planu.
 Niewykonalność celu jest raportowana jako niedobór, bez cichego obniżenia celu
@@ -141,24 +143,19 @@ BUY, limity importu oraz zakaz sprzedaży poza SELL pozostają twarde.
 
 ## 4. Bilans energii slotu
 
-### Import technicznie nieunikniony a decyzja BUY
+### Zakup z sieci wyłącznie do ładowania baterii
 
-Jeżeli po wykorzystaniu PV i całej energii baterii dostępnej ponad techniczną
-rezerwę nadal pozostaje zapotrzebowanie domu, sieć fizycznie pokrywa ten
-niedobór. Taki `grid_load_kwh` jest przepływem resztowym bilansu, a nie decyzją
-ekonomiczną `BUY` i nie tworzy okna zakupu.
-
-- `BUY` oznacza wyłącznie zaplanowane ładowanie baterii (`grid_charge_kwh > 0`);
-- poza oknem BUY planer nie może dobrowolnie zasilać domu z sieci, gdy bateria
-  może pokryć zużycie, z wyjątkiem jawnie ekonomicznej ochrony energii przed
-  późniejszą sprzedażą;
-- w oknie BUY import może równolegle pokrywać zużycie domu i ładować baterię;
-  suma `grid_load_kwh + grid_charge_kwh` nie może przekroczyć
-  `grid_import_limit_kw × czas_slotu`;
-- osiągnięcie technicznego minimum SOC nie może uczynić horyzontu
-  niewykonalnym — niepokryty przez PV i baterię dom przechodzi na sieć;
-- przepływ wymuszony nie podnosi `soc_target` i nie jest oznaczany jako zakup
-  do baterii.
+- Planer może przypisać import z sieci wyłącznie do `grid_charge_kwh` w
+  dozwolonym oknie BUY.
+- `grid_load_kwh` nie może pokrywać prognozowanego zużycia domu ani w BUY, ani
+  poza BUY. Dotyczy to również aktywnego mostu SOC i slotów z równoczesnym
+  ładowaniem baterii.
+- Jeżeli PV i bateria nie pokrywają zużycia bez importu na dom, kandydat planu
+  jest niewykonalny; planer nie może ukrywać niedoboru pod przepływem sieciowym.
+- Pozostaje wyłącznie techniczna resztka do 0,05 kWh, która wynika z kwantyzacji
+  SOC. Nie może ona otworzyć okna BUY ani uzasadnić ładowania.
+- Import baterii wraz z innymi przepływami nadal musi spełniać fizyczny limit
+  sieci, moc baterii, pojemność, SOC i ograniczenia sprawności.
 
 Dla każdego slotu musi zachodzić, z jedną konwencją punktu pomiarowego:
 
@@ -254,13 +251,11 @@ Target obejmuje:
 Target nie jest progiem sprzedaży i nie może być kopiowany z floor. Powinien
 być zwykle wyższy od floor i nigdy nie przekracza 100%. Wymaganie mostu ponad
 pojemność jest fizycznie niemożliwe i nie może zostać przekształcone w cel
-zakupu do 100%. Planer zachowuje techniczną rezerwę, wyłącza sprzedaż baterii,
-raportuje deficyt i pozwala sieci pokryć nieunikniony niedobór domu.
+zakupu do 100%. Planer zachowuje techniczną rezerwę, wyłącza sprzedaż baterii
+i jawnie raportuje niewykonalność, gdy bilans zużycia wymagałby importu na dom.
 
-Zakup energii służy ładowaniu baterii. Import pokrywający samodzielnie dom nie
-jest decyzją ekonomiczną planera. Wyjątek stanowi jawnie wykazana ochrona energii
-baterii przed późniejszą, bardziej opłacalną sprzedażą; musi ona przejść ocenę
-pełnego cyklu wraz ze sprawnościami, degradacją i możliwością odtworzenia SOC.
+Zakup energii służy wyłącznie ładowaniu baterii. Planer nie może kupować energii
+na bieżące zużycie ani w celu zachowania baterii do późniejszej sprzedaży.
 
 ## 6. `soc_floor`
 
@@ -482,12 +477,11 @@ gdy planer jest zdegradowany lub błąd planera/PPD pozostaje zatrzaśnięty.
 - Testy regresyjne kodu nie są równoznaczne z odbiorem produkcyjnym: po aktualizacji trzeba osobno potwierdzić wersję przebiegu planera w zapisanych slotach, okna BUY, planowane kWh zakupu i osiągalność SOC.
 
 
-### Pobór domu podczas aktywnego BUY — 0.40.31
+### Zakup tylko na ładowanie — 0.40.35
 
-Podczas zaplanowanego ładowania baterii w BUY sieć może równocześnie pokrywać
-zużycie domu. Pobór ten wlicza się do wspólnego limitu importu i kosztu planu,
-lecz nie wymaga późniejszej sprzedaży baterii. Wyjątek obowiązuje tylko przy
-`grid_charge_kwh` ponad wykonawczy próg przepływu, BUY i braku SELL. Symboliczny
-zakup poniżej tego progu nie może uzasadniać dobrowolnego poboru domu.
-Dobrowolny pobór bez takiego ładowania nadal wymaga osobnej oceny ekonomicznej
-sprzedaży; bez niej plan zostaje odrzucony. Rezerwy i cele SOC pozostają bez zmian.
+Przepływ `grid_charge_kwh` służy wyłącznie zwiększeniu SOC baterii w BUY.
+Planowany `grid_load_kwh` powyżej progu technicznego jest zabroniony w każdym
+slotcie, także gdy działa BUY lub wymagany jest most SOC. Jeżeli nie można
+zbilansować obciążenia przez PV i rozładowanie baterii przy zachowaniu
+ograniczeń SOC, planer zgłasza niewykonalność zamiast tworzyć plan z importem
+dla domu.

@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.35 — zakup wyłącznie do baterii, SOC dobowy i nocne BUY
+
+- Usunięto wyjątki Pass 4 dopuszczające import dla domu jako most SOC; import z sieci służy ładowaniu baterii w BUY.
+- Cel historyczny 40–45% nie wymusza już doładowania przed północą, gdy pierwszy slot nowej doby należy do ciągłego okna BUY; cel jest wymagany na końcu tego okna, przy zachowaniu mostu SOC na zużycie do najbliższego PV/BUY.
+- Dodano regresję okna BUY rozpoczynającego się o północy oraz aktualizacje testów dla polityki charge-only.
+- Prognoza zużycia bazowego zachowuje CWU z wykonanych danych telemetrycznych; profil diagnostyczny CWU nie jest dodawany ponownie.
+
 ## 0.40.34 — zakupy tylko do baterii i Observer 24 h
 
 - Pass 4 nie dopuszcza dobrowolnego importu do zasilania domu w celu zachowania SOC na późniejszą sprzedaż; dotyczy to także slotów z równoczesnym ładowaniem baterii.
