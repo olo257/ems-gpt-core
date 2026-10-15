@@ -33,6 +33,7 @@ from planner_service import (
     historical_hp_power_kw,
     hp_heating_window_indices,
     bridge_soc_commitments,
+    daily_close_soc_requirements,
     derive_soc_commitments,
     soc_bridge_envelopes,
 )
@@ -1544,6 +1545,29 @@ class PairedArbitrageTests(unittest.TestCase):
             rows, flows, 15.0, 15.0, 0.90, 0.95, 0.0,
             40.0, 100.0, 0.25, [40.0, 40.0])
         self.assertEqual(contracts["required"], [40.0, 40.0])
+
+    def test_daily_target_moves_after_buy_at_start_of_next_day(self):
+        day1 = date(2026, 10, 15)
+        day2 = date(2026, 10, 16)
+        day3 = date(2026, 10, 17)
+        rows = [
+            {"slot_start": datetime(2026, 10, 15, 23, 45), "local_day": day1,
+             "buy_window": False, "sale_window": True},
+            {"slot_start": datetime(2026, 10, 16, 0, 0), "local_day": day2,
+             "buy_window": True, "sale_window": False},
+            {"slot_start": datetime(2026, 10, 16, 0, 15), "local_day": day2,
+             "buy_window": True, "sale_window": False},
+            {"slot_start": datetime(2026, 10, 16, 23, 45), "local_day": day2,
+             "buy_window": False, "sale_window": False},
+            {"slot_start": datetime(2026, 10, 17, 0, 0), "local_day": day3,
+             "buy_window": False, "sale_window": False},
+        ]
+
+        required, close_indices = daily_close_soc_requirements(
+            rows, [20.0] * len(rows), {day1: 42.0, day2: 44.0, day3: 40.0})
+
+        self.assertEqual(required, [20.0, 20.0, 42.0, 44.0, 40.0])
+        self.assertEqual(close_indices, {2, 3, 4})
 
     def test_grid_target_does_not_cap_pv_charging(self):
         rows = [{"price_buy_pln_kwh": 5.0, "price_sell_pln_kwh": 10.0,
