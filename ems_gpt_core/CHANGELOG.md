@@ -1,5 +1,10 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.37 — naprawa przeliczenia planera
+
+- Rozdzielono moduł zegara monotonicznego od `datetime.time`; wcześniejszy import nadpisywał nazwę `time` i zatrzymywał każde przeliczenie już w fazie STARTUP.
+- Zachowano reguły zakupów i cel SOC z 0.40.36; zmiana usuwa wyłącznie błąd uruchomienia planera.
+
 ## 0.40.36 — cel SOC po nocnym BUY przed CWU
 
 - Przesunięto historyczny cel zamknięcia 40–45% na koniec ostatniego ciągłego okna BUY przed 06:00, także gdy okno zaczyna się po północy.
