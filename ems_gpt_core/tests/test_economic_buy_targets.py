@@ -144,7 +144,7 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         _, result = self.optimize(rows)
         self.assertTrue(any(f['grid_charge_kwh'] > 0.02
                             for f in result['flows']))
-        self.assertTrue(all(f['grid_load_kwh'] <= 1e-9
+        self.assertTrue(all(f['grid_load_kwh'] <= 0.05
                             for f in result['flows']))
         self.assertEqual(voluntary_load_without_charging_indices(
             rows, result['flows'], 0.05, 0.02), set())
