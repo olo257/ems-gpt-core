@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_37"
+PLANNER_VERSION = "CORE_0_40_38"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -210,6 +210,27 @@ def recoverable_soc_requirements(rows: list[dict], required_soc_pcts: list[float
             "recovery_buy_index": recovery_buy}
 
 
+def _unavoidable_grid_load_allowed(
+        grid_load_kwh: float, current_unit: int, next_unit: int,
+        reserve_unit: int, max_discharge_units: int,
+        unit_kwh: float, eta_discharge: float) -> bool:
+    """Allow only physical residual load after reserve/power limits bind."""
+    tolerance = unit_kwh * eta_discharge + 1e-9
+    if grid_load_kwh <= tolerance:
+        return False
+    discharged_units = current_unit - next_unit
+    at_reserve = (
+        current_unit >= reserve_unit and next_unit == reserve_unit
+        and discharged_units >= 0
+    ) or (
+        current_unit < reserve_unit and next_unit == current_unit
+    )
+    at_power_limit = (
+        discharged_units > 0 and discharged_units >= max_discharge_units
+    )
+    return at_reserve or at_power_limit
+
+
 def _soc_reachability_profile(
         rows: list[dict], initial_soc_pct: float, capacity_kwh: float,
         reserve_pct: float, eta_c: float, eta_d: float,
@@ -281,11 +302,11 @@ def _soc_reachability_profile(
                         continue
                     grid_charge = 0.0
                     grid_load = max(0.0, deficit-battery_to_load)
-                # Reject deliberate grid-to-home supply, including safety
-                # bridge exceptions and charging overlap. Keep only one SOC
-                # quantum for physical accounting/rounding tolerance.
-                voluntary_grid_load = max(0.0, grid_load)
-                if grid_load > unit_kwh * eta_discharge + 1e-9:
+                unavoidable_grid_load = _unavoidable_grid_load_allowed(
+                    grid_load, current, following, first_unit, max_down,
+                    unit_kwh, eta_discharge)
+                if (grid_load > unit_kwh * eta_discharge + 1e-9
+                        and not unavoidable_grid_load):
                     continue
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
                     continue
@@ -1243,11 +1264,11 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         if value and (index + 1 == len(buy_permissions) or not buy_permissions[index + 1])
     }
     target_due_indices = buy_window_ends if target_due_indices is None else set(target_due_indices)
-    # Pass 4 does not authorize importing household consumption to preserve
-    # battery energy for a later sale. Grid purchases charge the battery only.
-    # Native load must be covered by PV or battery energy; no safety-bridge
-    # exception permits grid imports to the home. Battery buy/sell economics
-    # use FIFO cost basis and the sale-versus-no-sale counterfactual below.
+    # Pass 4 never commands grid purchases for household consumption or to
+    # preserve energy for later sale. Unavoidable physical load residual at the
+    # discharge-power ceiling or technical reserve is tracked separately from
+    # grid charging and is never a planned BUY. Battery buy/sell economics use
+    # FIFO cost basis and the sale-versus-no-sale counterfactual below.
     predecessors: list[dict[int, tuple[int, dict]]] = []
     effective_target_pcts: list[float] = []
     for index, row in enumerate(rows):
@@ -1326,11 +1347,14 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     pv_export = surplus if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_export)
                     battery_charge_internal = 0.0
-                # Grid import is charge-only. Permit at most one SOC quantum
-                # of numerical residual from discrete SOC accounting.
-                voluntary_grid_load = max(0.0, grid_load)
-                if grid_load > unit_kwh * eta_d + 1e-9:
+                unavoidable_grid_load = _unavoidable_grid_load_allowed(
+                    grid_load, current_unit, next_unit, first_unit, max_down,
+                    unit_kwh, eta_d)
+                if (grid_load > unit_kwh * eta_d + 1e-9
+                        and not unavoidable_grid_load):
                     continue
+                voluntary_grid_load = (
+                    0.0 if unavoidable_grid_load else max(0.0, grid_load))
                 # The physical site limit still applies to total imports.
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
                     continue
