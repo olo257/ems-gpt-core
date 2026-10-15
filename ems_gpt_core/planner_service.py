@@ -1153,6 +1153,17 @@ def allocate_slot_discharge(energy_kwh: float, capacity_kwh: float,
     return sale_internal, native_internal
 
 
+def economic_grid_hold_allowed(buy_price: float, future_sell_price: float | None,
+                               eta_d: float, degradation: float,
+                               min_margin: float) -> bool:
+    """Whether a future battery export pays for grid-supplied native load."""
+    if future_sell_price is None or float(future_sell_price) <= 0.0:
+        return False
+    net_sale_value = float(future_sell_price) * max(0.01, min(1.0, float(eta_d)))
+    net_sale_value -= max(0.0, float(degradation))
+    return net_sale_value + 1e-9 >= float(buy_price) + max(0.0, float(min_margin))
+
+
 def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             capacity_kwh: float, reserve_pct: float,
                             eta_c: float, eta_d: float, degradation: float,
@@ -1202,6 +1213,24 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
         if value and (index + 1 == len(buy_permissions) or not buy_permissions[index + 1])
     }
     target_due_indices = buy_window_ends if target_due_indices is None else set(target_due_indices)
+    # Pass 4 economic hold: grid may serve native load to preserve battery
+    # energy for a later export only when that export's net value beats the
+    # current import tariff after discharge losses, degradation and margin.
+    # Safety energy required by the active SOC bridge is handled separately;
+    # this guard applies only to optional energy above that bridge.
+    future_sell_prices: list[float | None] = [None] * len(rows)
+    best_future_sell: float | None = None
+    for future_index in range(len(rows) - 1, -1, -1):
+        future_sell_prices[future_index] = best_future_sell
+        future_row = rows[future_index]
+        future_sell = future_row.get("price_sell_pln_kwh")
+        if (battery_sales_enabled and future_sell is not None
+                and float(future_sell) > 0.0
+                and strict_database_bool(
+                    future_row.get("sale_window", False), "sale_window")):
+            price = float(future_sell)
+            best_future_sell = (
+                price if best_future_sell is None else max(best_future_sell, price))
     predecessors: list[dict[int, tuple[int, dict]]] = []
     effective_target_pcts: list[float] = []
     for index, row in enumerate(rows):
@@ -1304,6 +1333,26 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # input stays within the configured connection limit.
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
                     continue
+                # Reject optional grid supply that merely holds battery energy
+                # for a later sale unless the sale clears the import cost.
+                # Grid supply needed because of the hard required-SOC bridge
+                # remains available; a later sale of energy funded by that
+                # import is checked by the sale/no-sale counterfactual.
+                required_energy = max(
+                    capacity * reserve / 100.0, required_unit * unit_kwh)
+                above_required_internal = min(
+                    max_internal_discharge,
+                    max(0.0, current_energy - required_energy),
+                )
+                required_grid_load = max(
+                    0.0, deficit - above_required_internal * eta_d)
+                optional_grid_hold = max(0.0, grid_load - required_grid_load)
+                if (grid_charge <= max(1e-9, minimum_grid_charge_kwh)
+                        and optional_grid_hold > unit_kwh * eta_d + 1e-9):
+                    future_sell = future_sell_prices[index]
+                    if not economic_grid_hold_allowed(
+                            buy_price, future_sell, eta_d, degradation, min_margin):
+                        continue
                 # Outside deliberate charging, prefer the battery for native
                 # load when usable SOC is available. A single SOC quantum may
                 # leave a small numerical residual that cannot be discharged
