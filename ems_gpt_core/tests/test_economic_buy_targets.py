@@ -65,6 +65,32 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         self.assertGreater(result['flows'][0]['grid_charge_kwh'], 0.0)
         self.assertLess(result['flows'][0]['grid_charge_kwh'], 1.25)
 
+    def test_buy_window_end_target_is_available_from_its_first_slot(self):
+        rows = [dict(slot_start=i, slot_end=i + 1,
+                     price_buy_pln_kwh=1.0 + i * 0.01,
+                     price_sell_pln_kwh=0.0, buy_window=True,
+                     sale_window=False, forecast_load_kwh=0.0,
+                     forecast_pv_total_kwh=0.0) for i in range(4)]
+        contract = deterministic_soc_target_contract(
+            rows, [15.0] * 4, [15.0, 15.0, 15.0, 40.0],
+            15.0, 15.0, 0.9, 0.95, 5.0, 15, 0.0)
+
+        self.assertLess(contract['required'][0], 40.0)
+        self.assertEqual(contract['required'][-1], 40.0)
+        self.assertEqual(contract['charge_targets'], [40.0] * 4)
+        caps = economic_buy_charge_caps(rows, contract['charge_targets'])
+        result = optimize_energy_horizon(
+            rows, 20.0, 15.0, 15.0, 0.9, 0.95, 0.0, 0.0, 5.0, 15,
+            [100.0] * 4, 40.0, 0.1, 100.0,
+            contract['charge_targets'], set(), contract['buy_due_indices'],
+            contract['required'], battery_sales_enabled=False,
+            grid_charge_caps=caps)
+
+        self.assertGreater(result['flows'][0]['grid_charge_kwh'], 0.0)
+        self.assertEqual(result['flows'][-1]['soc_end_pct'], 40.0)
+        self.assertTrue(all(flow['soc_end_pct'] <= 40.0 + 1e-9
+                            for flow in result['flows']))
+
     def test_buy_slot_caps_follow_the_target_instead_of_soc_100(self):
         rows = self.rows(cheap=1.15, dear=1.05)
         targets = [20.0, 25.0, 30.0, 35.0] + [15.0] * 6 + [30.0, 40.0]

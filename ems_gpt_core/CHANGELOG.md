@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.43 — dynamiczny target od początku ciągłego okna BUY
+
+- Przeniesiono najwyższy target SOC wyliczony dla danego ciągłego okna BUY na jego pierwszy slot.
+- Zachowano osobno `soc_required_pct` jako minimalny most energetyczny; target nadal jest sufitem zakupu i nie jest stałą 40% ani 100%.
+- Dodano regresję potwierdzającą rozpoczęcie zakupu w pierwszym slocie, gdy wcześniejszy target per-slot był poniżej celu końca okna.
+
 ## 0.40.42 — sufit BUY równy wyliczonemu targetowi SOC
 
 - Ujednolicono limity ładowania z sieci: target wyliczony dla slotu BUY ogranicza zakup i nie jest zastępowany limitem 100% SOC.
