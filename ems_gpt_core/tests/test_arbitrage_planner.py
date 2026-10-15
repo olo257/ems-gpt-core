@@ -577,7 +577,7 @@ class PairedArbitrageTests(unittest.TestCase):
 
         self.assertEqual(contract["required"], [15.0])
         with self.assertRaisesRegex(
-                RuntimeError, "SOC_NO_PHYSICALLY_REACHABLE_STATE"):
+                RuntimeError, "No feasible SOC state"):
             optimize_energy_horizon(
                 rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
                 5.0, 15, [15.0], 15.0, 0.10, 100.0,
@@ -1028,7 +1028,7 @@ class PairedArbitrageTests(unittest.TestCase):
             })
         required = [17.0] * len(rows)
         with self.assertRaisesRegex(
-                RuntimeError, "SOC_NO_PHYSICALLY_REACHABLE_STATE"):
+                RuntimeError, "No feasible SOC state"):
             optimize_energy_horizon(
                 rows, 80.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
                 5.0, 15, [15.0] * len(rows), 17.0, 0.10, 100.0,
@@ -1045,7 +1045,7 @@ class PairedArbitrageTests(unittest.TestCase):
             "forecast_pv_total_kwh": 0.0,
         }]
         with self.assertRaisesRegex(
-                RuntimeError, "SOC_NO_PHYSICALLY_REACHABLE_STATE"):
+                RuntimeError, "No feasible SOC state"):
             self.optimize(rows, 15.0, 15.0, [15.0])
 
     def test_future_sale_never_allows_grid_hold_for_native_load(self):
