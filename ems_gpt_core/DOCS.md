@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.47**.
+Status: obowiązująca. Wersja wydania: **0.40.48**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -339,3 +339,19 @@ aby zasilać load z sieci i zachować zapas ładowania na później. Poprawka
 ogranicza każdy wybrany zakup do pełnego dostępnego przejścia, zachowując
 alternatywy OFF/rozładowanie dla wykonalności. Szczegóły i reprodukcja:
 `PLANNER_CONTRACT.md`. Nie zmieniono produkcyjnego planu ani falownika.
+
+### 0.40.48 — regresja po aktualizacji 0.40.47
+
+Potwierdzono działającą aplikację, bazę i HA; błąd dotyczy planera:
+`BUY_TARGET_UNREACHABLE_PRESERVED_PLAN`, 16.10.2026 21:45, 33,3% / 33,0%.
+Źródło problemu: po wykluczeniu częściowych zakupów nie każda wartość
+żądana na koniec okna jest osiągalna w siatce stanów SOC. Zachowany plan
+0.40.46 nie zawiera naprawy śladowych zakupów, mimo uruchomionego 0.40.47.
+
+Kandydat zachowuje target i pełny zakup, raportuje jawny niedobór celu oraz
+wyłącza sprzedaż, a minima energetyczne i koniec doby pozostają obowiązkowe.
+Test reprodukuje dane horyzontu od 17:15, SOC 67% i wynik 33,0% przy
+niezmienionym celu 33,3%. Dodatkowe testy odrzucają obejście wymaganego SOC
+oraz próbę zastosowania ścieżki ze sprzedażą baterii. Po instalacji konieczna
+jest weryfikacja pełnego przeliczenia na produkcyjnej bazie; przygotowanie
+lokalne nie usuwa aktualnego błędu produkcji.

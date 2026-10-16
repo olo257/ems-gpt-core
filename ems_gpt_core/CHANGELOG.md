@@ -1,5 +1,22 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.48 — jawny niedobór celu BUY przy spełnionym minimum
+
+- Naprawiono odrzucenie planu 0.40.47: 16.10, slot 21:45,
+  target 33,3%, osiągalny wynik 33,0%. Regresję odtworzono z odczytanych
+  danych horyzontu od 17:15 i SOC początkowego 67%.
+- Wyłącznie wariant bez sprzedaży baterii może zgłosić niedobór celu BUY,
+  jeżeli nadal spełnia wszystkie obowiązkowe minima SOC. Target ładowania
+  pozostaje bez zmian; wynik i różnica są jawne w audycie.
+- Nie poluzowano pełnego wolumenu wybranego zakupu, minimum SOC,
+  wymagań końca doby, limitów mocy ani importu. Brak obowiązkowej energii
+  nadal odrzuca plan. Nie wprowadzono tolerancji ukrywającej niedobór.
+- Zgodność kontroli końcowych z jawnym niedoborem jest sprawdzana osobno;
+  bez takiego potwierdzenia kontrola targetu zachowuje dotychczasową ostrość.
+- Walidacja: 427 testów Core, 32 economic-shadow, UI, compileall, diff-check.
+- Publikacja zatwierdzona przez użytkownika 16.10.2026; instalacja wymaga
+  aktualizacji dodatku z 0.40.47.
+
 ## 0.40.47 — pełny wolumen każdego wybranego BUY
 
 - Usunięto możliwość śladowego zakupu przy dużym zapasie do targetu,
