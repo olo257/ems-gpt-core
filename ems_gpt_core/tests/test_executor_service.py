@@ -367,18 +367,26 @@ class ExecutorServiceTests(unittest.TestCase):
 
 
 class BatteryDispatchConflictTests(unittest.TestCase):
-    def dispatch(self, directory, commands, grid_on=False, fail_off=False):
+    def dispatch(self, directory, commands, grid_on=False, fail_off=False,
+                 authorization=None, live_soc="22", telemetry=True,
+                 fail_grid_write=False, latched=False, switch_off_only=False,
+                 registers_match=False):
         calls = []
+        events = []
+        self.events = events
         now = datetime(2026, 10, 14, 13, 0)
         states = {
-            "sensor.inverter_battery": {"state": "22"},
+            "sensor.inverter_battery": {"state": live_soc} if live_soc is not None else None,
             "switch.inverter_battery_grid_charging": {"state": "on" if grid_on else "off"},
             "select.inverter_work_mode": {"state": "Zero Export To Load"},
         }
         for program in range(1, 7):
-            states[f"number.inverter_program_{program}_soc"] = {"state": "80"}
+            states[f"number.inverter_program_{program}_soc"] = {
+                "state": "32" if registers_match or switch_off_only else "80"}
             states[f"select.inverter_program_{program}_charging"] = {
                 "state": "Grid" if grid_on else "Disabled"}
+        if switch_off_only:
+            states["switch.inverter_battery_grid_charging"] = {"state": "off"}
         class Cursor:
             rowcount = 1
             def __enter__(self): return self
@@ -386,6 +394,10 @@ class BatteryDispatchConflictTests(unittest.TestCase):
             def execute(self, sql, params=()): self.sql = sql
             def fetchall(self): return commands
             def fetchone(self):
+                if "SELECT c.*,s.plan_run_id" in self.sql:
+                    return authorization
+                if "SELECT captured_at FROM" in self.sql:
+                    return {"captured_at": now} if telemetry else None
                 return {"soc_charge_target_pct": 32.4, "soc_target_pct": 32.4,
                         "soc_end_plan_pct": 27.1, "planned_buy_kwh": 1.239796}
         class Connection:
@@ -403,7 +415,8 @@ class BatteryDispatchConflictTests(unittest.TestCase):
                 elif action == "export_on":
                     states["select.inverter_work_mode"] = {"state": "Export First"}
             elif domain == "select":
-                states[data["entity_id"]] = {"state": data["option"]}
+                if not fail_grid_write or data["option"] != "Grid":
+                    states[data["entity_id"]] = {"state": data["option"]}
             elif domain == "number":
                 states[data["entity_id"]] = {"state": str(data["value"])}
             return {"ok": True}
@@ -416,7 +429,8 @@ class BatteryDispatchConflictTests(unittest.TestCase):
                      "executor_battery_export_off_script": "script.export_off",
                      **{f"deye_program_{p}_soc_pct": 10 for p in range(1, 7)}},
             operational_settings={}, runtime_settings_path=pathlib.Path(directory) / "runtime.json",
-            lock=RLock(), state={"modules": {}}, record_event=lambda *args: None,
+            lock=RLock(), state={"modules": {}, "planner_failure_latched": latched},
+            record_event=lambda *args: events.append(args),
             local_now=lambda: now, db=Connection, slot_start=lambda: now,
             tou_program_snapshot=lambda: [], active_tou_program=lambda *_: {"program": 3},
             number=lambda value: float(value["state"]) if value else None,
@@ -458,6 +472,79 @@ class BatteryDispatchConflictTests(unittest.TestCase):
         self.assertEqual(result["dispatched"], 0)
         self.assertFalse(any(call[1] == "import_on" for call in calls))
         self.assertEqual(states["switch.inverter_battery_grid_charging"]["state"], "off")
+
+    def authorization(self, **changes):
+        row = {**self.command("BATTERY_IMPORT", "ON"), "status": "DISPATCHED",
+               "expires_at": datetime(2026, 10, 14, 13, 16),
+               "plan_run_id": "plan", "plan_stage": "PUBLISHED", "buy_window": 1,
+               "sale_window": 0, "grid_policy_planned": "BUY_ALLOWED",
+               "planned_buy_kwh": 1.239796, "charge_target": 32.4,
+               "eligible": 1, "ppd_decision": "BUY_ALLOWED", "requested_state": None}
+        return {**row, **changes}
+
+    def test_buy_restarts_after_registers_revert_without_new_command(self):
+        # Reproduce the incident: ON already dispatched; inverter reverts to
+        # OFF/Disabled while SOC remains below the window's charging target.
+        with tempfile.TemporaryDirectory() as directory:
+            _, states, calls = self.dispatch(directory, [], authorization=self.authorization())
+        self.assertEqual(states["switch.inverter_battery_grid_charging"]["state"], "on")
+        for p in range(1, 7):
+            self.assertEqual(states[f"select.inverter_program_{p}_charging"]["state"], "Grid")
+            self.assertEqual(states[f"number.inverter_program_{p}_soc"]["state"], "32")
+        self.assertEqual(self.events[-1][0], "battery_import_reconciled")
+        self.assertTrue(self.events[-1][2]["confirmed"])
+
+    def test_buy_repair_requires_current_permission_and_fresh_telemetry(self):
+        denied = [dict(decision="OFF"), dict(status="REJECTED"),
+                  dict(status="FAILED"), dict(requested_state="FORCE_OFF"),
+                  dict(plan_version="old:ppd"), dict(plan_stage="REJECTED"),
+                  dict(buy_window=0), dict(sale_window=1), dict(eligible=0), dict(eligible=None),
+                  dict(ppd_decision="NO_BUY"), dict(grid_policy_planned="NO_BUY"),
+                  dict(planned_buy_kwh=0), dict(charge_target=None),
+                  dict(charge_target=float("nan")),
+                  dict(expires_at=datetime(2026, 10, 14, 12, 59))]
+        for changes in denied:
+            with self.subTest(changes=changes), tempfile.TemporaryDirectory() as directory:
+                _, _, calls = self.dispatch(directory, [], authorization=self.authorization(**changes))
+                self.assertEqual(calls, [])
+        for kwargs in ({"telemetry": False}, {"latched": True},
+                       {"live_soc": None}, {"live_soc": "nan"}, {"live_soc": "33"}):
+            with self.subTest(kwargs=kwargs), tempfile.TemporaryDirectory() as directory:
+                _, _, calls = self.dispatch(directory, [], authorization=self.authorization(), **kwargs)
+                self.assertEqual(calls, [])
+
+    def test_buy_readback_does_not_treat_accepted_write_as_confirmation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.dispatch(directory, [], authorization=self.authorization(), fail_grid_write=True)
+        self.assertFalse(self.events[-1][2]["confirmed"])
+        self.assertEqual(self.events[-1][3], "WARNING")
+
+    def test_global_switch_off_is_repaired_even_when_all_programs_are_grid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, states, calls = self.dispatch(directory, [], grid_on=True,
+                switch_off_only=True, authorization=self.authorization())
+        self.assertEqual(states["switch.inverter_battery_grid_charging"]["state"], "on")
+        self.assertEqual([(d, a) for d, a, _ in calls], [("script", "import_on")])
+        self.assertEqual(self.events[-1][2]["before"]["grid"], "off")
+        self.assertEqual(self.events[-1][2]["after"]["grid"], "on")
+
+    def test_healthy_buy_does_not_rewrite_registers_every_minute(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, calls = self.dispatch(directory, [], grid_on=True,
+                registers_match=True, authorization=self.authorization())
+        self.assertEqual(calls, [])
+        self.assertEqual(self.events, [])
+
+    def test_soc_read_failure_stops_all_programs_and_explains_stop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, states, calls = self.dispatch(directory, [], grid_on=True, live_soc=None,
+                                             authorization=self.authorization())
+        self.assertEqual(states["switch.inverter_battery_grid_charging"]["state"], "off")
+        self.assertTrue(all(states[f"select.inverter_program_{p}_charging"]["state"] == "Disabled"
+                            for p in range(1, 7)))
+        self.assertEqual(self.events[-1][2]["reason"], "IMPORT_SOC_UNAVAILABLE")
+        self.assertEqual(self.events[-1][2]["import_target_soc"], 32.4)
+        self.assertFalse(any(call[1] == "import_on" for call in calls))
 
 
 if __name__ == "__main__":

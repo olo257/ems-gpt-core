@@ -1,5 +1,18 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.45 — podtrzymanie i odczyt ustawień BUY
+
+- Dodano kontrolę rejestrów po dispatch: cofnięcie Grid/ON nie pozostaje
+  niewykryte do końca slotu. Wznowienie wymaga ważnego polecenia ON,
+  zgodnego planu i PPD, aktywnego BUY, świeżej telemetrii i SOC poniżej targetu.
+- Ręczne OFF, wygasłe/stare polecenie, awaria planera/PPD, SELL i osiągnięty
+  target blokują ponowne włączenie. Nie zmieniono algorytmu planera.
+- Odczyt po zapisie rozróżnia potwierdzone ustawienia od samego HTTP ACK.
+- Zatrzymanie importu czeka na skrypt OFF, wyłącza Grid we wszystkich
+  programach i zapisuje konkretną przyczynę wraz z targetem oraz SOC.
+- Dodano regresje cofnięcia rejestrów, braku potwierdzenia zapisu,
+  niedostępnego SOC i warunków blokujących wznowienie.
+
 ## 0.40.44 — osiągalny target BUY przy późniejszym obciążeniu domu
 
 - Zachowano alternatywne ścieżki SOC, gdy ładowanie do sufitu w pierwszym slocie

@@ -19,7 +19,8 @@ def scalar_number(value) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
     except (TypeError, ValueError):
         return None
 
@@ -827,6 +828,102 @@ def build_executor(a: ExecutorAdapters):
         return {"status": state, "staged": staged}
     
     
+    def reconcile_battery_import(cur, now, current_slot, service_map) -> None:
+        """Repair register drift only while a current, dispatched BUY authorizes it."""
+        with LOCK:
+            if STATE.get("planner_failure_latched") or STATE.get("ppd_failure_latched"):
+                return
+        if now >= current_slot + timedelta(minutes=int(OPTIONS.get("slot_minutes", 15))):
+            return
+        # Read the latest command including OFF/rejected commands: an older ON
+        # must never override a newer operator action or a failed dispatch.
+        cur.execute("""SELECT c.*,s.plan_run_id,s.plan_stage,s.buy_window,s.sale_window,
+          s.grid_policy_planned,s.planned_buy_kwh,
+          COALESCE(s.soc_charge_target_pct,s.soc_target_pct) charge_target,
+          d.eligible,d.decision ppd_decision,o.requested_state
+          FROM ems_gpt_core_commands c
+          JOIN ems_gpt_slots s ON s.slot_start=c.slot_start
+          LEFT JOIN ems_gpt_core_process_decisions d
+            ON d.slot_start=s.slot_start AND d.plan_run_id=s.plan_run_id
+            AND d.process_name='BATTERY_IMPORT'
+          LEFT JOIN ems_gpt_core_process_overrides o
+            ON o.process_name='BATTERY_IMPORT' AND o.status='ACTIVE'
+            AND o.valid_from<=%s AND o.valid_until>%s
+          WHERE c.slot_start=%s AND c.process_name='BATTERY_IMPORT'
+          ORDER BY c.created_at DESC,c.command_id DESC LIMIT 1""", (now, now, current_slot))
+        command = cur.fetchone() or {}
+        if (command.get("decision") != "ON"
+                or command.get("status") not in {"DISPATCHED", "ACCEPTED", "EXECUTED"}
+                or command.get("expires_at") is None or command["expires_at"] <= now
+                or command.get("plan_stage") != "PUBLISHED"
+                or str(command.get("plan_version") or "").split(":", 1)[0] != str(command.get("plan_run_id"))
+                or command.get("requested_state") == "FORCE_OFF"):
+            return
+        if (not database_bool(command.get("buy_window"), "buy_window")
+                or database_bool(command.get("sale_window"), "sale_window")
+                or command.get("grid_policy_planned") != "BUY_ALLOWED"):
+            return
+        override_on = (command.get("source") == "OVERRIDE"
+                       and command.get("requested_state") == "FORCE_ON")
+        if not override_on and (command.get("eligible") is None or not process_decision_is_allowed(
+                {"eligible": command.get("eligible"), "decision": command.get("ppd_decision")},
+                "BATTERY_IMPORT")):
+            return
+        cur.execute("""SELECT captured_at FROM ems_gpt_telemetry_snapshots
+          WHERE captured_at>=%s ORDER BY captured_at DESC LIMIT 1""",
+          (now - timedelta(seconds=max(30, int(OPTIONS.get("telemetry_degraded_seconds", 120)))),))
+        if not cur.fetchone():
+            return
+        target = scalar_number(command.get("charge_target"))
+        live_soc = scalar_number(number(ha_state("sensor.inverter_battery")))
+        buy = scalar_number(command.get("planned_buy_kwh"))
+        threshold = float(OPTIONS.get("planned_flow_threshold_kwh", 0.02))
+        if (target is None or not 0 <= target <= 100
+                or battery_import_guard_reason(live_soc, target, buy, threshold)):
+            return
+
+        def snapshot():
+            return {
+                "grid": (ha_state("switch.inverter_battery_grid_charging") or {}).get("state"),
+                "mode": (ha_state("select.inverter_work_mode") or {}).get("state"),
+                "programs": [{"program": p,
+                    "soc": scalar_number(number(ha_state(f"number.inverter_program_{p}_soc"))),
+                    "charging": (ha_state(f"select.inverter_program_{p}_charging") or {}).get("state")}
+                    for p in range(1, 7)],
+            }
+
+        def matches(state):
+            return (state["grid"] == "on" and state["mode"] == "Zero Export To Load"
+                    and all(p["soc"] == round(target) and p["charging"] == "Grid"
+                            for p in state["programs"]))
+
+        before = snapshot()
+        if matches(before):
+            return
+        entity = service_map.get("BATTERY_IMPORT", {}).get("ON")
+        if not isinstance(entity, str) or not entity.startswith("script."):
+            return
+        details = {"slot_start": current_slot, "command_id": command["command_id"],
+                   "target_soc": target, "live_soc": live_soc, "before": before}
+        try:
+            if any(p["soc"] != round(target) for p in before["programs"]):
+                set_all_program_targets(target)
+            if any(p["charging"] != "Grid" for p in before["programs"]):
+                set_all_program_charging("Grid")
+            if before["grid"] != "on" or before["mode"] != "Zero Export To Load":
+                if ha_service_response("script", entity.split(".", 1)[1], {}) is None:
+                    raise RuntimeError("BUY_RECONCILE_ON_FAILED")
+            after = snapshot()
+            details.update(after=after, confirmed=matches(after),
+                           reason="BUY_REGISTER_DRIFT")
+            record_event("battery_import_reconciled", "executor", details,
+                         "INFO" if details["confirmed"] else "WARNING")
+        except RuntimeError as exc:
+            # Do not claim success or mark the command executed on an HTTP ACK.
+            # The next scheduler cycle may retry only if BUY remains authorized.
+            details.update(reason=str(exc), confirmed=False)
+            record_event("battery_import_reconcile_failed", "executor", details, "ERROR")
+
     def dispatch_ready_commands() -> dict:
         """Fail-closed HA adapter. It can only invoke explicitly mapped script entities."""
         if not bool(OPTIONS.get("executor_enabled", False)) or bool(OPTIONS.get("executor_dry_run", True)):
@@ -1013,7 +1110,7 @@ def build_executor(a: ExecutorAdapters):
               FROM ems_gpt_slots
               WHERE slot_start=%s LIMIT 1""", (current_slot,))
             plan = cur.fetchone() or {}
-            live_soc = number(ha_state("sensor.inverter_battery"))
+            live_soc = scalar_number(number(ha_state("sensor.inverter_battery")))
             try:
                 planned_end_soc = float(plan["soc_end_plan_pct"])
             except (KeyError, TypeError, ValueError):
@@ -1033,11 +1130,11 @@ def build_executor(a: ExecutorAdapters):
             if stop_import:
                 entity_id = service_map.get("BATTERY_IMPORT", {}).get("OFF")
                 if isinstance(entity_id, str) and entity_id.startswith("script."):
-                    response = ha_service_response("script", "turn_on", {"entity_id": entity_id})
+                    response = ha_service_response("script", entity_id.split(".", 1)[1], {})
                     if response is not None:
                         guard_actions.append("BATTERY_IMPORT_OFF")
                         try:
-                            set_active_program_charging(now, "Disabled")
+                            set_all_program_charging("Disabled")
                             guard_actions.append("TOU_GRID_DISABLED")
                         except RuntimeError:
                             pass
@@ -1061,8 +1158,15 @@ def build_executor(a: ExecutorAdapters):
             if guard_actions:
                 record_event("battery_soc_guard_applied", "executor", {
                     "actions": guard_actions, "live_soc": live_soc,
-                    "planned_end_soc": plan.get("soc_end_plan_pct"), "slot_start": current_slot,
+                    "planned_end_soc": plan.get("soc_end_plan_pct"),
+                    "import_target_soc": import_target_soc,
+                    "reason": ("IMPORT_SOC_UNAVAILABLE" if live_soc is None else
+                               "IMPORT_TARGET_UNAVAILABLE" if import_target_soc is None else
+                               "IMPORT_TARGET_REACHED" if stop_import else "EXPORT_ENDPOINT_REACHED"),
+                    "slot_start": current_slot,
                 })
+            if not battery_off_failed and not stop_import and not stop_export:
+                reconcile_battery_import(cur, now, current_slot, service_map)
             # Outside active BUY/SELL, programs 5/6 may follow the published
             # native-load trajectory only when a near same-day BUY and the
             # protected daily close are both present in the same plan version.
