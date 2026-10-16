@@ -265,7 +265,7 @@ def build_handler(a: ApiAdapters):
                     LOG.warning("rejected planner attempt unavailable: %s", type(exc).__name__)
                     return self.json({"error":"rejected_planner_attempt_unavailable"},
                                      HTTPStatus.SERVICE_UNAVAILABLE)
-            if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("plan","execution","hourly","daily","runs","analytics","target-history","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs","appliances")):
+            if any(path.endswith(f"/api/{name}") or path == f"/api/{name}" for name in ("consumption-forecast","plan","execution","hourly","daily","runs","analytics","target-history","diagnostics","processes","overrides","commands","process-execution","todo","ai-runs","appliances")):
                 name=path.rsplit("/",1)[-1]; params=parse_qs(urlparse(self.path).query); limit=min(500,max(1,int(params.get("limit",["96"])[0])))
                 if name == "todo":
                     requested_status = params.get("status", [None])[0]
@@ -282,6 +282,7 @@ def build_handler(a: ApiAdapters):
                         queries_todo = ("SELECT * FROM ems_gpt_core_todo ORDER BY created_at DESC LIMIT %s",
                                         (limit,))
                 queries={
+                  "consumption-forecast":("SELECT * FROM ems_gpt_core_consumption_forecasts ORDER BY slot_start DESC LIMIT %s",(limit,)),
                   "plan":("SELECT * FROM ems_gpt_slots WHERE actual_recorded_at IS NULL AND slot_start>=%s ORDER BY slot_start LIMIT %s",(slot_start().replace(tzinfo=None),limit)),
                   "execution":("""SELECT s.*,d.actual_grid_export_kwh,d.actual_ev_kwh,d.actual_dhw_kwh,
                     d.soc_start_pct,d.soc_min_pct,d.soc_delta_pct,

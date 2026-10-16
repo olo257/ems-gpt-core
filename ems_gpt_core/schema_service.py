@@ -87,6 +87,13 @@ def _backfill_slot_ids_batched(conn, cur) -> dict:
 
 def ensure_runtime_schema(*, db, app_version: str) -> None:
     statements = [
+        """CREATE TABLE IF NOT EXISTS ems_gpt_core_consumption_forecasts (
+          slot_start DATETIME(6) PRIMARY KEY, batch_id VARCHAR(36) NOT NULL,
+          model_version VARCHAR(40) NOT NULL, generated_at DATETIME(6) NOT NULL,
+          house_kwh DOUBLE NULL,dhw_kwh DOUBLE NULL,
+          heat_profile_json LONGTEXT NULL,sample_count INT NOT NULL,
+          status VARCHAR(48) NOT NULL,evidence_json LONGTEXT NOT NULL
+          ) ENGINE=InnoDB""",
         """CREATE TABLE IF NOT EXISTS ems_gpt_core_migrations (
           migration_key VARCHAR(100) PRIMARY KEY, applied_at DATETIME(6) NOT NULL,
           details_json LONGTEXT NULL) ENGINE=InnoDB""",

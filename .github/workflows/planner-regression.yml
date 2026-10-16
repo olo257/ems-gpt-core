@@ -34,3 +34,8 @@ jobs:
         run: python -m unittest discover -s ems_gpt_core/tests -p 'test_observer_operational_audit.py' -v
       - name: Consumption forecast ordering and chart
         run: node tests/test_consumption_forecast_ui.cjs
+
+      - name: Component consumption forecast and analytics
+        run: |
+          python -m unittest discover -s ems_gpt_core/tests -p 'test_component_forecast.py' -v
+          python -m unittest discover -s ems_gpt_core/tests -p 'test_analytics_service.py' -v

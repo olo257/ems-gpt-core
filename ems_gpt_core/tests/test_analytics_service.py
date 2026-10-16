@@ -79,6 +79,10 @@ class AnalyticsQualityWindowTests(unittest.TestCase):
 
     def test_native_load_excludes_separately_planned_consumers(self):
         row = {
+            "slot_start": datetime(2026,10,16,6),
+            "sample_count": 15, "component_samples": 15,"coverage_pct":100,
+            "execution_reason":"CORE_TELEMETRY_15_SAMPLES", "pv_cwu_on":0,
+            "actual_dhw_consumed_kwh":.1,"actual_cooling_consumed_kwh":0,
             "actual_load_kwh": 1.25,
             "detail_actual_ev_kwh": 0.50,
             "actual_heating_consumed_kwh": 0.25,
@@ -86,11 +90,11 @@ class AnalyticsQualityWindowTests(unittest.TestCase):
         self.assertEqual(_native_load_kwh(row), 0.5)
 
     def test_native_load_never_becomes_negative(self):
-        self.assertEqual(_native_load_kwh({
+        self.assertIsNone(_native_load_kwh({
             "actual_load_kwh": 0.2,
             "detail_actual_ev_kwh": 0.4,
             "actual_heat_pump_electric_kwh": 0.1,
-        }), 0.0)
+        }))
         self.assertIsNone(_native_load_kwh({"actual_load_kwh": None}))
 
     def test_core_telemetry_slot_is_in_quality_window(self):

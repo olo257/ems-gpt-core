@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.45. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.46. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -14,9 +14,9 @@ może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
   tworzą jeden plan. Replan nie może kończyć się na granicy dnia ani na 96
   rekordach.
 - Dla każdego slotu tego horyzontu muszą istnieć prognozy zużycia i PV. Brak
-  prognozy nie oznacza zera: materializacja uzupełnia zużycie profilem slotu,
-  a przy krótkiej historii konserwatywną średnią z ostatnich trzech dób.
-  Pozostały `NULL` odrzuca cały przebieg.
+  prognozy nie oznacza zera: przy niepełnej historii składników zachowywana
+  jest poprzednia kompletna prognoza tego samego slotu. Pozostały `NULL`
+  odrzuca cały przebieg.
 - Przejście miesiąca nie może wyzerować prognozy PV. Przy braku kompletnego
   profilu danego miesiąca używany jest najbliższy kompletny profil historyczny,
   z cyklicznym dystansem miesięcy (grudzień sąsiaduje ze styczniem).
@@ -533,3 +533,45 @@ odbiorów jest dozwolony wyłącznie przy limicie mocy rozładowania albo rezerw
 SOC; pozostaje fizycznym importem domu i nigdy nie staje się BUY ani ładowaniem
 baterii. Poza tymi fizycznymi granicami planer zgłasza niewykonalność zamiast
 ukrywać niedobór.
+
+## Prognoza składników zużycia — 0.40.46
+
+Jedna wersjonowana partia `COMPONENT_LOAD_V1` w tabeli
+`ems_gpt_core_consumption_forecasts` zasila analitykę i wejścia planera.
+`forecast_load_kwh` = dom + CWU pompy ciepła;
+`forecast_heat_pump_load_kwh` = osobno zaplanowane CO. CWU nie jest doliczane
+ponownie do CO. Oba składniki są następnie wejściem dotychczasowego obliczenia
+targetu do PV/BUY; reguły BUY, sufitu targetu i ekonomiki nie zmieniają się.
+
+Uczenie korzysta wyłącznie z ostatnich 7 dni zamkniętych slotów Core, minimalnej
+liczby próbek, pokrycia oraz kompletnych źródeł. Brak kanału, nieznany stan
+PV_CWU lub niespójny bilans wykluczają próbkę. Brak minimum 3 próbek kwadransa
+lub 2 kompletnych cykli CWU zachowuje wcześniejszą prognozę i zapisuje status.
+Średnia energii domu zachowuje wpływ rzeczywistych zdarzeń zużycia; nie dodaje
+osobnego arbitralnego bufora AGD.
+
+Cykle CWU wymagają poprawnych slotów spoczynku przed i po cyklu. Luki nie są
+uznawane za zakończenie cyklu. Średni profil zachowuje energię całego cyklu,
+także przy różnej długości. Cykle zaczynają się od 06:00 do 21:00, co 2–3 h
+zgodnie z medianą zmierzonych odstępów; przy braku odstępów używa się roboczego
+założenia 2,5 h. Replan kontynuuje zaobserwowaną fazę i liczy tylko pozostałe
+sloty cyklu. CWU pozostaje uwzględnione podczas pracy CO.
+
+Profil CO opisuje kolejne aktywne sloty, z maksymalnie 3 h przerwy bez ponownego
+naliczania rozruchu. Uczenie sesji CO również łączy takie przerwy. Przy braku
+2 kompletnych sesji zachowuje się wcześniejszą dodatnią prognozę CO; jeżeli
+jej brak, pozostaje historyczna moc CO z dotychczasowego planera. Aktualny wiek
+profilu uwzględnia zmierzoną energię CO, bez odczytu decyzji/override'ów PPD.
+
+Cyrkulacja obniża temperaturę zasobnika, powodując kolejne cykle HP_CWU.
+Jej wpływ jest zawarty w energii pełnych zmierzonych cykli i ich częstotliwości.
+Nie dodaje się osobnego narzutu energii za straty cyrkulacji. Pobór elektryczny
+samej pompy pozostaje w domu. Nie jest wymagany osobny licznik cyrkulacji.
+Bieżąca telemetria nie zawiera licznika grzałki PV_CWU: slot z jej włączeniem
+jest wykluczany z uczenia, ponieważ kanał DHW pompy nie mierzy grzałki.
+EV jest odejmowane według oddzielnego pomiaru.
+
+PV_CWU i PV_EV są odbiornikami realizowanymi wyłącznie z nadwyżki PV:
+nie są częścią prognozy zapotrzebowania, celu SOC ani zakupów. Odczyt ich
+pomiarów służy wyłącznie usunięciu ich wpływu z historycznego total load.
+Nie należy utożsamiać PV_CWU z autonomicznym CWU pompy ciepła.

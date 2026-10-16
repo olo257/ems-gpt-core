@@ -27,16 +27,13 @@ def _mae(rows: list[dict], forecast_key: str, actual_key: str) -> float | None:
     return None if not pairs else round(sum(abs(forecast-actual) for forecast, actual in pairs)/len(pairs), 3)
 
 
-def _native_load_kwh(row: dict) -> float | None:
-    """Return household load without loads scheduled separately by the planner."""
-    if row.get("actual_load_kwh") is None:
+def _native_load_kwh(row: dict, minimum_samples: int = 10) -> float | None:
+    """Use the same measured component contract as forecast learning."""
+    from component_forecast import split_slot
+    part = split_slot({**row, "actual_ev_kwh": row.get("detail_actual_ev_kwh")}, minimum_samples)
+    if part is None:
         return None
-    total = float(row["actual_load_kwh"])
-    ev = max(0.0, float(row.get("detail_actual_ev_kwh") or 0))
-    # DHW stays in the native household baseline; only separately planned
-    # space heating is removed. Subtracting all HP energy dropped DHW twice.
-    heat = max(0.0, float(row.get("actual_heating_consumed_kwh") or 0))
-    return round(max(0.0, total - ev - heat), 6)
+    return round(part["house_kwh"] + part["dhw_kwh"], 6)
 
 
 def _flow_metrics(rows: list[dict], forecast_key: str, actual_key: str,
@@ -126,7 +123,10 @@ def _target_load_kwh(row: dict) -> float | None:
         return None
     load = max(0.0, float(row["actual_load_kwh"]))
     ev = max(0.0, float(row.get("detail_actual_ev_kwh") or 0.0))
-    return round(max(0.0, load - ev), 6)
+    flex = row.get("pv_cwu_kwh")
+    if "pv_cwu_on" in row and row["pv_cwu_on"] != 0 and flex is None:
+        return None  # Unmetered flexible demand cannot train target history.
+    return round(max(0.0, load - ev - max(0.0, float(flex or 0))), 6)
 
 
 def _is_contiguous(previous: dict, current: dict, slot_minutes: int) -> bool:
@@ -261,7 +261,13 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
     with db() as conn, conn.cursor() as cur:
         cur.execute("INSERT INTO ems_gpt_core_analytics_runs(run_id,started_at,status) VALUES(%s,NOW(6),'RUNNING')", (run_id,))
         cur.execute("""SELECT s.*,d.actual_ev_kwh detail_actual_ev_kwh,
-          d.actual_dhw_kwh detail_actual_dhw_kwh,
+          d.actual_dhw_kwh detail_actual_dhw_kwh,d.coverage_pct,d.complete_source_samples,
+          (SELECT COUNT(*) FROM ems_gpt_telemetry_snapshots t
+           WHERE t.slot_start=s.slot_start AND t.load_power_w IS NOT NULL AND t.ev_power_w IS NOT NULL
+              AND t.dhw_power_w IS NOT NULL AND t.hp_heat_consumption_w IS NOT NULL
+              AND t.hp_cool_consumption_w IS NOT NULL AND t.pv_cwu_on IS NOT NULL) component_samples,
+          (SELECT CASE WHEN COUNT(t.pv_cwu_on)=COUNT(*) THEN MAX(t.pv_cwu_on) ELSE NULL END
+           FROM ems_gpt_telemetry_snapshots t WHERE t.slot_start=s.slot_start) pv_cwu_on,
           (SELECT COUNT(*) FROM ems_gpt_telemetry_snapshots t
            WHERE t.slot_start=s.slot_start) sample_count
           FROM ems_gpt_slots s
@@ -270,7 +276,7 @@ def run_analytics(*, options, db, local_now, record_event) -> dict:
           ORDER BY s.slot_start ASC""", (cutoff,))
         rows = list(cur.fetchall())
         for row in rows:
-            row["actual_native_load_kwh"] = _native_load_kwh(row)
+            row["actual_native_load_kwh"] = _native_load_kwh(row, minimum_samples)
         complete = 0
         quality_slots = 0
         quality_complete = 0

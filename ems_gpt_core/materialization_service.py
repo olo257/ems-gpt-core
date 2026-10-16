@@ -603,51 +603,69 @@ def build_materializations(a: MaterializationAdapters):
     
     
     def learn_missing_load() -> int:
-        """Refresh unpublished forecasts from recent seven-day native-load telemetry.
+        """Publish one versioned component batch from complete recent telemetry."""
+        import uuid
+        from component_forecast import build_component_forecast
 
-        Preserve a previous forecast when recent evidence is unavailable.
-        DHW/HEAT attribution remains unchanged until the component contract
-        is validated against production telemetry.
-        """
-        from rolling_load_forecast import rolling_slot_forecast
-
-        updated = 0
         cutoff = slot_start().replace(tzinfo=None)
-        history_start = cutoff - timedelta(days=7)
+        updated = 0
         with db() as conn, conn.cursor() as cur:
             cur.execute("""SELECT slot_start,forecast_load_kwh FROM ems_gpt_slots
-              WHERE slot_start>=%s AND actual_recorded_at IS NULL
-              ORDER BY slot_start""", (cutoff,))
+              WHERE slot_start>=%s AND actual_recorded_at IS NULL ORDER BY slot_start""", (cutoff,))
             future = list(cur.fetchall())
             if not future:
                 return 0
-            cur.execute("""SELECT s.slot_start,s.actual_load_kwh,
-              s.actual_heating_consumed_kwh,d.actual_ev_kwh
-              FROM ems_gpt_slots s
-              LEFT JOIN ems_gpt_core_execution_details d
+            cur.execute("""SELECT MAX(generated_at) generated_at,MAX(slot_start) last_slot,COUNT(*) slot_count
+              FROM ems_gpt_core_consumption_forecasts""")
+            latest = cur.fetchone()
+            if (latest and latest.get("generated_at") == cutoff
+                    and latest.get("last_slot") == future[-1]["slot_start"]
+                    and int(latest.get("slot_count") or 0) >= len(future)):
+                return 0
+            cur.execute("""SELECT s.slot_start,s.actual_load_kwh,s.actual_mode,
+              s.execution_reason,s.actual_heating_consumed_kwh,s.actual_dhw_consumed_kwh,
+              s.actual_cooling_consumed_kwh,d.actual_ev_kwh,d.sample_count,d.coverage_pct,d.complete_source_samples,
+              (SELECT COUNT(*) FROM ems_gpt_telemetry_snapshots t
+               WHERE t.slot_start=s.slot_start AND t.load_power_w IS NOT NULL AND t.ev_power_w IS NOT NULL
+              AND t.dhw_power_w IS NOT NULL AND t.hp_heat_consumption_w IS NOT NULL
+              AND t.hp_cool_consumption_w IS NOT NULL AND t.pv_cwu_on IS NOT NULL) component_samples,
+              (SELECT CASE WHEN COUNT(t.pv_cwu_on)=COUNT(*) THEN MAX(t.pv_cwu_on) ELSE NULL END
+                FROM ems_gpt_telemetry_snapshots t
+                WHERE t.slot_start=s.slot_start) pv_cwu_on
+              FROM ems_gpt_slots s LEFT JOIN ems_gpt_core_execution_details d
                 ON d.slot_start=s.slot_start
               WHERE s.slot_start>=%s AND s.slot_start<%s
-                AND s.actual_recorded_at IS NOT NULL
-                AND s.actual_load_kwh IS NOT NULL
-              ORDER BY s.slot_start""", (history_start, cutoff))
-            samples = []
-            for past in cur.fetchall():
-                native = max(0.0, float(past["actual_load_kwh"])
-                             - max(0.0, float(past.get("actual_heating_consumed_kwh") or 0))
-                             - max(0.0, float(past.get("actual_ev_kwh") or 0)))
-                samples.append({"slot_start": past["slot_start"],
-                                "native_load_kwh": native})
-            estimates = rolling_slot_forecast(
-                samples, [row["slot_start"] for row in future], now=cutoff)
+                AND s.actual_recorded_at IS NOT NULL ORDER BY s.slot_start""",
+              (cutoff - timedelta(days=7), cutoff))
+            model = build_component_forecast(list(cur.fetchall()),
+                [row["slot_start"] for row in future], now=cutoff,
+                minimum_samples=int(OPTIONS.get("telemetry_min_samples_per_slot", 10)))
+            batch_id = str(uuid.uuid4())
+            metadata = {key: value for key, value in model.items() if key != "slots"}
             for row in future:
-                estimate = estimates[row["slot_start"]]["forecast_kwh"]
-                if estimate is None:
-                    continue  # Preserve existing forecast; never replace with zero.
-                cur.execute("""UPDATE ems_gpt_slots
-                  SET forecast_load_kwh=%s,load_correction=1
-                  WHERE slot_start=%s AND actual_recorded_at IS NULL""",
-                  (estimate, row["slot_start"]))
+                estimate = model["slots"][row["slot_start"]]
+                valid = estimate["house_kwh"] is not None
+                status = "READY" if valid else "PRESERVED_INCOMPLETE_HISTORY"
+                cur.execute("""INSERT INTO ems_gpt_core_consumption_forecasts
+                  (slot_start,batch_id,model_version,generated_at,house_kwh,dhw_kwh,
+                   heat_profile_json,sample_count,status,evidence_json)
+                  VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  ON DUPLICATE KEY UPDATE batch_id=VALUES(batch_id),model_version=VALUES(model_version),
+                  generated_at=VALUES(generated_at),house_kwh=VALUES(house_kwh),dhw_kwh=VALUES(dhw_kwh),
+                  heat_profile_json=VALUES(heat_profile_json),
+                  sample_count=VALUES(sample_count),status=VALUES(status),evidence_json=VALUES(evidence_json)""",
+                  (row["slot_start"],batch_id,model["version"],cutoff,estimate["house_kwh"],
+                   estimate["dhw_kwh"],json.dumps(model["heat_profile"]),
+                   estimate["sample_count"],status,json.dumps(metadata)))
+                if not valid:
+                    continue
+                total = sum(estimate[key] for key in ("house_kwh", "dhw_kwh"))
+                cur.execute("""UPDATE ems_gpt_slots SET forecast_load_kwh=%s,load_correction=1
+                  WHERE slot_start=%s AND actual_recorded_at IS NULL""", (round(total,6),row["slot_start"]))
                 updated += cur.rowcount
+        record_event("component_consumption_forecast", "load_learning", {
+            "batch_id": batch_id, "updated": updated, "preserved": len(future)-updated,
+            **metadata})
         return updated
 
     return SimpleNamespace(

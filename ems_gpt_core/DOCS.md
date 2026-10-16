@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.45**.
+Status: obowiązująca. Wersja wydania: **0.40.46**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -303,3 +303,29 @@ Kontrola `VOLUNTARY_GRID_LOAD_WITHOUT_SALE` w 0.40.31 odróżnia pobór domu
 podczas rzeczywistego ładowania BUY od dobrowolnego importu bez ładowania.
 Ładowanie wymaga przekroczenia `planned_flow_threshold_kwh`; optymalizator
 oraz końcowe kontrole stosują ten sam próg. Limit importu obejmuje dom i baterię.
+
+### Prognoza dom/CWU/CO — 0.40.46
+
+Szczegółowy kontrakt: `PLANNER_CONTRACT.md`, sekcja prognozy składników.
+Diagnostyka odczytu: `GET /api/consumption-forecast?limit=96` (maks. 500).
+Każdy rekord pokazuje partię, wersję modelu, czas uczenia, składniki kWh,
+profil CO, liczbę próbek, status i dowody/fallback. Zdarzenia
+`component_consumption_forecast` i `planner_consumption_batch` wiążą model
+z przebiegiem planera. Aktualizacja wejść i partii odbywa się w jednej transakcji.
+
+Przy aktualizacji ceny RCE w tym samym kwadransie nowy horyzont wymusza nową
+partię. Zwykłe kolejne cykle schedulera w tym samym slocie nie przeliczają jej.
+Opcjonalny, wycofany klucz `agent_api_token` jest akceptowany wyłącznie przez
+schemat Supervisora dla starych instalacji, a `load_options` nadal go usuwa.
+Nie przywraca to agenta AI ani uwierzytelniania tokenem.
+
+Weryfikacja produkcji 16.10.2026 przed zmianą: działa 0.40.45; baza, HA i
+wykonawca LIVE są połączone. Program 5 SOC=10%, program 6 SOC=30%, oba
+charging=Disabled, globalne grid charging=off. Są to potwierdzone stany
+odczytu; same w sobie nie dowodzą pełnej historii wykonania przywracania.
+
+Walidacja wydania: 420 testów Core (w tym 13 nowych testów modelu),
+32 testy economic-shadow, test interfejsu prognozy zużycia, compileall i
+`git diff --check`. Test integracyjny potwierdza wpływ pełnego cyklu CWU
+na wymagany SOC przed uzupełnieniem oraz brak wpływu PV_CWU/PV_EV na prognozę.
+Nie jest to jeszcze walidacja działania nowego modelu na produkcyjnej bazie.
