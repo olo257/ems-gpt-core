@@ -2612,33 +2612,26 @@ def build_planner(a: PlannerAdapters):
                         allow_buy_target_shortfall=True)
                     break
                 except RuntimeError as exc:
-                    # A BUY due target can be infeasible even though the
-                    # relaxed continuous SOC bridge is feasible. Do not retry
-                    # by lowering the target or publishing a misleading plan.
-                    # Record the physical shortfall and preserve the last
-                    # accepted production plan (the run transaction rolls back).
+                    # BUY shortfalls are non-fatal: the optimizer already
+                    # preserves the highest physically reachable state at
+                    # every due slot. A legacy BUY_TARGET_UNREACHABLE exception
+                    # must not suppress all commands for an otherwise
+                    # executable production plan. Retry without hard BUY
+                    # deadlines, retaining the original requested SOC values
+                    # for reporting and grid-charge ceilings.
                     if str(exc).startswith("BUY_TARGET_UNREACHABLE:"):
-                        parts = str(exc).split(":")
-                        details = dict(part.split("=", 1) for part in parts[1:]
-                                       if "=" in part)
-                        failed_index = int(details["slot"])
-                        record_event("buy_target_unreachable", "planner", {
-                            "slot_start": str(horizon_rows[failed_index]["slot_start"]),
-                            "requested_soc_pct": float(details["requested"]),
-                            "reachable_soc_pct": float(details["reachable"]),
-                            "shortfall_pct": round(
-                                float(details["requested"]) -
-                                float(details["reachable"]), 3),
-                            "action": "KEEP_LAST_ACCEPTED_PLAN_REVIEW_BUY_WINDOWS",
-                            "battery_sales_disabled": True,
-                            "rce_windows_unchanged": True,
-                        }, "ERROR")
-                        raise RuntimeError(
-                            "BUY_TARGET_UNREACHABLE_PRESERVED_PLAN:"
-                            f"slot={horizon_rows[failed_index]['slot_start']}:"
-                            f"requested={details['requested']}:"
-                            f"reachable={details['reachable']}"
-                        ) from exc
+                        parts = dict(part.split("=", 1) for part in
+                                     str(exc).split(":")[1:] if "=" in part)
+                        failed_index = int(parts["slot"])
+                        if failed_index in target_due_indices:
+                            target_due_indices.remove(failed_index)
+                            record_event("buy_target_shortfall_best_effort", "planner", {
+                                "slot_start": str(horizon_rows[failed_index]["slot_start"]),
+                                "requested_soc_pct": float(parts["requested"]),
+                                "reachable_soc_pct": float(parts["reachable"]),
+                                "action": "RETRY_KEEP_BUY_WINDOWS_AND_SOC_CEILINGS",
+                            }, "WARNING")
+                            continue
                     terminal_failure = (
                         str(exc) == "No feasible terminal SOC state for complete horizon"
                     )
