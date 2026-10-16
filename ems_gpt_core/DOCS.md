@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.44**.
+Status: obowiązująca. Wersja wydania: **0.40.45**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -237,6 +237,30 @@ Komendy OFF kończą się przed uruchomieniem ON. Dispatch wywołuje nazwaną us
 `script.<nazwa>`, aby czekać na zakończenie sekwencji. `SELL_BAT OFF` nie ustawia
 źródła TOU na `Disabled`, gdy globalne ładowanie baterii z sieci jest włączone.
 Błąd bateryjnej komendy OFF blokuje nowe bateryjne ON w tym przebiegu.
+
+### Kontrola podtrzymania BUY (0.40.45)
+
+Po dispatch wykonawca w każdym cyklu kontrolnym porównuje rzeczywiste ustawienia
+Deye z nadal ważnym poleceniem `BATTERY_IMPORT ON`. Kontrola wymaga bieżącego,
+opublikowanego planu i zgodnej wersji polecenia, aktywnego BUY bez SELL,
+`BUY_ALLOWED`, dodatniej zaplanowanej energii zakupu, świeżej telemetrii
+oraz SOC poniżej dynamicznego `soc_charge_target_pct` (alias `soc_target_pct`).
+Obowiązuje aktualna decyzja PPD; aktywne ręczne OFF blokuje wznowienie.
+Awaria planera/PPD, wygaśnięcie polecenia i koniec slotu również je blokują.
+
+Jeżeli ustawienia odbiegają od polecenia, wykonawca ponownie ustawia target
+wszystkich sześciu programów, ich źródło `Grid` i skrypt importu ON w zakresie
+wymaganym przez rozbieżność. Po zapisie odczytuje ustawienia ponownie.
+Zdarzenie `battery_import_reconciled` zawiera stan przed/po i `confirmed`;
+potwierdzenie dotyczy rejestrów, nie energii faktycznie pobranej z sieci.
+Brak potwierdzenia lub błąd zapisu jest rejestrowany i podlega ponownej kontroli
+w następnym cyklu, jeśli zakup pozostaje dozwolony.
+
+Ochrona SOC zatrzymuje import synchronicznym skryptem OFF i wyłącza `Grid`
+we wszystkich programach. `battery_soc_guard_applied` zapisuje odczyt SOC,
+target importu, planowany SOC końca slotu oraz przyczynę zatrzymania.
+Brak odczytu SOC nie jest traktowany jako osiągnięcie targetu. W tym samym
+przebiegu po zadziałaniu ochrony nie następuje automatyczne wznowienie.
 
 ## 8. Panel
 
