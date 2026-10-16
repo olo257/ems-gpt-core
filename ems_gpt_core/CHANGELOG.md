@@ -1,5 +1,21 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.47 — pełny wolumen każdego wybranego BUY
+
+- Usunięto możliwość śladowego zakupu przy dużym zapasie do targetu,
+  również gdy kolejne sloty ciągłego okna BUY mają zużycie domu.
+- Każde dodatnie przejście zakupu wykorzystuje maksimum dla swojego
+  początkowego SOC, z limitem dynamicznego targetu, mocy baterii, PV,
+  kwantyzacji SOC i łącznego importu obiektu po zasileniu domu.
+- Zachowano alternatywy OFF i rozładowania na dom, aby osiągnięty target
+  nie powodował fikcyjnego zakupu ani utraty wykonalności reszty okna.
+- Mały zakup jest poprawny wyłącznie wtedy, gdy wyczerpuje rzeczywistą
+  dostępną moc lub pozostałe miejsce do targetu.
+- Walidacja: 424 testy Core, w tym cztery nowe regresje; zmieniono starszy
+  test wymagający sztucznego częściowego zakupu przed końcem okna.
+- Publikacja zatwierdzona przez użytkownika 16.10.2026; instalacja wymaga
+  aktualizacji dodatku z 0.40.46.
+
 ## 0.40.46 — wersjonowana prognoza dom/CWU/CO
 
 - Wspólny kontrakt rozliczenia pomiarów dla analityki i prognozy; braki danych

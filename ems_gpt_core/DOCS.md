@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.46**.
+Status: obowiązująca. Wersja wydania: **0.40.47**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -329,3 +329,13 @@ Walidacja wydania: 420 testów Core (w tym 13 nowych testów modelu),
 `git diff --check`. Test integracyjny potwierdza wpływ pełnego cyklu CWU
 na wymagany SOC przed uzupełnieniem oraz brak wpływu PV_CWU/PV_EV na prognozę.
 Nie jest to jeszcze walidacja działania nowego modelu na produkcyjnej bazie.
+
+### 0.40.47 — naprawa śladowych zakupów BUY
+
+16.10 po aktualizacji do 0.40.46 potwierdzono w planie na 17.10: sloty
+02:30–03:00 kupowały po 0,030612 kWh, mimo SOC 18–19% przy targecie 40%.
+Przyczyną było zachowanie częściowych dodatnich przejść optymalizatora,
+aby zasilać load z sieci i zachować zapas ładowania na później. Poprawka
+ogranicza każdy wybrany zakup do pełnego dostępnego przejścia, zachowując
+alternatywy OFF/rozładowanie dla wykonalności. Szczegóły i reprodukcja:
+`PLANNER_CONTRACT.md`. Nie zmieniono produkcyjnego planu ani falownika.
