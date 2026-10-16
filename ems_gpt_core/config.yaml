@@ -1,5 +1,5 @@
 name: EMS-GPT Core
-version: "0.40.45"
+version: "0.40.46"
 slug: ems_gpt_core
 description: Niezależny silnik planowania i analityki EMS-GPT
 url: https://github.com/olo257/ems-gpt-core
@@ -59,6 +59,7 @@ map:
   - backup:rw
   - media:rw
 schema:
+  agent_api_token: password?
   timezone: str
   slot_minutes: int(15,15)
   command_ttl_seconds: int(60,1800)

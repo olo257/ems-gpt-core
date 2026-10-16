@@ -96,8 +96,8 @@ def build_telemetry(a: TelemetryAdapters):
                power_w(states["grid"]), rce_sell, rce_buy, number(states["dhw"]),
                battery_charge_w, battery_discharge_w,
                power_w(states["ev_power"]), power_w(states["dhw_power"]),
-               (None if states.get("pv_cwu_state") is None else
-                1 if str(states["pv_cwu_state"].get("state", "")).lower() == "on" else 0),
+               ({"on": 1, "off": 0}.get(
+                   str((states.get("pv_cwu_state") or {}).get("state", "")).lower())),
                power_w(states["pv1"]), power_w(states["pv2"]),
                number(states["hp_outlet"]), number(states["hp_inlet"]),
                number(states["hp_compressor_freq"]), number(states["hp_compressor_current"]),

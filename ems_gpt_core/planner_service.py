@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_39"
+PLANNER_VERSION = "CORE_0_40_46"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -2344,6 +2344,31 @@ def build_planner(a: PlannerAdapters):
                                           "scheduled_slots": delivered_slots,
                                           "missing_hours": round((required_slots-delivered_slots)/4, 2)})
 
+            # Consume the same versioned batch used for household + DHW.
+            # A missing component preserves previous production input explicitly.
+            from component_forecast import heating_profile_for_plan
+            cur.execute("""SELECT * FROM ems_gpt_core_consumption_forecasts
+              WHERE slot_start>=%s ORDER BY slot_start""", (cutoff,))
+            component_rows = {item["slot_start"]: item for item in cur.fetchall()}
+            previous_loads = {item["slot_start"]: item.get("forecast_heat_pump_load_kwh")
+                              for item in source}
+            component_heat = {}
+            selected_times = [rows[i]["slot_start"] for i in sorted(hp_selected_indices)]
+            if selected_times:
+                evidence = component_rows.get(selected_times[0]) or {}
+                profile = json.loads(evidence.get("heat_profile_json") or "null")
+                if profile:
+                    cur.execute("""SELECT slot_start,actual_heating_consumed_kwh heat_kwh
+                      FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s
+                        AND actual_recorded_at IS NOT NULL
+                      ORDER BY slot_start""", (cutoff-timedelta(days=1),cutoff))
+                    component_heat = heating_profile_for_plan(selected_times,profile,list(cur.fetchall()))
+            record_event("planner_consumption_batch", "planner", {
+                "run_id": run_id,
+                "batch_ids": sorted({item["batch_id"] for item in component_rows.values()}),
+                "profiled_heat_slots": len(component_heat),
+                "heat_fallback": "PRESERVE_PREVIOUS_OR_HISTORICAL_POWER" if not component_heat else None})
+
             horizon_rows, sale_constraints, tou_by_index = [], [], []
             for index, row in enumerate(rows):
                 work = dict(row)
@@ -2360,6 +2385,14 @@ def build_planner(a: PlannerAdapters):
                 row_day = row.get("local_day") or row["slot_start"].date()
                 planned_heating_kwh = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25
                                        if index in hp_selected_indices else 0.0)
+                component = component_rows.get(row["slot_start"]) or {}
+                if component.get("status") == "READY":
+                    historical_dhw_kwh = float(component["dhw_kwh"])
+                if index in hp_selected_indices:
+                    if row["slot_start"] in component_heat:
+                        planned_heating_kwh = component_heat[row["slot_start"]]
+                    elif float(previous_loads.get(row["slot_start"]) or 0) > 0:
+                        planned_heating_kwh = float(previous_loads[row["slot_start"]])
                 # HP_DHW is already included in the consumption forecast.
                 # Only the separately planned HP_HEAT_DHW cycle is additional
                 # load for the battery/SOC energy balance.

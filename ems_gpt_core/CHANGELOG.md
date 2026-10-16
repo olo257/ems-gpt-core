@@ -1,5 +1,19 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.46 — wersjonowana prognoza dom/CWU/CO
+
+- Wspólny kontrakt rozliczenia pomiarów dla analityki i prognozy; braki danych
+  i niezmierzone PV_CWU nie są uczone jako zero lub zużycie domu.
+- Pełne cykle CWU, zachowanie ich energii i fazy przy replanie, profil CO
+  z kontynuacją po krótkiej przerwie oraz jawne zachowanie starszych wejść.
+- Partia/model, dowody i statusy w SQL, API odczytu oraz audycie planera.
+- Wpływ cyrkulacji jest uczony przez energię i odstępy cykli HP_CWU;
+  bez podwójnego narzutu za straty ciepła.
+- Schemat Supervisora przyjmuje wycofany agent_api_token jako opcjonalne hasło;
+  aplikacja nadal ignoruje ten klucz.
+- Zatwierdzono publikację przez użytkownika 16.10.2026; instalacja dodatku
+  wymaga aktualizacji z 0.40.45.
+
 ## 0.40.45 — podtrzymanie i odczyt ustawień BUY
 
 - Dodano kontrolę rejestrów po dispatch: cofnięcie Grid/ON nie pozostaje
