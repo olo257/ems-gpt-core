@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.46. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.47. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -575,3 +575,25 @@ PV_CWU i PV_EV są odbiornikami realizowanymi wyłącznie z nadwyżki PV:
 nie są częścią prognozy zapotrzebowania, celu SOC ani zakupów. Odczyt ich
 pomiarów służy wyłącznie usunięciu ich wpływu z historycznego total load.
 Nie należy utożsamiać PV_CWU z autonomicznym CWU pompy ciepła.
+
+## Pełny wolumen wybranego BUY — 0.40.47
+
+Dla każdej wybranej dodatniej energii zakupu przejście SOC musi osiągnąć
+maksimum dostępne z jego stanu początkowego: min(pozostałe miejsce do
+wyliczonego targetu, moc ładowania baterii w slocie, limit importu obiektu
+po zasileniu domu, fizyczna pojemność). Wspólna moc ładowania obejmuje PV
+oraz sieć; PV nadal może ładować ponad target do fizycznego maksimum.
+Kwantyzacja SOC może zmniejszyć wolumen o mniej niż jeden kwant.
+
+Przyszłe zużycie domu w tym samym oknie nie dopuszcza częściowego zakupu
+przy istniejącym większym zapasie do targetu. Śladowy zakup nie może służyć
+wyłącznie zalegalizowaniu importu na dom. Optymalizator zachowuje alternatywę
+braku zakupu i rozładowania na load. Po osiągnięciu targetu import do baterii
+ustaje; kolejne rzeczywiste ubytki mogą być uzupełniane tylko do targetu.
+
+Reprodukcja błędu: 13 slotów BUY, bateria 15 kWh, SOC start 18,3%, target
+40%, moc 5 kW, sprawność 98%, load 0,1 kWh/slot. Przed poprawką pierwsze
+sloty kupowały po 0,030612 kWh. Po poprawce pierwsze trzy kupują kolejno
+1,239796; 1,239796; 0,841837 kWh, osiągając 40%. Testy chronią też mały
+poprawny zakup przy 39,8% → 40%, limit importu po load i zachowanie targetu
+po jego wczesnym osiągnięciu. Zasady wyliczania samego targetu nie zmieniają się.

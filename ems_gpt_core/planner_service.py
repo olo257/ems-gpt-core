@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_46"
+PLANNER_VERSION = "CORE_0_40_47"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -1309,6 +1309,17 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             and grid_charge > 1e-9
                             and next_unit > max(current_unit, grid_cap_unit)):
                         continue
+                    # A selected grid purchase must fill this slot's available
+                    # charge volume. Retain OFF/discharge alternatives for future
+                    # feasibility, rather than reserving headroom with token BUYs.
+                    if grid_charge > 1e-9:
+                        site_charge_input = surplus + max(0.0, max_grid_slot_kwh-deficit)
+                        full_internal = min(max_internal_charge, site_charge_input*eta_c)
+                        full_up = int(math.floor(full_internal/unit_kwh + 1e-9))
+                        full_next = min(last_unit, current_unit+full_up,
+                                        max(current_unit, grid_cap_unit))
+                        if next_unit != full_next:
+                            continue
                     grid_load = deficit
                     pv_export = max(0.0, surplus-pv_to_bat) if sell_price > 0 else 0.0
                     pv_curtail = max(0.0, surplus-pv_to_bat-pv_export)
@@ -1415,12 +1426,10 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 for future in range(index + 1, window_end + 1)
             )
         if grid_charge_allowed and not future_buy_load:
-            # Use the maximum available BUY charge when no later native load
-            # in this same window needs headroom. If a later BUY slot serves
-            # the house, retain lower SOC paths too: hitting the charge cap
-            # early can leave no positive battery-charge transition to qualify
-            # that later slot's separate grid_load, making an otherwise
-            # reachable window-end target appear unreachable.
+            # Without later household load retain the established maximal
+            # BUY frontier. With later load, keep OFF/discharge alternatives
+            # for feasibility. Every positive BUY transition was already
+            # restricted to its full available volume above.
             highest_reachable_unit = max(next_costs)
             next_costs = {highest_reachable_unit: next_costs[highest_reachable_unit]}
             next_predecessors = {

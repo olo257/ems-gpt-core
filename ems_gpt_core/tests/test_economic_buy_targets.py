@@ -111,6 +111,64 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         self.assertGreater(result['flows'][1]['grid_charge_kwh'], 0.02)
         self.assertGreater(result['flows'][1]['grid_load_kwh'], 0.0)
 
+    def test_selected_buy_is_full_even_with_future_house_load(self):
+        rows = [dict(slot_start=i, slot_end=i+1,price_buy_pln_kwh=1.2,
+                     price_sell_pln_kwh=0.0,buy_window=True,sale_window=False,
+                     forecast_load_kwh=.1,forecast_pv_total_kwh=0.0)
+                for i in range(13)]
+        targets=[40.0]*len(rows)
+        result=optimize_energy_horizon(
+            rows,18.3,15,15,.98,.98,.08,.05,5,15,[100]*len(rows),40,.1,100,
+            minimum_soc_targets=targets,required_soc_pcts=[15]*len(rows),
+            battery_sales_enabled=False,grid_charge_caps=targets,
+            minimum_grid_charge_kwh=.02)
+        selected=0
+        for flow in result['flows']:
+            if flow['grid_charge_kwh'] > 1e-9:
+                selected+=1
+                full_internal=min(1.215,(40-flow['soc_start_pct'])*15/100)
+                self.assertAlmostEqual(flow['battery_charge_internal_kwh'],full_internal)
+                self.assertLessEqual(flow['soc_end_pct'],40+1e-9)
+        self.assertGreater(selected,0)
+        self.assertAlmostEqual(result['flows'][-1]['soc_end_pct'],40)
+
+    def test_full_buy_respects_site_import_limit_after_house_load(self):
+        rows=[dict(slot_start=0,slot_end=1,price_buy_pln_kwh=1.2,
+                   price_sell_pln_kwh=0,buy_window=True,sale_window=False,
+                   forecast_load_kwh=.2,forecast_pv_total_kwh=0)]
+        result=optimize_energy_horizon(
+            rows,20,15,15,.98,.98,0,0,5,15,[100],15,.1,100,
+            minimum_soc_targets=[40],required_soc_pcts=[15],target_due_indices=set(),
+            battery_sales_enabled=False,grid_charge_caps=[40],max_grid_import_kw=2,
+            minimum_grid_charge_kwh=.02)
+        flow=result['flows'][0]
+        self.assertAlmostEqual(flow['battery_charge_internal_kwh'],.285)
+        self.assertLessEqual(flow['grid_charge_kwh']+flow['grid_load_kwh'],.5)
+
+    def test_at_target_load_uses_battery_then_next_buy_refills_to_target(self):
+        rows=[dict(slot_start=i,slot_end=i+1,price_buy_pln_kwh=1.2,
+                   price_sell_pln_kwh=0,buy_window=True,sale_window=False,
+                   forecast_load_kwh=.1,forecast_pv_total_kwh=0) for i in range(2)]
+        result=optimize_energy_horizon(
+            rows,40,15,15,.98,.98,0,0,5,15,[100]*2,40,.1,100,
+            minimum_soc_targets=[40]*2,required_soc_pcts=[15]*2,
+            battery_sales_enabled=False,grid_charge_caps=[40]*2,minimum_grid_charge_kwh=.02)
+        self.assertEqual(result['flows'][0]['grid_charge_kwh'],0)
+        self.assertGreater(result['flows'][0]['battery_to_load_kwh'],0)
+        self.assertAlmostEqual(result['flows'][1]['soc_end_pct'],40)
+        self.assertTrue(all(flow['soc_end_pct']<=40 for flow in result['flows']))
+
+    def test_small_buy_is_valid_only_for_remaining_target_headroom(self):
+        rows=[dict(slot_start=0,slot_end=1,price_buy_pln_kwh=1.2,
+                   price_sell_pln_kwh=0,buy_window=True,sale_window=False,
+                   forecast_load_kwh=.1,forecast_pv_total_kwh=0)]
+        result=optimize_energy_horizon(
+            rows,39.8,15,15,.98,.98,0,0,5,15,[100],40,.1,100,
+            minimum_soc_targets=[40],required_soc_pcts=[15],
+            battery_sales_enabled=False,grid_charge_caps=[40],minimum_grid_charge_kwh=.02)
+        self.assertAlmostEqual(result['flows'][0]['grid_charge_kwh'],.03/.98)
+        self.assertAlmostEqual(result['flows'][0]['soc_end_pct'],40)
+
     def test_buy_slot_caps_follow_the_target_instead_of_soc_100(self):
         rows = self.rows(cheap=1.15, dear=1.05)
         targets = [20.0, 25.0, 30.0, 35.0] + [15.0] * 6 + [30.0, 40.0]
