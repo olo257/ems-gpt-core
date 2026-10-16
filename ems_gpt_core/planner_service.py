@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_47"
+PLANNER_VERSION = "CORE_0_40_48"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
@@ -1212,7 +1212,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             allow_terminal_shortfall: bool = False,
                             max_grid_import_kw: float = 12.0,
                             grid_charge_caps: list[float] | None = None,
-                            minimum_grid_charge_kwh: float = 0.0) -> dict:
+                            minimum_grid_charge_kwh: float = 0.0,
+                            allow_buy_target_shortfall: bool = False) -> dict:
     """Minimize total energy cost across every available slot and SOC state."""
     if not rows:
         return {"flows": [], "objective_pln": 0.0, "soc_step_pct": soc_step_pct}
@@ -1252,6 +1253,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     # FIFO cost basis and the sale-versus-no-sale counterfactual below.
     predecessors: list[dict[int, tuple[int, dict]]] = []
     effective_target_pcts: list[float] = []
+    buy_target_shortfalls = []
     for index, row in enumerate(rows):
         buy_price = float(row.get("price_buy_pln_kwh") or 0.0)
         sell_price = float(row.get("price_sell_pln_kwh") or 0.0)
@@ -1454,10 +1456,26 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 # Do not publish a plan that silently misses the requested
                 # battery replenishment commitment.
                 best_reachable_unit = max(next_costs)
-                raise RuntimeError(
-                    f"BUY_TARGET_UNREACHABLE:slot={index}:"
-                    f"requested={requested_target_unit * step:.3f}:"
-                    f"reachable={best_reachable_unit * step:.3f}")
+                if (allow_buy_target_shortfall and not battery_sales_enabled
+                        and required_soc_pcts is not None
+                        and best_reachable_unit >= required_unit):
+                    # The charging ceiling stays unchanged. A no-sale plan may
+                    # report a missed desired charge level only while every
+                    # mandatory energy bridge remains satisfied. Never restore
+                    # token BUYs or lower the target/required SOC to pass.
+                    next_costs = {best_reachable_unit: next_costs[best_reachable_unit]}
+                    next_predecessors = {
+                        best_reachable_unit: next_predecessors[best_reachable_unit]}
+                    buy_target_shortfalls.append({
+                        "index": index, "target_soc_pct": requested_target_unit*step,
+                        "achieved_soc_pct": best_reachable_unit*step,
+                        "required_soc_pct": required_unit*step,
+                        "shortfall_pct": (requested_target_unit-best_reachable_unit)*step})
+                else:
+                    raise RuntimeError(
+                        f"BUY_TARGET_UNREACHABLE:slot={index}:"
+                        f"requested={requested_target_unit * step:.3f}:"
+                        f"reachable={best_reachable_unit * step:.3f}")
         effective_target_pcts.append(effective_target_unit * step)
         costs, predecessors = next_costs, predecessors+[next_predecessors]
     candidates = [(cost, unit) for unit, cost in costs.items() if unit >= terminal_unit]
@@ -1489,6 +1507,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 f"SOC_TRANSITION_VIOLATION:{index}:"
                 f"{soc_delta_internal}!={flow_delta_internal}")
     return {"flows": flows, "objective_pln": round(objective, 6),
+            "buy_target_shortfalls": buy_target_shortfalls,
             "soc_step_pct": step, "terminal_soc_pct": terminal_unit*step,
             "achieved_terminal_soc_pct": selected_terminal_unit*step,
             "terminal_shortfall_pct": max(
@@ -1500,6 +1519,28 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 for target in (minimum_soc_targets or [max_soc_pct] * len(rows))
             ]}
 
+
+
+def validated_buy_deadline_targets(result: dict, targets: list[float],
+                                   required: list[float],
+                                   battery_sales_enabled: bool) -> list[float]:
+    """Validate explicit no-sale shortages without rewriting charging ceilings."""
+    flows = result.get("flows") or []
+    if not len(flows) == len(targets) == len(required):
+        raise RuntimeError("BUY_SHORTFALL_VALIDATION_LENGTH_MISMATCH")
+    deadlines = list(targets)
+    for shortage in result.get("buy_target_shortfalls", []):
+        index = int(shortage["index"])
+        if not 0 <= index < len(flows):
+            raise RuntimeError("INVALID_BUY_TARGET_SHORTFALL_INDEX")
+        achieved = float(flows[index]["soc_end_pct"])
+        if (battery_sales_enabled or achieved + 1e-9 < float(required[index])
+                or abs(float(shortage["target_soc_pct"])-float(targets[index])) > .01
+                or abs(float(shortage["achieved_soc_pct"])-achieved) > .01
+                or any(float(flow.get("battery_sell_kwh") or 0) > 1e-9 for flow in flows)):
+            raise RuntimeError("UNSAFE_BUY_TARGET_SHORTFALL")
+        deadlines[index] = achieved
+    return deadlines
 
 
 def validate_physical_buy_commitments(
@@ -2567,7 +2608,8 @@ def build_planner(a: PlannerAdapters):
                         allow_terminal_shortfall=terminal_shortfall_allowed,
                         max_grid_import_kw=max_grid_import_kw,
                         grid_charge_caps=grid_charge_caps,
-                        minimum_grid_charge_kwh=flow_threshold)
+                        minimum_grid_charge_kwh=flow_threshold,
+                        allow_buy_target_shortfall=True)
                     break
                 except RuntimeError as exc:
                     # A BUY due target can be infeasible even though the
@@ -2662,6 +2704,11 @@ def build_planner(a: PlannerAdapters):
                         "daily_close": is_daily_close,
                         "reason": str(exc),
                     }, "WARNING")
+            if target_seed.get("buy_target_shortfalls"):
+                battery_sales_enabled = False
+                record_event("buy_charge_target_shortfall_safe_plan", "planner", {
+                    "run_id": run_id, "slots": target_seed["buy_target_shortfalls"],
+                    "action": "KEEP_TARGET_AND_REQUIRED_SOC_DISABLE_BATTERY_SALES"}, "WARNING")
             if target_seed.get("terminal_shortfall_pct", 0.0) > 1e-9:
                 requested_terminal_soc = terminal_soc
                 terminal_soc = float(target_seed["achieved_terminal_soc_pct"])
@@ -2701,7 +2748,8 @@ def build_planner(a: PlannerAdapters):
                             allow_terminal_shortfall=terminal_shortfall_allowed,
                             max_grid_import_kw=max_grid_import_kw,
                             grid_charge_caps=grid_charge_caps,
-                            minimum_grid_charge_kwh=flow_threshold)
+                            minimum_grid_charge_kwh=flow_threshold,
+                            allow_buy_target_shortfall=True)
                         break
                     except RuntimeError as exc:
                         slot_error_prefix = "No feasible SOC state at horizon slot "
@@ -2871,7 +2919,8 @@ def build_planner(a: PlannerAdapters):
                         allow_terminal_shortfall=terminal_shortfall_allowed,
                         max_grid_import_kw=max_grid_import_kw,
                         grid_charge_caps=grid_charge_caps,
-                        minimum_grid_charge_kwh=flow_threshold)
+                        minimum_grid_charge_kwh=flow_threshold,
+                        allow_buy_target_shortfall=True)
                     sale_assessment = assess_sale_plan_against_no_sale(
                         optimization, no_sale_optimization, horizon_rows,
                         min_margin, capacity, eta_c, technical_threshold,
@@ -2900,30 +2949,32 @@ def build_planner(a: PlannerAdapters):
                 {
                     "slot_start": str(horizon_rows[index]["slot_start"]),
                     "requested_soc_pct": round(float(charge_targets[index]), 3),
-                    "achievable_soc_pct": round(float(targets[index]), 3),
+                    "achievable_soc_pct": round(float(optimization["flows"][index]["soc_end_pct"]), 3),
                     "shortfall_pct": round(max(
-                        0.0, float(charge_targets[index]) - float(targets[index])), 3),
+                        0.0, float(charge_targets[index]) - float(optimization["flows"][index]["soc_end_pct"])), 3),
                     "planned_import_kwh": round(float(
                         optimization["flows"][index].get("grid_charge_kwh") or 0.0), 3),
                 }
                 for index in sorted(target_due_indices)
-                if float(targets[index]) + 0.01 < float(charge_targets[index])
+                if float(optimization["flows"][index]["soc_end_pct"]) + 0.01 < float(charge_targets[index])
             ]
             if unreachable_buy_targets:
                 record_event("buy_soc_target_shortfall", "planner", {
                     "slots": unreachable_buy_targets,
                     "action": "PRESERVE_SLOT_BALANCE_AND_IMPORT_CAP",
                 }, "WARNING")
+            validated_deadline_targets = validated_buy_deadline_targets(
+                optimization, targets, required_soc, battery_sales_enabled)
             target_due_indices = validate_active_soc_target_deadlines(
-                optimization, target_due_indices, targets)
+                optimization, target_due_indices, validated_deadline_targets)
             physical_buy_audit = validate_physical_buy_commitments(
                 horizon_rows, optimization["flows"], target_due_indices,
-                targets, max_kw, int(OPTIONS["slot_minutes"]),
+                validated_deadline_targets, max_kw, int(OPTIONS["slot_minutes"]),
                 capacity, eta_c)
             record_event("buy_physical_commitment_validated", "planner", {
                 "run_id": run_id, **physical_buy_audit,
             })
-            deadline_targets = list(targets)
+            deadline_targets = list(validated_deadline_targets)
             targets = planned_buy_execution_targets(
                 horizon_rows, optimization["flows"], targets, flow_threshold)
             record_event("economic_buy_targets", "planner", {

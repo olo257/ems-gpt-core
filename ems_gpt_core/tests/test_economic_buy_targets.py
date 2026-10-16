@@ -7,6 +7,7 @@ from planner_service import (
     deterministic_soc_target_contract, economic_buy_charge_caps,
     optimize_energy_horizon, planned_buy_execution_targets,
     validate_physical_buy_commitments, voluntary_load_without_charging_indices,
+    validated_buy_deadline_targets, validate_active_soc_target_deadlines,
 )
 
 
@@ -110,6 +111,49 @@ class EconomicBuyTargetsTests(unittest.TestCase):
         self.assertEqual(result['flows'][1]['soc_end_pct'], 40.0)
         self.assertGreater(result['flows'][1]['grid_charge_kwh'], 0.02)
         self.assertGreater(result['flows'][1]['grid_load_kwh'], 0.0)
+
+    def shortage_replay(self, *, allowed=True, sales=False, required_end=15):
+        # 16.10.2026: measured start 67%, evening BUY ceiling 33.3%.
+        deficits=[0.337163, 0.293873, 0.236572, 0.448578, 0.63833, 0.484972, 0.320481, 0.276097, 0.263886, 0.302336, 0.272137, 0.256359, 0.538451, 0.594371, 0.386951, 0.292991, 0.230025, 0.190658, 0.177747]
+        rows=[dict(slot_start=i,slot_end=i+1,price_buy_pln_kwh=1.5,
+                   price_sell_pln_kwh=0,buy_window=i>=17,sale_window=False,
+                   forecast_load_kwh=load,forecast_pv_total_kwh=0)
+              for i,load in enumerate(deficits)]
+        required=[15]*18+[required_end]
+        result=optimize_energy_horizon(
+            rows,67,15,15,.98,.98,.08,.05,5,15,[100]*19,15,.1,100,
+            minimum_soc_targets=[33.3]*19,required_soc_pcts=required,
+            battery_sales_enabled=sales,grid_charge_caps=[33.3]*19,
+            minimum_grid_charge_kwh=.02,allow_buy_target_shortfall=allowed)
+        return rows,required,result
+
+    def test_live_047_failure_reports_shortfall_without_lowering_target(self):
+        with self.assertRaisesRegex(RuntimeError,'requested=33.300:reachable=33.000'):
+            self.shortage_replay(allowed=False)
+        rows,required,result=self.shortage_replay()
+        self.assertAlmostEqual(result['flows'][-1]['soc_end_pct'],33.0)
+        self.assertAlmostEqual(result['effective_target_pcts'][-1],33.3)
+        self.assertAlmostEqual(result['buy_target_shortfalls'][0]['shortfall_pct'],.3)
+        deadlines=validated_buy_deadline_targets(result,result['effective_target_pcts'],required,False)
+        validate_active_soc_target_deadlines(result,{18},deadlines)
+        validate_physical_buy_commitments(rows,result['flows'],{18},deadlines,5,15,15,.98)
+        self.assertTrue(all(flow['soc_end_pct']>=floor for flow,floor in zip(result['flows'],required)))
+        self.assertTrue(all(flow['battery_sell_kwh']==0 for flow in result['flows']))
+        # The selected purchase still uses the full physically available volume.
+        self.assertAlmostEqual(result['flows'][-1]['grid_charge_kwh'],1.215/.98)
+
+    def test_shortage_cannot_bypass_mandatory_bridge(self):
+        with self.assertRaises(RuntimeError):
+            self.shortage_replay(required_end=33.3)
+
+    def test_shortage_is_forbidden_when_battery_sales_enabled(self):
+        with self.assertRaisesRegex(RuntimeError,'BUY_TARGET_UNREACHABLE'):
+            self.shortage_replay(sales=True)
+        rows,required,result=self.shortage_replay()
+        with self.assertRaisesRegex(RuntimeError,'UNSAFE_BUY_TARGET_SHORTFALL'):
+            validated_buy_deadline_targets(result,result['effective_target_pcts'],required,True)
+        with self.assertRaisesRegex(RuntimeError,'UNSAFE_BUY_TARGET_SHORTFALL'):
+            validated_buy_deadline_targets(result,result['effective_target_pcts'],[34]*19,False)
 
     def test_selected_buy_is_full_even_with_future_house_load(self):
         rows = [dict(slot_start=i, slot_end=i+1,price_buy_pln_kwh=1.2,

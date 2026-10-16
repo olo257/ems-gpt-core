@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.47. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.48. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -597,3 +597,29 @@ sloty kupowały po 0,030612 kWh. Po poprawce pierwsze trzy kupują kolejno
 1,239796; 1,239796; 0,841837 kWh, osiągając 40%. Testy chronią też mały
 poprawny zakup przy 39,8% → 40%, limit importu po load i zachowanie targetu
 po jego wczesnym osiągnięciu. Zasady wyliczania samego targetu nie zmieniają się.
+
+## 0.40.48 — zgłoszenie nieosiągniętego celu BUY
+
+Pełny wolumen dodatniego zakupu i niezmieniony dynamiczny sufit BUY mogą
+nie pozwolić osiągnąć dokładnie żądanego SOC na końcu okna w dyskretnej
+symulacji. Target ładowania nie jest wówczas automatycznie obniżany.
+
+Opcjonalna ścieżka `allow_buy_target_shortfall` działa wyłącznie dla wariantu
+bez sprzedaży baterii i z jawną, spełnioną tablicą obowiązkowego SOC required.
+Na końcu niedoszacowanego okna wybiera najwyższy osiągalny stan, zapisując
+żądany target, rzeczywisty wynik, minimum i różnicę. Wszystkie dalsze sloty
+muszą nadal spełnić swoje minima i wymagania końca doby. Jeśli to niemożliwe,
+plan jest odrzucany. Samo zaznaczenie opcji nie znosi żadnego minimum.
+
+Stwierdzony niedobór w przebiegu wstępnym wyłącza sprzedaż baterii w dalszych
+przebiegach. Audyt `buy_charge_target_shortfall_safe_plan` zapisuje powód;
+`buy_soc_target_shortfall` pokazuje ostateczny wynik. Funkcja
+`validated_buy_deadline_targets` dopuszcza walidację osiągniętego wyniku tylko
+po sprawdzeniu braku sprzedaży, spełnienia minimum oraz zgodności raportu
+z rzeczywistymi przepływami. Sufit `soc_charge_target_pct` i wartości targetów
+wykonawczych pozostają niezmienione.
+
+Jest to jawna zmiana zasad publikacji niepełnego celu BUY: wcześniejsze
+odrzucenie całego planu pozostaje dla niedoboru obowiązkowego SOC, lecz nie
+dla samego nieosiągnięcia wyższego celu ładowania przy spełnionych minimach.
+Publikację tej zmiany zatwierdził użytkownik 16.10.2026.
