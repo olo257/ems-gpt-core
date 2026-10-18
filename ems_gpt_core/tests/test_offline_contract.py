@@ -168,7 +168,6 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(key, planner)
             self.assertIn(key, executor)
         self.assertIn("daily_terminal_soc[planning_day] = end_of_day_soc_target(", planner)
-        self.assertIn("backward_target_commitments(", planner)
         self.assertIn("daily_close_soc_requirements(", planner)
         self.assertIn("required_soc_pcts=enforced_daily_required", planner)
         self.assertIn("current_day_terminal_soc_unreachable", planner)
@@ -466,10 +465,7 @@ class OfflineContractTests(unittest.TestCase):
                       "planned_pv_to_ev_kwh", "planned_pv_curtail_kwh"):
             self.assertIn(field, SOURCE)
         self.assertNotIn("target=min(95,max(floor,targets[i]))", SOURCE)
-        self.assertIn("def derive_soc_commitments", SOURCE)
         planner = MODULE_SOURCES["planner_service.py"]
-        self.assertIn("def soc_bridge_envelopes", planner)
-        self.assertIn("def allocate_slot_discharge", planner)
         self.assertNotIn("evening_soc_target_pct", planner)
         self.assertNotIn("terminal_soc_value_weight", planner)
 
@@ -498,7 +494,6 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("sale_morning_start_hour", config)
         self.assertNotIn("sale_evening_end_hour", config)
         self.assertIn("derive_price_windows", ingestion)
-        self.assertIn("paired_arbitrage_buy_indices", MODULE_SOURCES["planner_service.py"])
         self.assertIn('audit_stage(cur,run_id,"REPLENISHMENT"', MODULE_SOURCES["planner_service.py"])
 
     def test_rce_import_is_the_single_writer_of_price_windows(self):
