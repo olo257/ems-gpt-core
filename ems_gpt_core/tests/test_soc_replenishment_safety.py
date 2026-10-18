@@ -11,7 +11,7 @@ from planner_service import (
     current_soc_for_replan,
     deterministic_soc_target_contract, preserve_target_contract_after_reachability,
     replenishment_soc_requirements, recoverable_soc_requirements,
-    target_commitment_required_fallback, effective_required_soc_for_dispatch,
+    effective_required_soc_for_dispatch,
     validate_recoverable_soc_requirements,
 )
 
@@ -332,7 +332,7 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
             eta_c=0.9, eta_d=0.95, max_power_kw=5.0,
             slot_minutes=15, soc_step_pct=0.1)
         safety_floor = reachability["required_soc_pcts"]
-        dispatch_floor = target_commitment_required_fallback(safety_floor)
+        dispatch_floor = list(safety_floor)
         accepted_floor = effective_required_soc_for_dispatch(
             safety_floor, dispatch_floor)
         plan = self.optimize(
