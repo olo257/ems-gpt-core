@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
+
+from planner_validation_service import strict_database_bool
 
 
 def historical_hp_power_kw(heating_rows: list[dict], planning_day,
@@ -116,3 +118,54 @@ def hp_temperature_eligible(below_threshold_sample_count: int,
                             minimum_samples: int = 3) -> bool:
     """Qualify HP heating after enough actual below-threshold readings."""
     return int(below_threshold_sample_count) >= int(minimum_samples)
+
+
+def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[list[bool], list[dict]]:
+    """Count only known published HP windows; unknown history grants no heat credit."""
+    cur.execute("""SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots
+      WHERE slot_start>=%s AND slot_start<%s ORDER BY slot_start""",
+      (day_start, cutoff))
+    states, unknown = [], []
+    for row in cur.fetchall():
+        # Missing publication metadata is also legacy/unknown history. Never
+        # use an unpublished window (even a stored 1) as completed heating.
+        published = row["plan_published"]
+        value = row["heat_pump_window"]
+        if published is None or not strict_database_bool(published, "plan_published"):
+            states.append(False)
+            unknown.append({"slot_start": str(row["slot_start"]), "reason": "UNPUBLISHED"})
+        elif value is None:
+            states.append(False)
+            unknown.append({"slot_start": str(row["slot_start"]), "reason": "MISSING_HP_WINDOW"})
+        else:
+            states.append(strict_database_bool(value, "heat_pump_window"))
+    return states, unknown
+
+
+def hp_heating_window_indices(rows: list[dict], day_value) -> set[int]:
+    """Return slots allowed for automatic Heat+DHW on one local day."""
+    day_start = datetime.combine(day_value, datetime.min.time())
+    earliest_start = day_start + timedelta(hours=7)
+    midday = day_start + timedelta(hours=12)
+    latest_end = day_start + timedelta(hours=19)
+    morning_sell_ends = [
+        row.get("slot_end") or (row["slot_start"] + timedelta(minutes=15))
+        for row in rows
+        if row["slot_start"] < midday
+        and strict_database_bool(row.get("sale_window", False), "sale_window")
+    ]
+    evening_sell_starts = [
+        row["slot_start"] for row in rows
+        if midday <= row["slot_start"] < latest_end
+        and strict_database_bool(row.get("sale_window", False), "sale_window")
+    ]
+    window_start = max(earliest_start, max(morning_sell_ends)) \
+        if morning_sell_ends else earliest_start
+    window_end = min(latest_end, min(evening_sell_starts)) \
+        if evening_sell_starts else latest_end
+    return {
+        index for index, row in enumerate(rows)
+        if window_start <= row["slot_start"] < window_end
+        and not strict_database_bool(row.get("sale_window", False), "sale_window")
+    }
+
