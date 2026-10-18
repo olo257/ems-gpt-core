@@ -1634,7 +1634,13 @@ def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], require
         on_cost = grid_energy * buy_price + pv_cover * sell_price
         for state, (cost, selected) in states.items():
             delivered, current_phase, current_run, current_gap = state
-            choices = [False] if delivered >= required_slots else [False, True]
+            # A cycle already running at the replan boundary is a
+            # commitment: keep it on until its minimum duration is met,
+            # even when the daily heating requirement was already counted.
+            if current_phase == "ON" and current_run < min_cycle_slots:
+                choices = [True]
+            else:
+                choices = [False] if delivered >= required_slots else [False, True]
             for turn_on in choices:
                 if turn_on:
                     if current_phase == "GAP" and current_gap < min_gap_slots:
