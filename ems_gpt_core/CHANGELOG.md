@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.51 — wydzielenie optymalizacji pompy ciepła
+
+- Przeniesiono prognozę mocy historycznej HP, optymalizator cykli i kwalifikację temperatury do osobnego modułu `planner_hp_service.py`.
+- `planner_service.py` zachowuje te same importy publiczne i dalej odpowiada za złożenie planu.
+- Zmiana strukturalna; zachowanie planera pozostaje bez zmian.
+
 ## 0.40.50 — dokończenie cyklu HP po replanningu
 
 - Replan zachowuje minimalny czas pracy cyklu HP już rozpoczętego przed granicą horyzontu, nawet gdy dzienny wymóg ogrzewania został już policzony.
