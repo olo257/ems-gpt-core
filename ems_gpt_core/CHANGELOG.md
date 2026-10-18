@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.50 — dokończenie cyklu HP po replanningu
+
+- Replan zachowuje minimalny czas pracy cyklu HP już rozpoczętego przed granicą horyzontu, nawet gdy dzienny wymóg ogrzewania został już policzony.
+- Dodano regresję dla spełnionego limitu dziennego i niedokończonego cyklu.
+- Podział modułu planera na części funkcjonalne pozostaje kolejnym etapem.
+
 ## 0.40.49 — porządkowanie kodu nieużywanego w runtime
 
 - Usunięto 11 helperów planera bez odwołań w ścieżce produkcyjnej (około 415 niepustych linii).
