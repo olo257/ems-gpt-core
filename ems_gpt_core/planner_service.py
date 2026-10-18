@@ -23,6 +23,7 @@ from planner_validation_service import (
     validate_rce_market_window,
 )
 from planner_dispatch_service import (
+    build_soc_contracts,
     daily_close_soc_requirements,
     deterministic_soc_target_contract,
     economic_buy_charge_caps,
@@ -45,6 +46,11 @@ from planner_economics_service import (
     tou_sale_safety_floors,
 )
 from planner_soc_service import (
+    historical_terminal_soc,
+    terminal_soc_recovery,
+    current_soc_for_replan,
+    relax_soc_requirement_to_reachable,
+    effective_required_soc_for_dispatch,
     _soc_reachability_profile,
     _unavoidable_grid_load_allowed,
     recoverable_soc_requirements,
@@ -54,98 +60,7 @@ from planner_soc_service import (
 
 PLANNER_VERSION = "CORE_0_40_51"
 
-def historical_terminal_soc(closing_rows: list[dict], terminal_day,
-                            weights_pct: dict[int, float], fallback_pct: float) -> dict:
-    """Forecast only the end-of-day SOC from completed historical closes.
-
-    The 7/14/28-day windows intentionally overlap.  Missing windows are
-    removed and the remaining configured weights are normalized.  This value
-    is a terminal boundary only; slot targets are still derived by the
-    backward energy-balance pass.
-    """
-    means: dict[int, float | None] = {}
-    samples: dict[int, int] = {}
-    for horizon in (7, 14, 28):
-        values = []
-        for row in closing_rows:
-            day = row.get("local_day") or row.get("day_date")
-            if isinstance(day, str):
-                day = datetime.strptime(day[:10], "%Y-%m-%d").date()
-            age = (terminal_day - day).days if day is not None else 0
-            if 1 <= age <= horizon and row.get("soc_end_pct") is not None:
-                values.append(float(row["soc_end_pct"]))
-        samples[horizon] = len(values)
-        means[horizon] = sum(values) / len(values) if values else None
-    available_weight = sum(
-        max(0.0, float(weights_pct.get(horizon, 0.0)))
-        for horizon in (7, 14, 28) if means[horizon] is not None
-    )
-    if available_weight <= 0.0:
-        forecast = float(fallback_pct)
-        source = "FALLBACK_RESERVE"
-    else:
-        forecast = sum(
-            float(means[horizon]) * max(0.0, float(weights_pct.get(horizon, 0.0)))
-            for horizon in (7, 14, 28) if means[horizon] is not None
-        ) / available_weight
-        source = "WEIGHTED_ACTUAL_CLOSE_7_14_28D"
-    return {"soc_pct": forecast, "means": means, "samples": samples,
-            "available_weight_pct": available_weight, "source": source}
-
-def terminal_soc_recovery(requested_soc_pct: float, safety_soc_pct: float,
-                          battery_sales_enabled: bool,
-                          current_day: bool = False) -> tuple[str, float]:
-    """Preserve today's historical close and allow an explicit best-effort shortfall.
-
-    The independent replenishment/safety SOC remains a hard floor. For the
-    current day, an infeasible historical close must not be silently relaxed
-    to the technical reserve: the optimizer should select the highest
-    physically reachable terminal SOC and report the shortfall.
-    """
-    if battery_sales_enabled:
-        return "DISABLE_BATTERY_SALES", float(requested_soc_pct)
-    requested = float(requested_soc_pct)
-    safety = float(safety_soc_pct)
-    if requested > safety + 1e-9:
-        if current_day:
-            return "ALLOW_TERMINAL_SHORTFALL", requested
-        return "RELAX_HISTORICAL_TARGET", safety
-    return "FAIL", requested
-
-def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
-                        capacity_kwh: float, reserve_pct: float,
-                        eta_c: float, eta_d: float,
-                        uncertainty_weight: float, terminal_soc_pct: float,
-                        target_cap_pct: float,
-                        soc_step_pct: float = 0.25,
-                        daily_terminal_soc_pcts: list[float] | None = None) -> dict:
-    """Build independent required, charge-target and sale contracts.
-
-    The economic pass supplies an exact grid-energy allocation.  The backward
-    pass subtracts only that allocated energy, never the theoretical capacity
-    of a BUY window.  Therefore a replenishment boundary cannot reset an
-    unfunded requirement to the technical reserve.
-    """
-    if len(rows) != len(economic_flows):
-        raise ValueError("SOC_CONTRACT_FLOW_LENGTH_MISMATCH")
-    if not rows:
-        return {"required": [], "charge_targets": [], "due": [],
-                "source": [], "reserved_pv_kwh": [], "buy_due_indices": set()}
-    capacity = max(0.001, float(capacity_kwh))
-    reserve = max(0.0, min(100.0, float(reserve_pct)))
-    cap = max(reserve, min(100.0, float(target_cap_pct)))
-    reserve_kwh = capacity * reserve / 100.0
-    required_after = capacity * max(
-        reserve, min(cap, float(terminal_soc_pct))) / 100.0
-    charge_efficiency = max(0.01, float(eta_c))
-    discharge_efficiency = max(0.01, float(eta_d))
-    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
-    step = max(0.001, float(soc_step_pct))
-    required = [reserve] * len(rows)
-    required_after_slot = [reserve] * len(rows)
-    charge_targets = [reserve] * len(rows)
-    due = [None] * len(rows)
-    source = ["HORIZON"] * len(rows)
+ZON"] * len(rows)
     reserved_pv = [0.0] * len(rows)
 
     selected_buy = {
@@ -238,34 +153,6 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
             "due": due, "source": source, "reserved_pv_kwh": reserved_pv,
             "buy_due_indices": buy_due_indices,
             "selected_buy_indices": selected_buy}
-
-def current_soc_for_replan(setting: Callable) -> float:
-    """Read fresh battery SOC from Home Assistant for this planner invocation."""
-    soc = setting("sensor.inverter_battery", math.nan)
-    if not math.isfinite(soc) or not 0.0 <= soc <= 100.0:
-        raise RuntimeError(f"INVALID_INITIAL_SOC:sensor.inverter_battery={soc!r}")
-    return float(soc)
-
-def relax_soc_requirement_to_reachable(requested_soc_pct: float,
-                                        reachable_soc_pct: float,
-                                        reserve_pct: float) -> float:
-    """Return the best feasible floor without crossing the technical reserve."""
-    reserve = max(0.0, min(100.0, float(reserve_pct)))
-    requested = max(reserve, min(100.0, float(requested_soc_pct)))
-    reachable = max(reserve, min(100.0, float(reachable_soc_pct)))
-    return max(reserve, min(requested, reachable))
-
-def effective_required_soc_for_dispatch(
-        safety_required_soc_pcts: list[float],
-        dispatch_required_soc_pcts: list[float]) -> list[float]:
-    """Validate against the effective optimizer floors without waiving safety."""
-    if len(safety_required_soc_pcts) != len(dispatch_required_soc_pcts):
-        raise ValueError("DISPATCH_SOC_REQUIREMENT_LENGTH_MISMATCH")
-    return [
-        max(float(safety), float(dispatch))
-        for safety, dispatch in zip(
-            safety_required_soc_pcts, dispatch_required_soc_pcts)
-    ]
 
 @dataclass(frozen=True)
 class PlannerAdapters:
