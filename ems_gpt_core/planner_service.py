@@ -20,6 +20,7 @@ from planner_hp_service import (
 from planner_validation_service import strict_database_bool
 from planner_soc_service import (
     _soc_reachability_profile,
+    _unavoidable_grid_load_allowed,
     recoverable_soc_requirements,
     reachable_soc_ceiling_pcts,
     validate_recoverable_soc_requirements,
