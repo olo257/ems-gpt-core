@@ -22,7 +22,7 @@ PLANNER_CONTRACT = (ROOT / "PLANNER_CONTRACT.md").read_text(encoding="utf-8")
 
 class OfflineContractTests(unittest.TestCase):
     def test_soc_reachability_is_joint_and_measured_soc_is_never_clamped(self):
-        planner = MODULE_SOURCES["planner_service.py"]
+        planner = MODULE_SOURCES["planner_soc_service.py"]
         self.assertIn("def _soc_reachability_profile(", planner)
         self.assertIn("feasible_soc_path_pcts", planner)
         self.assertIn("unreachable_indices", planner)
@@ -366,7 +366,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("TIME(slot_start)", materializations)
         self.assertIn("MODIFY COLUMN {column} TIME NULL", schema)
         self.assertIn("sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_chlodzenie_pobrana", APP_SOURCE)
-        self.assertIn("AVG(COALESCE(actual_dhw_consumed_kwh,0)) mean_dhw_kwh", MODULE_SOURCES["planner_service.py"])
+        self.assertIn("AVG(COALESCE(actual_dhw_consumed_kwh,0)) mean_dhw_kwh", MODULE_SOURCES["planner_hp_service.py"])
         self.assertIn("historical_dhw_kwh", MODULE_SOURCES["planner_service.py"])
 
     def test_app_status_card_uses_backend_start_time(self):
@@ -629,10 +629,11 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_hp_planning_is_independent_from_ppd_and_execution_overrides(self):
         planner = MODULE_SOURCES["planner_service.py"]
+        hp = MODULE_SOURCES["planner_hp_service.py"]
         self.assertNotIn("ems_gpt_core_process_decisions", planner)
         self.assertNotIn("ems_gpt_core_process_overrides", planner)
-        self.assertIn("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots", planner)
-        hp_history = planner[planner.index("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots"):]
+        self.assertIn("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots", hp)
+        hp_history = hp[hp.index("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots"):]
         hp_history = hp_history[:hp_history.index("ORDER BY slot_start")]
         self.assertNotIn("actual_recorded_at", hp_history)
 
@@ -669,10 +670,11 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_automatic_heat_dhw_is_restricted_to_daytime_window(self):
         planner = MODULE_SOURCES["planner_service.py"]
+        hp = MODULE_SOURCES["planner_hp_service.py"]
         self.assertIn("hp_heating_window_indices", planner)
         self.assertIn('0 if c == "heat_pump_window" else row.get(c)', planner)
-        self.assertIn('if window_start <= row["slot_start"] < window_end', planner)
-        self.assertIn("allowed_rows", planner)
+        self.assertIn('if window_start <= row["slot_start"] < window_end', hp)
+        self.assertIn("allowed_rows", hp)
 
     def test_hp_cost_replan_cycle_contract(self):
         for marker in ("hp_min_heating_hours", "hp_min_cycle_hours",
@@ -718,8 +720,9 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_nearby_pv_is_accounted_without_buy_path_feedback(self):
         planner = MODULE_SOURCES["planner_service.py"]
+        dispatch = MODULE_SOURCES["planner_dispatch_service.py"]
         self.assertIn("build_soc_contracts", planner)
-        self.assertIn("used_pv", planner)
+        self.assertIn("used_pv", dispatch)
         self.assertNotIn("SOC_TARGET_PATH_OSCILLATION", planner)
 
     def test_manual_control_origin_is_recorded(self):
