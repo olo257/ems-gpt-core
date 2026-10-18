@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.49 — porządkowanie kodu nieużywanego w runtime
+
+- Usunięto 11 helperów planera bez odwołań w ścieżce produkcyjnej (około 415 niepustych linii).
+- Usunięto testy wywołujące wyłącznie te helpery; zachowano pozostałe testy planera i kontrakty produkcyjne.
+- Bez zmiany algorytmu, wersji planera ani zachowania runtime.
+
+
 ## 0.40.48 — jawny niedobór celu BUY przy spełnionym minimum
 
 - Naprawiono odrzucenie planu 0.40.47: 16.10, slot 21:45,

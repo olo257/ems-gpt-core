@@ -10,21 +10,13 @@ sys.path.insert(0, str(ROOT))
 
 from planner_service import (
     assess_sale_plan_against_no_sale,
-    allocate_slot_discharge,
-    backward_target_commitments,
     build_soc_contracts,
     deterministic_soc_target_contract,
     replenishment_soc_requirements,
     validate_recoverable_soc_requirements,
-    target_commitment_required_fallback,
-    target_commitment_safety_fallback,
     battery_sale_economics,
-    cheapest_recovery_indices,
     economic_sell_indices,
-    paired_arbitrage_buy_indices,
     optimize_energy_horizon,
-    pv_first_target_caps,
-    next_replenishment_prices,
     planning_tou_programs,
     strict_database_bool,
     validate_rce_market_window,
@@ -32,42 +24,12 @@ from planner_service import (
     terminal_soc_recovery,
     historical_hp_power_kw,
     hp_heating_window_indices,
-    bridge_soc_commitments,
     daily_close_soc_requirements,
-    derive_soc_commitments,
-    soc_bridge_envelopes,
 )
 from ingestion_service import derive_price_windows
 
 
 class PairedArbitrageTests(unittest.TestCase):
-    def test_target_commitment_fallback_keeps_hard_soc_and_drops_optional_buy_deadlines(self):
-        import_caps = [35.0, 40.0, 40.0]
-        safety_required = [30.0, 35.0, 35.0]
-        targets, hard_indices, due_indices = target_commitment_safety_fallback(import_caps)
-
-        self.assertEqual(targets, import_caps)
-        self.assertIsNot(targets, import_caps)
-        self.assertEqual(hard_indices, set())
-        self.assertEqual(due_indices, set())
-        self.assertEqual(target_commitment_required_fallback(safety_required), safety_required)
-
-        # A relaxed target is still a grid-import ceiling; PV can charge above
-        # it, but a grid BUY cannot exceed the preserved required SOC.
-        rows = [{"price_buy_pln_kwh": 1.0, "price_sell_pln_kwh": 0.0,
-                 "buy_window": index < 2, "sale_window": False,
-                 "forecast_load_kwh": 0.0, "forecast_pv_total_kwh": 0.0}
-                for index in range(3)]
-        result = optimize_energy_horizon(
-            rows, 30.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * 3, 35.0, 0.25, 100.0,
-            targets, hard_indices, due_indices, safety_required,
-            battery_sales_enabled=False)
-        for index, flow in enumerate(result["flows"]):
-            self.assertGreaterEqual(flow["soc_end_pct"] + 1e-9, safety_required[index])
-            if flow["grid_charge_kwh"] > 1e-9:
-                self.assertLessEqual(flow["soc_end_pct"], targets[index] + 1e-9)
-
     def test_single_buy_target_is_derived_from_daily_close_and_remaining_load(self):
         day = date(2026, 10, 10)
         starts = [datetime(2026, 10, 10, 12, 0) + timedelta(minutes=15*i)
@@ -601,38 +563,6 @@ class PairedArbitrageTests(unittest.TestCase):
             for flow, required in zip(result["flows"], [25.0, 24.0, 20.0])
         ))
 
-    def test_pv_first_caps_expensive_buy_displacing_cheap_pv_export(self):
-        rows=[]; flows=[]
-        for index in range(8):
-            rows.append({
-                "buy_window": index < 2,
-                "forecast_load_kwh": 0.10,
-                "forecast_heat_pump_load_kwh": 0.0,
-                "forecast_pv_total_kwh": 1.0 if index >= 5 else 0.0,
-                "price_buy_pln_kwh": 1.35,
-                "price_sell_pln_kwh": 0.12,
-            })
-            flows.append({
-                "soc_end_pct": [35,45,43,41,39,45,50,55][index],
-                "grid_charge_kwh": 1.0 if index < 2 else 0.0,
-                "pv_export_kwh": 0.8 if index >= 5 else 0.0,
-            })
-        caps=pv_first_target_caps(rows,flows,{0,1},15.0,15.0,0.90,0.05)
-        self.assertIn(1,caps)
-        self.assertLess(caps[1],flows[1]["soc_end_pct"])
-
-    def test_pv_first_does_not_cap_energy_needed_to_reach_pv(self):
-        rows=[{"buy_window":i==0,"forecast_load_kwh":0.2,
-               "forecast_heat_pump_load_kwh":0.0,
-               "forecast_pv_total_kwh":1.0 if i==3 else 0.0,
-               "price_buy_pln_kwh":1.1,"price_sell_pln_kwh":0.1}
-              for i in range(4)]
-        flows=[{"soc_end_pct":15.0,"grid_charge_kwh":1.0,"pv_export_kwh":0.0},
-               {"soc_end_pct":15.0,"grid_charge_kwh":0.0,"pv_export_kwh":0.0},
-               {"soc_end_pct":15.0,"grid_charge_kwh":0.0,"pv_export_kwh":0.0},
-               {"soc_end_pct":20.0,"grid_charge_kwh":0.0,"pv_export_kwh":0.5}]
-        self.assertEqual(pv_first_target_caps(rows,flows,{0},15,15,.9,.05),{})
-
     def test_historical_terminal_soc_uses_overlapping_weighted_windows(self):
         terminal_day = date(2026, 9, 18)
         rows = []
@@ -652,223 +582,6 @@ class PairedArbitrageTests(unittest.TestCase):
                                          {7: 50.0, 14: 25.0, 28: 25.0}, 15.0)
         self.assertEqual(result["soc_pct"], 15.0)
         self.assertEqual(result["source"], "FALLBACK_RESERVE")
-
-    def test_flexible_surplus_uses_nearest_buy_window_opportunity_cost(self):
-        rows = [
-            {"buy_window": False, "price_buy_pln_kwh": 9.0},
-            {"buy_window": True, "price_buy_pln_kwh": 2.0},
-            {"buy_window": True, "price_buy_pln_kwh": 1.5},
-            {"buy_window": False, "price_buy_pln_kwh": 9.0},
-            {"buy_window": True, "price_buy_pln_kwh": 0.5},
-        ]
-        prices = next_replenishment_prices(rows)
-        self.assertEqual(prices[0], 1.5)
-        self.assertEqual(prices[1], 1.5)
-        self.assertEqual(prices[2], 0.5)
-        self.assertEqual(prices[3], 0.5)
-        self.assertIsNone(prices[4])
-
-    def test_backward_target_reserves_future_pv_before_flexible_surplus(self):
-        rows = [
-            {"buy_window": False, "forecast_load_kwh": 0.0,
-             "forecast_pv_total_kwh": 0.0, "slot_start": index,
-             "slot_end": index + 1}
-            for index in range(3)
-        ]
-        rows[1]["forecast_pv_total_kwh"] = 1.0
-        rows[2]["forecast_load_kwh"] = 0.5
-
-        contract = backward_target_commitments(
-            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0)
-
-        self.assertEqual(contract["targets"][0], contract["targets"][1])
-        self.assertGreater(contract["targets"][1], 15.0)
-        self.assertGreater(contract["reserved_pv_kwh"][1], 0.5)
-        self.assertEqual(contract["source"][0], "PV")
-
-    def test_early_pv_in_same_replenishment_window_inherits_closing_target(self):
-        rows = [
-            {"buy_window": False, "forecast_load_kwh": 0.0,
-             "forecast_pv_total_kwh": 0.0, "slot_start": index,
-             "slot_end": index + 1}
-            for index in range(4)
-        ]
-        rows[1]["forecast_pv_total_kwh"] = 0.20
-        rows[2]["forecast_pv_total_kwh"] = 1.00
-        rows[3]["forecast_load_kwh"] = 0.50
-
-        contract = backward_target_commitments(
-            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0)
-
-        self.assertEqual(contract["source"][1], "PV")
-        closing = next(i for i, row in enumerate(rows)
-                       if row["slot_end"] == contract["due"][1])
-        self.assertGreater(contract["targets"][1], 15.0)
-        self.assertEqual(contract["targets"][1], contract["targets"][closing])
-
-    def test_continuous_pv_window_uses_its_largest_target_from_first_light(self):
-        rows = [
-            {"buy_window": False, "forecast_load_kwh": 0.10,
-             "forecast_pv_total_kwh": 0.0, "slot_start": index,
-             "slot_end": index + 1}
-            for index in range(10)
-        ]
-        for index, pv in enumerate((0.02, 0.20, 0.50, 0.80, 0.70, 0.30), 2):
-            rows[index]["forecast_pv_total_kwh"] = pv
-        rows[8]["forecast_load_kwh"] = 1.0
-        rows[9]["forecast_load_kwh"] = 1.0
-
-        contract = backward_target_commitments(
-            rows, 15.0, 15.0, 0.90, 0.95, 1.0, 100.0, 30.0)
-
-        daylight_targets = contract["targets"][2:8]
-        self.assertGreater(daylight_targets[0], 15.0)
-        self.assertEqual(len(set(daylight_targets)), 1)
-
-    def test_backward_target_buy_boundary_covers_later_load(self):
-        rows = [
-            {"buy_window": True, "forecast_load_kwh": 0.0,
-             "forecast_pv_total_kwh": 0.0, "slot_start": 0, "slot_end": 1},
-            {"buy_window": False, "forecast_load_kwh": 0.95,
-             "forecast_pv_total_kwh": 0.0, "slot_start": 1, "slot_end": 2},
-        ]
-        contract = backward_target_commitments(
-            rows, 15.0, 15.0, 1.0, 0.95, 0.0, 100.0, 15.0)
-
-        self.assertEqual(contract["targets"][0], 21.75)
-        self.assertEqual(contract["targets"][1], 15.0)
-
-    def test_selected_buy_closes_earlier_energy_bridge(self):
-        rows = [
-            {"buy_window": index == 2, "forecast_load_kwh": 0.30,
-             "forecast_pv_total_kwh": 0.0, "slot_start": index,
-             "slot_end": index + 1}
-            for index in range(6)
-        ]
-        contract = backward_target_commitments(
-            rows, 15.0, 15.0, 1.0, 1.0, 0.0, 100.0, 15.0,
-            0.25, {2})
-
-        self.assertEqual(contract["source"][1], "BUY")
-        self.assertEqual(contract["due"][1], 3)
-        # BUY closes the earlier energy bridge, while its target remains the
-        # charge ceiling on the approach so preceding PV can displace import.
-        self.assertEqual(contract["targets"][1], contract["targets"][2])
-
-    def test_sufficient_pv_closes_bridge_before_later_load(self):
-        rows = [
-            {"buy_window": False, "forecast_load_kwh": 0.30,
-             "forecast_pv_total_kwh": 0.0, "slot_start": index,
-             "slot_end": index + 1}
-            for index in range(5)
-        ]
-        rows[2]["forecast_load_kwh"] = 0.0
-        rows[2]["forecast_pv_total_kwh"] = 1.20
-        contract = backward_target_commitments(
-            rows, 15.0, 15.0, 1.0, 1.0, 0.0, 100.0, 15.0)
-
-        self.assertEqual(contract["source"][1], "PV")
-        self.assertEqual(contract["due"][1], 3)
-        self.assertEqual(contract["targets"][1], contract["targets"][2])
-        self.assertGreater(contract["targets"][1], 15.0)
-
-    def test_buy_boundary_keeps_requirement_above_its_power_limit(self):
-        rows = [
-            {"buy_window": index == 2, "forecast_load_kwh": 0.0,
-             "forecast_pv_total_kwh": 0.0, "slot_start": index,
-             "slot_end": index + 1}
-            for index in range(5)
-        ]
-        rows[3]["forecast_load_kwh"] = 1.50
-        rows[4]["forecast_load_kwh"] = 1.50
-        contract = backward_target_commitments(
-            rows, 15.0, 15.0, 1.0, 1.0, 0.0, 100.0, 15.0,
-            0.25, {2}, 5.0, 15)
-
-        self.assertGreater(contract["targets"][1], 15.0)
-        self.assertEqual(contract["due"][1], 3)
-
-    def test_every_buy_window_uses_full_volume_without_resetting_prior_target(self):
-        rows = []
-        for index in range(16):
-            rows.append({
-                "price_buy_pln_kwh": 0.50 if index < 4 else (4.00 if index == 8 else 3.00),
-                "price_sell_pln_kwh": 0.0,
-                "buy_window": index < 4 or index == 8,
-                "sale_window": False,
-                "forecast_load_kwh": 0.25 if index >= 4 else 0.0,
-                "forecast_pv_total_kwh": 0.0,
-                "slot_start": index,
-                "slot_end": index + 1,
-            })
-        seed = optimize_energy_horizon(
-            rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * len(rows), 15.0, 0.25, 100.0)
-        selected = {i for i, flow in enumerate(seed["flows"])
-                    if flow["grid_charge_kwh"] > 0.02}
-        contract = backward_target_commitments(
-            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0,
-            0.25, selected)
-        due = {i for i in selected if i + 1 not in selected}
-        result = optimize_energy_horizon(
-            rows, 15.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * len(rows), 15.0, 0.25, 100.0,
-            contract["targets"], due, due,
-            grid_charge_caps=[100.0] * len(rows))
-
-        for i, flow in enumerate(result["flows"]):
-            if rows[i]["buy_window"]:
-                self.assertLessEqual(flow["soc_end_pct"],
-                                     result["effective_target_pcts"][i] + 1e-7)
-        self.assertGreater(sum(result["flows"][i]["grid_charge_kwh"] for i in range(4)), 0.0)
-        self.assertLessEqual(result["flows"][8]["grid_charge_kwh"], 1.25)
-        self.assertGreater(contract["targets"][3], contract["targets"][8])
-
-    def test_partial_pv_reduces_target_but_does_not_erase_remaining_need(self):
-        rows = [
-            {"buy_window": index == 0, "forecast_load_kwh": 0.30,
-             "forecast_pv_total_kwh": 0.0, "slot_start": index,
-             "slot_end": index + 1}
-            for index in range(6)
-        ]
-        rows[3]["forecast_pv_total_kwh"] = 0.60
-        no_pv = [dict(row, forecast_pv_total_kwh=0.0) for row in rows]
-        with_pv = backward_target_commitments(
-            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0,
-            0.25, {0})
-        without_pv = backward_target_commitments(
-            no_pv, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 15.0,
-            0.25, {0})
-
-        self.assertGreater(with_pv["targets"][0], 15.0)
-        self.assertLess(with_pv["targets"][0], without_pv["targets"][0])
-
-    def test_pv_before_selected_buy_can_displace_more_expensive_grid_energy(self):
-        rows = [
-            {"price_buy_pln_kwh": 0.90, "price_sell_pln_kwh": 0.35,
-             "buy_window": index == 2, "sale_window": False,
-             "forecast_load_kwh": 0.0 if index == 2 else 0.285,
-             "forecast_pv_total_kwh": 0.80 if index < 2 else 0.0,
-             "slot_start": index, "slot_end": index + 1}
-            for index in range(5)
-        ]
-        selected = {2}
-        contract = backward_target_commitments(
-            rows, 15.0, 15.0, 0.90, 0.95, 0.0, 100.0, 35.0,
-            0.25, selected)
-        result = optimize_energy_horizon(
-            rows, 30.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, [15.0] * len(rows), 35.0, 0.25, 100.0,
-            contract["targets"], {2}, {2})
-
-        self.assertGreater(result["flows"][0]["pv_to_bat_kwh"], 0.0)
-        self.assertGreater(result["flows"][1]["pv_to_bat_kwh"], 0.0)
-        # The DP cannot retain PV energy smaller than one SOC quantum. That
-        # remainder must be represented as export, never as untracked charge.
-        quantum_ac_kwh = 15.0 * 0.25 / 100.0 / 0.90
-        self.assertLessEqual(result["flows"][0]["pv_export_kwh"], quantum_ac_kwh)
-        self.assertLessEqual(result["flows"][1]["pv_export_kwh"], quantum_ac_kwh)
-        self.assertLess(result["flows"][2]["grid_charge_kwh"], 0.75)
 
     def test_hard_target_rejects_unfunded_discharge(self):
         rows = [{"price_buy_pln_kwh": 2.0, "price_sell_pln_kwh": 0.0,
@@ -942,19 +655,6 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][2]["grid_charge_kwh"],0.0)
         self.assertGreater(result["flows"][60]["battery_to_load_kwh"],0.0)
         self.assertFalse(any(flow["battery_sell_kwh"]>0 for flow in result["flows"]))
-
-    def test_target_covers_future_load_and_is_not_the_floor(self):
-        rows=[{"price_buy_pln_kwh":3.0,"price_sell_pln_kwh":0.0,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(8)]
-        rows[0]["price_buy_pln_kwh"]=0.5
-        rows[0]["buy_window"]=True
-        rows[6]["forecast_load_kwh"]=1.0
-        result=self.optimize(rows,15.0,15.0,[15.0]*len(rows))
-        floors,targets=derive_soc_commitments(result["flows"],15.0,15.0,15.0,90.0,95.0)
-        self.assertEqual(floors[0],15.0)
-        self.assertGreater(targets[0],floors[0])
-        self.assertLessEqual(targets[0],result["flows"][0]["soc_end_pct"])
-        self.assertEqual(targets[5],targets[0])
-        self.assertEqual(targets[6],15.0)
 
     def test_sale_floor_and_terminal_soc_are_protected(self):
         rows=[{"price_buy_pln_kwh":4.0,"price_sell_pln_kwh":10.0,"sale_window":True,"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0} for _ in range(8)]
@@ -1121,134 +821,6 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertGreater(result["flows"][0]["battery_to_load_kwh"], 0.0)
         self.assertLessEqual(result["flows"][0]["grid_load_kwh"], 0.04)
 
-    def test_sale_recovery_uses_pv_before_grid_buy(self):
-        rows=[
-            {"forecast_load_kwh":0.0,"forecast_pv_total_kwh":0.0},
-            {"forecast_load_kwh":0.2,"forecast_pv_total_kwh":1.2},
-            {"forecast_load_kwh":0.3,"forecast_pv_total_kwh":0.0},
-        ]
-        flows=[
-            {"grid_charge_kwh":0.0,"soc_end_pct":30.0},
-            {"grid_charge_kwh":0.0,"soc_end_pct":36.0},
-            {"grid_charge_kwh":0.0,"soc_end_pct":34.0},
-        ]
-        floors,targets=bridge_soc_commitments(
-            rows,flows,15.0,15.0,0.98,0.98,1.25,0.0,90.0,100.0)
-        self.assertEqual(targets[0],15.0)
-        self.assertEqual(floors[0],15.0)
-
-    def test_soc_controls_are_results_of_backward_pass(self):
-        flows=[
-            {"soc_start_pct":15.0,"soc_end_pct":35.0,"battery_charge_internal_kwh":3.0,"battery_discharge_internal_kwh":0.0,"battery_sell_kwh":0.0},
-            {"soc_start_pct":35.0,"soc_end_pct":20.0,"battery_charge_internal_kwh":0.0,"battery_discharge_internal_kwh":3.0,"battery_sell_kwh":2.0},
-        ]
-        floors,targets=derive_soc_commitments(flows,15.0,15.0,15.0,90.0,95.0)
-        self.assertEqual(targets,[35.0,15.0])
-        self.assertEqual(floors,[15.0,20.0])
-        self.assertNotEqual(floors,targets)
-    def test_native_load_can_discharge_below_sale_floor_to_technical_reserve(self):
-        sale, native = allocate_slot_discharge(
-            energy_kwh=6.0, capacity_kwh=15.0, reserve_pct=15.0,
-            sale_floor_pct=40.0, native_deficit_kwh=0.30,
-            sale_request_kwh=1.0, max_slot_output_kwh=1.25, eta_d=0.95)
-
-        self.assertEqual(sale, 0.0)
-        self.assertAlmostEqual(native * 0.95, 0.30)
-
-    def test_sale_floor_blocks_only_export_energy(self):
-        sale, native = allocate_slot_discharge(
-            energy_kwh=6.15, capacity_kwh=15.0, reserve_pct=15.0,
-            sale_floor_pct=40.0, native_deficit_kwh=0.30,
-            sale_request_kwh=1.0, max_slot_output_kwh=1.25, eta_d=0.95)
-
-        self.assertAlmostEqual(sale, 0.15)
-        self.assertAlmostEqual(native * 0.95, 0.30)
-
-    def test_soc_target_bridges_only_to_finite_next_grid_replenishment(self):
-        rows = [
-            {"forecast_load_kwh": 0.30, "forecast_pv_total_kwh": 0.0},
-            {"forecast_load_kwh": 0.30, "forecast_pv_total_kwh": 0.0},
-            {"forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.0},
-            {"forecast_load_kwh": 0.40, "forecast_pv_total_kwh": 0.0},
-        ]
-
-        floors, targets = soc_bridge_envelopes(
-            rows, {2}, 15.0, 15.0, 1.0, 1.0, 0.50, 0.0, 90.0, 95.0)
-
-        self.assertAlmostEqual(targets[2], 15.0 + 0.40 / 15.0 * 100.0)
-        self.assertEqual(targets[1], 15.0)
-        self.assertEqual(floors, targets)
-
-    def test_forecast_pv_reduces_bridge_target_without_clock_rule(self):
-        rows = [
-            {"forecast_load_kwh": 0.30, "forecast_pv_total_kwh": 0.0},
-            {"forecast_load_kwh": 0.10, "forecast_pv_total_kwh": 0.60},
-            {"forecast_load_kwh": 0.20, "forecast_pv_total_kwh": 0.0},
-        ]
-
-        floors, targets = soc_bridge_envelopes(
-            rows, set(), 15.0, 15.0, 1.0, 1.0, 1.25, 0.0, 90.0, 95.0)
-
-        self.assertEqual(floors[0], 15.0)
-        self.assertEqual(targets[0], 15.0)
-
-    def test_target_stays_above_sale_floor_and_drives_morning_recovery(self):
-        rows = [
-            {"price_buy_pln_kwh": 1.0 if index == 0 else 4.0,
-             "price_sell_pln_kwh": 2.0,
-             "buy_window": index == 0,
-             "forecast_load_kwh": 0.0 if index == 0 else 0.30,
-             "forecast_pv_total_kwh": 0.80 if 6 <= index < 12 else 0.0}
-            for index in range(20)
-        ]
-        sale_floors = [20.0] * len(rows)
-        seed = [{"grid_charge_kwh": 0.0} for _ in rows]
-        floors, targets = bridge_soc_commitments(
-            rows, seed, 15.0, 15.0, 0.90, 0.95, 1.25, 1.0,
-            90.0, 100.0, sale_floors)
-
-        self.assertTrue(all(floor == 20.0 for floor in floors))
-        self.assertGreater(targets[0], floors[0])
-        self.assertGreater(targets[6], floors[6])
-
-        result = optimize_energy_horizon(
-            rows, 20.0, 15.0, 15.0, 0.90, 0.95, 0.08, 0.05,
-            5.0, 15, sale_floors, 15.0, 0.25, 100.0, targets)
-        flows = result["flows"]
-
-        self.assertGreater(flows[0]["grid_charge_kwh"], 0.0)
-        self.assertTrue(all(
-            flow["soc_end_pct"] + 1e-9 >= target
-            or flow["battery_charge_internal_kwh"] > 1e-9
-            for row, flow, target in zip(rows, flows, targets)
-            if row["buy_window"] or row["forecast_pv_total_kwh"] > row["forecast_load_kwh"]
-        ))
-        self.assertFalse(any(
-            flow["pv_export_kwh"] > 1e-9 and flow["soc_end_pct"] < target
-            for flow, target in zip(flows, targets)
-        ))
-
-    def test_bridge_target_is_rounded_up_to_executable_soc_step(self):
-        rows = [
-            {
-                "buy_window": True,
-                "forecast_load_kwh": 0.0,
-                "forecast_pv_total_kwh": 0.0,
-            },
-            {
-                "buy_window": False,
-                "forecast_load_kwh": 0.027,
-                "forecast_pv_total_kwh": 0.0,
-            },
-        ]
-        flows = [{"grid_charge_kwh": 0.0}, {"grid_charge_kwh": 0.0}]
-
-        _, targets = bridge_soc_commitments(
-            rows, flows, 15.0, 15.0, 0.90, 0.95, 1.25, 0.0,
-            90.0, 100.0, [15.0, 15.0], 35.0, 0.25)
-
-        self.assertEqual(targets[0], 35.25)
-
     def test_unmet_target_charges_only_in_buy_or_from_pv(self):
         rows = [
             {"price_buy_pln_kwh": 4.0, "price_sell_pln_kwh": 2.0,
@@ -1281,25 +853,6 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(result["flows"][0]["grid_charge_kwh"], 0.0)
         self.assertGreater(result["flows"][0]["battery_to_load_kwh"], 0.0)
         self.assertGreater(result["flows"][1]["grid_charge_kwh"], 0.0)
-
-    def test_soc_bridge_has_no_special_evening_hour(self):
-        evening = [
-            {"slot_start_local": "2026-09-14 19:45:00", "forecast_load_kwh": 0.4,
-             "forecast_pv_total_kwh": 0.0},
-            {"slot_start_local": "2026-09-14 20:00:00", "forecast_load_kwh": 0.2,
-             "forecast_pv_total_kwh": 0.0},
-        ]
-        morning = [
-            {**row, "slot_start_local": f"2026-09-15 0{3 + index}:15:00"}
-            for index, row in enumerate(evening)
-        ]
-
-        evening_result = soc_bridge_envelopes(
-            evening, set(), 15.0, 15.0, 0.9, 0.95, 1.25, 1.0, 90.0, 95.0)
-        morning_result = soc_bridge_envelopes(
-            morning, set(), 15.0, 15.0, 0.9, 0.95, 1.25, 1.0, 90.0, 95.0)
-
-        self.assertEqual(evening_result, morning_result)
 
     def test_price_windows_have_no_clock_dependency(self):
         prices = [
@@ -1622,21 +1175,6 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertLess(result["flows"][0]["soc_end_pct"], 50.0)
         self.assertGreater(result["flows"][0]["battery_charge_internal_kwh"], 0.0)
 
-    def test_last_replenishment_target_includes_terminal_soc(self):
-        rows = [
-            {"buy_window": True, "forecast_load_kwh": 0.0,
-             "forecast_pv_total_kwh": 0.0},
-            {"buy_window": False, "forecast_load_kwh": 0.30,
-             "forecast_pv_total_kwh": 0.0},
-        ]
-        flows = [{"battery_sell_kwh": 0.0}, {"battery_sell_kwh": 0.0}]
-
-        _, targets = bridge_soc_commitments(
-            rows, flows, 15.0, 15.0, 0.90, 0.95, 1.25, 0.0,
-            90.0, 100.0, [40.0, 40.0], 30.0)
-
-        self.assertEqual(targets[0], 32.25)
-
     def test_ppd_sell_peak_uses_complete_horizon_not_named_sessions(self):
         rows = [
             {"price_sell_pln_kwh": 2.70, "price_buy_pln_kwh": 3.29},
@@ -1672,43 +1210,6 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertIsNone(economics["replacement_buy_price"])
         self.assertFalse(economics["eligible"])
 
-    def test_post_sale_recovery_can_span_multiple_profitable_slots(self):
-        rows = [
-            {"price_sell_pln_kwh": 2.70, "price_buy_pln_kwh": 3.29, "sale_window": True},
-            {"price_sell_pln_kwh": 3.04, "price_buy_pln_kwh": 3.63, "sale_window": True},
-            {"price_sell_pln_kwh": 2.20, "price_buy_pln_kwh": 2.79, "sale_window": False},
-            {"price_sell_pln_kwh": 1.16, "price_buy_pln_kwh": 1.75, "sale_window": False},
-            {"price_sell_pln_kwh": 1.08, "price_buy_pln_kwh": 1.67, "sale_window": False},
-            {"price_sell_pln_kwh": 1.15, "price_buy_pln_kwh": 1.74, "sale_window": False},
-        ]
-
-        eligible = paired_arbitrage_buy_indices(rows, 0.90, 0.95, 0.08, 0.05)
-
-        self.assertEqual(eligible, {3, 4, 5})
-
-    def test_no_recovery_window_exists_without_prior_sale_candidate(self):
-        rows = [
-            {"price_sell_pln_kwh": 1.00, "price_buy_pln_kwh": 1.59, "sale_window": False},
-            {"price_sell_pln_kwh": 0.50, "price_buy_pln_kwh": 1.09, "sale_window": False},
-        ]
-
-        self.assertEqual(paired_arbitrage_buy_indices(rows, 0.90, 0.95, 0.08, 0.05), set())
-
-    def test_recovery_waits_for_cheapest_slots_and_expands_with_energy(self):
-        rows = [
-            {"price_buy_pln_kwh": 2.15},
-            {"price_buy_pln_kwh": 2.13},
-            {"price_buy_pln_kwh": 1.75},
-            {"price_buy_pln_kwh": 1.67},
-            {"price_buy_pln_kwh": 1.74},
-        ]
-        eligible = set(range(len(rows)))
-
-        self.assertEqual(cheapest_recovery_indices(rows, eligible, 0, 1.0, 1.25, 0.90), {3})
-        self.assertEqual(cheapest_recovery_indices(rows, eligible, 0, 3.0, 1.25, 0.90), {2, 3, 4})
-
-
-class TouStartupReadinessTests(unittest.TestCase):
     def test_missing_tou_snapshot_fails_closed(self):
         for unavailable in (None, [], {"program": 1}):
             with self.subTest(unavailable=unavailable):
