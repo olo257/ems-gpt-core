@@ -1,5 +1,10 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.52 — poprawka walidacji prognozy PV
+
+- Dodano brakujący import modułu `math`, który powodował błąd przy każdym przeliczeniu planera.
+- Włączono testy ciągłości prognozy PV do obowiązkowego workflow regresji.
+
 ## 0.40.51 — podział funkcjonalny planera
 
 - Wydzielono logikę pompy ciepła i przygotowanie danych HP/DHW do `planner_hp_service.py`.
