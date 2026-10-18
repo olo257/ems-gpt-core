@@ -17,7 +17,11 @@ from planner_hp_service import (
     hp_temperature_eligible,
     optimize_hp_heating_slots,
 )
-from planner_validation_service import strict_database_bool
+from planner_validation_service import (
+    strict_database_bool,
+    validate_pv_forecasts,
+    validate_rce_market_window,
+)
 from planner_dispatch_service import (
     daily_close_soc_requirements,
     deterministic_soc_target_contract,
@@ -29,6 +33,10 @@ from planner_dispatch_service import (
     preserve_target_contract_after_reachability,
     replenishment_soc_requirements,
     voluntary_load_without_charging_indices,
+    validated_buy_deadline_targets,
+    validate_physical_buy_commitments,
+    active_soc_target_deadlines,
+    validate_active_soc_target_deadlines,
 )
 from planner_economics_service import (
     assess_sale_plan_against_no_sale,
@@ -44,9 +52,7 @@ from planner_soc_service import (
     validate_recoverable_soc_requirements,
 )
 
-
 PLANNER_VERSION = "CORE_0_40_51"
-
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
                             weights_pct: dict[int, float], fallback_pct: float) -> dict:
@@ -86,7 +92,6 @@ def historical_terminal_soc(closing_rows: list[dict], terminal_day,
     return {"soc_pct": forecast, "means": means, "samples": samples,
             "available_weight_pct": available_weight, "source": source}
 
-
 def terminal_soc_recovery(requested_soc_pct: float, safety_soc_pct: float,
                           battery_sales_enabled: bool,
                           current_day: bool = False) -> tuple[str, float]:
@@ -106,110 +111,6 @@ def terminal_soc_recovery(requested_soc_pct: float, safety_soc_pct: float,
             return "ALLOW_TERMINAL_SHORTFALL", requested
         return "RELAX_HISTORICAL_TARGET", safety
     return "FAIL", requested
-
-
-def validate_rce_market_window(row: dict) -> dict:
-    """Validate and consume the window assignment persisted by the RCE importer."""
-    if row.get("sale_window") is None or row.get("buy_window") is None:
-        raise RuntimeError(f"RCE_PRICE_WINDOW_MISSING:{row.get('slot_start')}")
-    sale = strict_database_bool(row.get("sale_window"), "sale_window")
-    buy = strict_database_bool(row.get("buy_window"), "buy_window")
-    if sale and buy:
-        raise RuntimeError(f"WINDOW_OVERLAP:{row.get('slot_start')}")
-    expected = "SELL" if sale else "BUY" if buy else "NEUTRAL"
-    persisted = row.get("market_window")
-    if persisted is not None and str(persisted).upper() != expected:
-        raise RuntimeError(
-            f"RCE_MARKET_WINDOW_MISMATCH:{row.get('slot_start')}:"
-            f"{persisted!r}!={expected}")
-    normalized = dict(row)
-    normalized["sale_window"] = sale
-    normalized["buy_window"] = buy
-    normalized["market_window"] = expected
-    return normalized
-
-
-def validate_pv_forecasts(rows: list[dict]) -> None:
-    """Unknown PV is never a zero-production scenario for dispatch or SOC."""
-    for row in rows:
-        values = [row.get(key) for key in (
-            "forecast_pv1_kwh", "forecast_pv2_kwh", "forecast_pv_total_kwh")]
-        if any(value is None for value in values):
-            raise RuntimeError(f"MISSING_PV_FORECAST:{row['slot_start']}")
-        if any(not math.isfinite(float(value)) or float(value) < 0 for value in values):
-            raise RuntimeError(f"INVALID_PV_FORECAST:{row['slot_start']}")
-        if abs(float(values[0]) + float(values[1]) - float(values[2])) > 0.000002:
-            raise RuntimeError(f"INCONSISTENT_PV_FORECAST:{row['slot_start']}")
-
-
-def validated_buy_deadline_targets(result: dict, targets: list[float],
-                                   required: list[float],
-                                   battery_sales_enabled: bool) -> list[float]:
-    """Validate explicit no-sale shortages without rewriting charging ceilings."""
-    flows = result.get("flows") or []
-    if not len(flows) == len(targets) == len(required):
-        raise RuntimeError("BUY_SHORTFALL_VALIDATION_LENGTH_MISMATCH")
-    deadlines = list(targets)
-    for shortage in result.get("buy_target_shortfalls", []):
-        index = int(shortage["index"])
-        if not 0 <= index < len(flows):
-            raise RuntimeError("INVALID_BUY_TARGET_SHORTFALL_INDEX")
-        achieved = float(flows[index]["soc_end_pct"])
-        if (battery_sales_enabled or achieved + 1e-9 < float(required[index])
-                or abs(float(shortage["target_soc_pct"])-float(targets[index])) > .01
-                or abs(float(shortage["achieved_soc_pct"])-achieved) > .01
-                or any(float(flow.get("battery_sell_kwh") or 0) > 1e-9 for flow in flows)):
-            raise RuntimeError("UNSAFE_BUY_TARGET_SHORTFALL")
-        deadlines[index] = achieved
-    return deadlines
-
-
-def validate_physical_buy_commitments(
-        rows: list[dict], flows: list[dict], due_indices: set[int],
-        target_pcts: list[float], max_power_kw: float,
-        slot_minutes: int, capacity_kwh: float,
-        eta_c: float, tolerance_pct: float = 0.11) -> dict:
-    """Verify actual scheduled energy, not hypothetical BUY capacity.
-
-    BUY is a permission only. Its physical contribution is the sum of
-    grid_charge_kwh in the selected dispatch. The due SOC is checked after
-    native load and PV for the entire BUY window have been accounted for.
-    """
-    if len(rows) != len(flows) or len(rows) != len(target_pcts):
-        raise RuntimeError("BUY_PHYSICAL_COMMITMENT_LENGTH_MISMATCH")
-    max_charge_input = max(0.0, float(max_power_kw)) * slot_minutes / 60.0
-    actual_buy_kwh = 0.0
-    buy_slots = 0
-    for index, (row, flow) in enumerate(zip(rows, flows)):
-        buy = (strict_database_bool(row.get("buy_window", False), "buy_window")
-               and not strict_database_bool(row.get("sale_window", False), "sale_window"))
-        imported = max(0.0, float(flow.get("grid_charge_kwh") or 0.0))
-        pv_charged = max(0.0, float(flow.get("pv_to_bat_kwh") or 0.0))
-        if imported > 1e-7 and not buy:
-            raise RuntimeError(f"GRID_CHARGE_OUTSIDE_BUY:{index}")
-        if imported + pv_charged > max_charge_input + 1e-6:
-            raise RuntimeError(f"CHARGE_POWER_LIMIT:{index}")
-        if buy:
-            buy_slots += 1
-            actual_buy_kwh += imported
-        if index in due_indices:
-            actual_soc = float(flow.get("soc_end_pct") or 0.0)
-            required_soc = float(target_pcts[index])
-            if actual_soc + tolerance_pct < required_soc:
-                raise RuntimeError(
-                    f"BUY_PHYSICAL_DEFICIT:{index}:{actual_soc:.3f}"
-                    f"<{required_soc:.3f}")
-        if index:
-            previous_soc = float(flows[index - 1].get("soc_end_pct") or 0.0)
-            starting_soc = float(flow.get("soc_start_pct") or 0.0)
-            if abs(previous_soc - starting_soc) > tolerance_pct:
-                raise RuntimeError(f"SOC_DISCONTINUITY:{index}")
-    return {
-        "actual_buy_kwh": round(actual_buy_kwh, 6),
-        "buy_slot_count": buy_slots,
-        "buy_deadline_count": len(due_indices),
-    }
-
 
 def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
                         capacity_kwh: float, reserve_pct: float,
@@ -338,14 +239,12 @@ def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
             "buy_due_indices": buy_due_indices,
             "selected_buy_indices": selected_buy}
 
-
 def current_soc_for_replan(setting: Callable) -> float:
     """Read fresh battery SOC from Home Assistant for this planner invocation."""
     soc = setting("sensor.inverter_battery", math.nan)
     if not math.isfinite(soc) or not 0.0 <= soc <= 100.0:
         raise RuntimeError(f"INVALID_INITIAL_SOC:sensor.inverter_battery={soc!r}")
     return float(soc)
-
 
 def relax_soc_requirement_to_reachable(requested_soc_pct: float,
                                         reachable_soc_pct: float,
@@ -355,7 +254,6 @@ def relax_soc_requirement_to_reachable(requested_soc_pct: float,
     requested = max(reserve, min(100.0, float(requested_soc_pct)))
     reachable = max(reserve, min(100.0, float(reachable_soc_pct)))
     return max(reserve, min(requested, reachable))
-
 
 def effective_required_soc_for_dispatch(
         safety_required_soc_pcts: list[float],
@@ -369,41 +267,6 @@ def effective_required_soc_for_dispatch(
             safety_required_soc_pcts, dispatch_required_soc_pcts)
     ]
 
-
-def active_soc_target_deadlines(result: dict,
-                                requested_due_indices: set[int]) -> set[int]:
-    """Return only deadlines the successful dispatch pass actually enforced.
-
-    TARGET_COMMITMENT may drop optional BUY deadlines after proving they are
-    unreachable.  Its SOC target ceiling remains in force, but the caller must
-    not validate a dropped deadline as if it were still a hard minimum.
-    """
-    effective = result.get("effective_target_due_indices")
-    if effective is None:
-        return set(requested_due_indices)
-    return {int(index) for index in effective}
-
-
-def validate_active_soc_target_deadlines(result: dict,
-                                          requested_due_indices: set[int],
-                                          target_pcts: list[float],
-                                          tolerance_pct: float = 0.01
-                                          ) -> set[int]:
-    """Validate only BUY deadlines that survived the final planner fallback."""
-    flows = result.get("flows") or []
-    if len(flows) != len(target_pcts):
-        raise RuntimeError("SOC_TARGET_VALIDATION_LENGTH_MISMATCH")
-    effective_due_indices = active_soc_target_deadlines(
-        result, requested_due_indices)
-    for index in sorted(effective_due_indices):
-        soc_end = float(flows[index].get("soc_end_pct") or 0.0)
-        target = float(target_pcts[index])
-        if soc_end + float(tolerance_pct) < target:
-            raise RuntimeError(
-                f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{target}")
-    return effective_due_indices
-
-
 @dataclass(frozen=True)
 class PlannerAdapters:
     options: dict
@@ -415,7 +278,6 @@ class PlannerAdapters:
     active_tou_program: Callable
     tou_program_snapshot: Callable
     record_event: Callable
-
 
 def build_planner(a: PlannerAdapters):
     OPTIONS = a.options
@@ -1517,4 +1379,3 @@ def build_planner(a: PlannerAdapters):
         optimize_hp_heating_slots=optimize_hp_heating_slots,
         run_planner=run_planner,
     )
-
