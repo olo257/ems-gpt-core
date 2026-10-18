@@ -720,8 +720,9 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_nearby_pv_is_accounted_without_buy_path_feedback(self):
         planner = MODULE_SOURCES["planner_service.py"]
+        dispatch = MODULE_SOURCES["planner_dispatch_service.py"]
         self.assertIn("build_soc_contracts", planner)
-        self.assertIn("used_pv", planner)
+        self.assertIn("used_pv", dispatch)
         self.assertNotIn("SOC_TARGET_PATH_OSCILLATION", planner)
 
     def test_manual_control_origin_is_recorded(self):
