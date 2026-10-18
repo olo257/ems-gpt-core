@@ -11,10 +11,13 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 from planner_hp_service import (
+    elapsed_hp_plan_states,
     historical_hp_power_kw,
+    hp_heating_window_indices,
     hp_temperature_eligible,
     optimize_hp_heating_slots,
 )
+from planner_validation_service import strict_database_bool
 
 
 PLANNER_VERSION = "CORE_0_40_51"
@@ -80,17 +83,6 @@ def terminal_soc_recovery(requested_soc_pct: float, safety_soc_pct: float,
     return "FAIL", requested
 
 
-def strict_database_bool(value, field: str) -> bool:
-    """Normalize MariaDB BOOLEAN/TINYINT once and reject ambiguous values."""
-    if isinstance(value, bool):
-        return value
-    if value == 0 or str(value).strip().lower() in {"0", "false"}:
-        return False
-    if value == 1 or str(value).strip().lower() in {"1", "true"}:
-        return True
-    raise RuntimeError(f"INVALID_BOOLEAN:{field}:{value!r}")
-
-
 def validate_rce_market_window(row: dict) -> dict:
     """Validate and consume the window assignment persisted by the RCE importer."""
     if row.get("sale_window") is None or row.get("buy_window") is None:
@@ -123,28 +115,6 @@ def validate_pv_forecasts(rows: list[dict]) -> None:
             raise RuntimeError(f"INVALID_PV_FORECAST:{row['slot_start']}")
         if abs(float(values[0]) + float(values[1]) - float(values[2])) > 0.000002:
             raise RuntimeError(f"INCONSISTENT_PV_FORECAST:{row['slot_start']}")
-
-
-def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[list[bool], list[dict]]:
-    """Count only known published HP windows; unknown history grants no heat credit."""
-    cur.execute("""SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots
-      WHERE slot_start>=%s AND slot_start<%s ORDER BY slot_start""",
-      (day_start, cutoff))
-    states, unknown = [], []
-    for row in cur.fetchall():
-        # Missing publication metadata is also legacy/unknown history. Never
-        # use an unpublished window (even a stored 1) as completed heating.
-        published = row["plan_published"]
-        value = row["heat_pump_window"]
-        if published is None or not strict_database_bool(published, "plan_published"):
-            states.append(False)
-            unknown.append({"slot_start": str(row["slot_start"]), "reason": "UNPUBLISHED"})
-        elif value is None:
-            states.append(False)
-            unknown.append({"slot_start": str(row["slot_start"]), "reason": "MISSING_HP_WINDOW"})
-        else:
-            states.append(strict_database_bool(value, "heat_pump_window"))
-    return states, unknown
 
 
 def recoverable_soc_requirements(rows: list[dict], required_soc_pcts: list[float],
@@ -1571,34 +1541,6 @@ def validate_active_soc_target_deadlines(result: dict,
             raise RuntimeError(
                 f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{target}")
     return effective_due_indices
-
-
-def hp_heating_window_indices(rows: list[dict], day_value) -> set[int]:
-    """Return slots allowed for automatic Heat+DHW on one local day."""
-    day_start = datetime.combine(day_value, datetime.min.time())
-    earliest_start = day_start + timedelta(hours=7)
-    midday = day_start + timedelta(hours=12)
-    latest_end = day_start + timedelta(hours=19)
-    morning_sell_ends = [
-        row.get("slot_end") or (row["slot_start"] + timedelta(minutes=15))
-        for row in rows
-        if row["slot_start"] < midday
-        and strict_database_bool(row.get("sale_window", False), "sale_window")
-    ]
-    evening_sell_starts = [
-        row["slot_start"] for row in rows
-        if midday <= row["slot_start"] < latest_end
-        and strict_database_bool(row.get("sale_window", False), "sale_window")
-    ]
-    window_start = max(earliest_start, max(morning_sell_ends)) \
-        if morning_sell_ends else earliest_start
-    window_end = min(latest_end, min(evening_sell_starts)) \
-        if evening_sell_starts else latest_end
-    return {
-        index for index, row in enumerate(rows)
-        if window_start <= row["slot_start"] < window_end
-        and not strict_database_bool(row.get("sale_window", False), "sale_window")
-    }
 
 
 @dataclass(frozen=True)
