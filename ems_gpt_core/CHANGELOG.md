@@ -1,9 +1,10 @@
 # EMS-GPT Core — historia zmian
 
-## 0.40.51 — wydzielenie optymalizacji pompy ciepła
+## 0.40.51 — podział funkcjonalny planera
 
-- Przeniesiono prognozę mocy historycznej HP, optymalizator cykli i kwalifikację temperatury do osobnego modułu `planner_hp_service.py`.
-- `planner_service.py` zachowuje te same importy publiczne i dalej odpowiada za złożenie planu.
+- Wydzielono logikę pompy ciepła i przygotowanie danych HP/DHW do `planner_hp_service.py`.
+- Wydzielono walidację wejść, obliczenia SOC, ekonomikę taryfową i dispatch do osobnych modułów usług.
+- `planner_service.py` zachowuje dotychczasowe importy publiczne i odpowiada za orkiestrację, transakcję SQL oraz publikację planu.
 - Zmiana strukturalna; zachowanie planera pozostaje bez zmian.
 
 ## 0.40.50 — dokończenie cyklu HP po replanningu
