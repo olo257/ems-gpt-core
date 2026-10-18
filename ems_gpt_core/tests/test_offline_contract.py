@@ -629,10 +629,11 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_hp_planning_is_independent_from_ppd_and_execution_overrides(self):
         planner = MODULE_SOURCES["planner_service.py"]
+        hp = MODULE_SOURCES["planner_hp_service.py"]
         self.assertNotIn("ems_gpt_core_process_decisions", planner)
         self.assertNotIn("ems_gpt_core_process_overrides", planner)
-        self.assertIn("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots", planner)
-        hp_history = planner[planner.index("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots"):]
+        self.assertIn("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots", hp)
+        hp_history = hp[hp.index("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots"):]
         hp_history = hp_history[:hp_history.index("ORDER BY slot_start")]
         self.assertNotIn("actual_recorded_at", hp_history)
 
@@ -669,9 +670,10 @@ class OfflineContractTests(unittest.TestCase):
 
     def test_automatic_heat_dhw_is_restricted_to_daytime_window(self):
         planner = MODULE_SOURCES["planner_service.py"]
+        hp = MODULE_SOURCES["planner_hp_service.py"]
         self.assertIn("hp_heating_window_indices", planner)
         self.assertIn('0 if c == "heat_pump_window" else row.get(c)', planner)
-        self.assertIn('if window_start <= row["slot_start"] < window_end', planner)
+        self.assertIn('if window_start <= row["slot_start"] < window_end', hp)
         self.assertIn("allowed_rows", planner)
 
     def test_hp_cost_replan_cycle_contract(self):
