@@ -22,7 +22,7 @@ PLANNER_CONTRACT = (ROOT / "PLANNER_CONTRACT.md").read_text(encoding="utf-8")
 
 class OfflineContractTests(unittest.TestCase):
     def test_soc_reachability_is_joint_and_measured_soc_is_never_clamped(self):
-        planner = MODULE_SOURCES["planner_service.py"]
+        planner = MODULE_SOURCES["planner_soc_service.py"]
         self.assertIn("def _soc_reachability_profile(", planner)
         self.assertIn("feasible_soc_path_pcts", planner)
         self.assertIn("unreachable_indices", planner)
