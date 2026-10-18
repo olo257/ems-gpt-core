@@ -782,3 +782,39 @@ def validate_active_soc_target_deadlines(result: dict,
             raise RuntimeError(
                 f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{target}")
     return effective_due_indices
+
+
+def build_soc_contracts(rows: list[dict], economic_flows: list[dict],
+                        capacity_kwh: float, reserve_pct: float,
+                        eta_c: float, eta_d: float,
+                        uncertainty_weight: float, terminal_soc_pct: float,
+                        target_cap_pct: float,
+                        soc_step_pct: float = 0.25,
+                        daily_terminal_soc_pcts: list[float] | None = None) -> dict:
+    """Build independent required, charge-target and sale contracts.
+
+    The economic pass supplies an exact grid-energy allocation.  The backward
+    pass subtracts only that allocated energy, never the theoretical capacity
+    of a BUY window.  Therefore a replenishment boundary cannot reset an
+    unfunded requirement to the technical reserve.
+    """
+    if len(rows) != len(economic_flows):
+        raise ValueError("SOC_CONTRACT_FLOW_LENGTH_MISMATCH")
+    if not rows:
+        return {"required": [], "charge_targets": [], "due": [],
+                "source": [], "reserved_pv_kwh": [], "buy_due_indices": set()}
+    capacity = max(0.001, float(capacity_kwh))
+    reserve = max(0.0, min(100.0, float(reserve_pct)))
+    cap = max(reserve, min(100.0, float(target_cap_pct)))
+    reserve_kwh = capacity * reserve / 100.0
+    required_after = capacity * max(
+        reserve, min(cap, float(terminal_soc_pct))) / 100.0
+    charge_efficiency = max(0.01, float(eta_c))
+    discharge_efficiency = max(0.01, float(eta_d))
+    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
+    step = max(0.001, float(soc_step_pct))
+    required = [reserve] * len(rows)
+    required_after_slot = [reserve] * len(rows)
+    charge_targets = [reserve] * len(rows)
+    due = [None] * len(rows)
+    source = ["HORI
