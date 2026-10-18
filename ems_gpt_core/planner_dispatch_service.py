@@ -682,3 +682,103 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                  max(reserve, min(float(max_soc_pct), float(target))))
                 for target in (minimum_soc_targets or [max_soc_pct] * len(rows))
             ]}
+
+
+def validated_buy_deadline_targets(result: dict, targets: list[float],
+                                   required: list[float],
+                                   battery_sales_enabled: bool) -> list[float]:
+    """Validate explicit no-sale shortages without rewriting charging ceilings."""
+    flows = result.get("flows") or []
+    if not len(flows) == len(targets) == len(required):
+        raise RuntimeError("BUY_SHORTFALL_VALIDATION_LENGTH_MISMATCH")
+    deadlines = list(targets)
+    for shortage in result.get("buy_target_shortfalls", []):
+        index = int(shortage["index"])
+        if not 0 <= index < len(flows):
+            raise RuntimeError("INVALID_BUY_TARGET_SHORTFALL_INDEX")
+        achieved = float(flows[index]["soc_end_pct"])
+        if (battery_sales_enabled or achieved + 1e-9 < float(required[index])
+                or abs(float(shortage["target_soc_pct"])-float(targets[index])) > .01
+                or abs(float(shortage["achieved_soc_pct"])-achieved) > .01
+                or any(float(flow.get("battery_sell_kwh") or 0) > 1e-9 for flow in flows)):
+            raise RuntimeError("UNSAFE_BUY_TARGET_SHORTFALL")
+        deadlines[index] = achieved
+    return deadlines
+
+def validate_physical_buy_commitments(
+        rows: list[dict], flows: list[dict], due_indices: set[int],
+        target_pcts: list[float], max_power_kw: float,
+        slot_minutes: int, capacity_kwh: float,
+        eta_c: float, tolerance_pct: float = 0.11) -> dict:
+    """Verify actual scheduled energy, not hypothetical BUY capacity.
+
+    BUY is a permission only. Its physical contribution is the sum of
+    grid_charge_kwh in the selected dispatch. The due SOC is checked after
+    native load and PV for the entire BUY window have been accounted for.
+    """
+    if len(rows) != len(flows) or len(rows) != len(target_pcts):
+        raise RuntimeError("BUY_PHYSICAL_COMMITMENT_LENGTH_MISMATCH")
+    max_charge_input = max(0.0, float(max_power_kw)) * slot_minutes / 60.0
+    actual_buy_kwh = 0.0
+    buy_slots = 0
+    for index, (row, flow) in enumerate(zip(rows, flows)):
+        buy = (strict_database_bool(row.get("buy_window", False), "buy_window")
+               and not strict_database_bool(row.get("sale_window", False), "sale_window"))
+        imported = max(0.0, float(flow.get("grid_charge_kwh") or 0.0))
+        pv_charged = max(0.0, float(flow.get("pv_to_bat_kwh") or 0.0))
+        if imported > 1e-7 and not buy:
+            raise RuntimeError(f"GRID_CHARGE_OUTSIDE_BUY:{index}")
+        if imported + pv_charged > max_charge_input + 1e-6:
+            raise RuntimeError(f"CHARGE_POWER_LIMIT:{index}")
+        if buy:
+            buy_slots += 1
+            actual_buy_kwh += imported
+        if index in due_indices:
+            actual_soc = float(flow.get("soc_end_pct") or 0.0)
+            required_soc = float(target_pcts[index])
+            if actual_soc + tolerance_pct < required_soc:
+                raise RuntimeError(
+                    f"BUY_PHYSICAL_DEFICIT:{index}:{actual_soc:.3f}"
+                    f"<{required_soc:.3f}")
+        if index:
+            previous_soc = float(flows[index - 1].get("soc_end_pct") or 0.0)
+            starting_soc = float(flow.get("soc_start_pct") or 0.0)
+            if abs(previous_soc - starting_soc) > tolerance_pct:
+                raise RuntimeError(f"SOC_DISCONTINUITY:{index}")
+    return {
+        "actual_buy_kwh": round(actual_buy_kwh, 6),
+        "buy_slot_count": buy_slots,
+        "buy_deadline_count": len(due_indices),
+    }
+
+def active_soc_target_deadlines(result: dict,
+                                requested_due_indices: set[int]) -> set[int]:
+    """Return only deadlines the successful dispatch pass actually enforced.
+
+    TARGET_COMMITMENT may drop optional BUY deadlines after proving they are
+    unreachable.  Its SOC target ceiling remains in force, but the caller must
+    not validate a dropped deadline as if it were still a hard minimum.
+    """
+    effective = result.get("effective_target_due_indices")
+    if effective is None:
+        return set(requested_due_indices)
+    return {int(index) for index in effective}
+
+def validate_active_soc_target_deadlines(result: dict,
+                                          requested_due_indices: set[int],
+                                          target_pcts: list[float],
+                                          tolerance_pct: float = 0.01
+                                          ) -> set[int]:
+    """Validate only BUY deadlines that survived the final planner fallback."""
+    flows = result.get("flows") or []
+    if len(flows) != len(target_pcts):
+        raise RuntimeError("SOC_TARGET_VALIDATION_LENGTH_MISMATCH")
+    effective_due_indices = active_soc_target_deadlines(
+        result, requested_due_indices)
+    for index in sorted(effective_due_indices):
+        soc_end = float(flows[index].get("soc_end_pct") or 0.0)
+        target = float(target_pcts[index])
+        if soc_end + float(tolerance_pct) < target:
+            raise RuntimeError(
+                f"SOC_TARGET_NOT_REACHED:{index}:{soc_end}<{target}")
+    return effective_due_indices
