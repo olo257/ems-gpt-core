@@ -1,3 +1,5 @@
+import math
+
 """Shared validation primitives for planner input normalization."""
 
 def strict_database_bool(value, field: str) -> bool:
