@@ -11,7 +11,7 @@ from typing import Callable
 
 from config_service import deye_program_soc_baselines
 
-PLANNER_VERSION = "CORE_0_40_48"
+PLANNER_VERSION = "CORE_0_40_49"
 
 
 def historical_terminal_soc(closing_rows: list[dict], terminal_day,
