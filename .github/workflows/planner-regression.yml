@@ -24,6 +24,9 @@ jobs:
       - name: Planner regression tests
         run: python -m unittest discover -s ems_gpt_core/tests -p 'test_buy_deadline_regression.py' -v
 
+      - name: PV forecast continuity and planner validation tests
+        run: python -m unittest discover -s ems_gpt_core/tests -p 'test_pv_forecast_continuity.py' -v
+
       - name: Economic BUY target regression tests
         run: python -m unittest discover -s ems_gpt_core/tests -p 'test_economic_buy_targets.py' -v
       - name: SOC replenishment safety tests
