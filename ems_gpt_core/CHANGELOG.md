@@ -1,6 +1,6 @@
 # EMS-GPT Core — historia zmian
 
-## Porządkowanie planera — kod nieużywany w runtime
+## 0.40.49 — porządkowanie kodu nieużywanego w runtime
 
 - Usunięto 11 helperów planera bez odwołań w ścieżce produkcyjnej (około 415 niepustych linii).
 - Usunięto testy wywołujące wyłącznie te helpery; zachowano pozostałe testy planera i kontrakty produkcyjne.
