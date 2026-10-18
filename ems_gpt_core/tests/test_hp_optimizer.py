@@ -56,6 +56,12 @@ class HeatPumpOptimizerTests(unittest.TestCase):
         self.assertTrue(all(end - start >= 8 for start, end in blocks))
         self.assertTrue(all(4 <= blocks[i][0] - blocks[i - 1][1] <= 12 for i in range(1, len(blocks))))
 
+    def test_replan_finishes_minimum_cycle_after_daily_minimum_met(self):
+        # One previously published ON slot already satisfies the daily
+        # heating quota, but its two-slot minimum cycle is still in progress.
+        selected = OPTIMIZE(rows([1.0] * 3), [True], 1, 2, 1, 4, 2.5, 0.25)
+        self.assertEqual({0}, selected)
+
     def test_manual_force_on_counts_toward_daily_minimum(self):
         selected = OPTIMIZE(rows([1.0] * 32), [True] * 8, 40, 8, 4, 12, 2.5, 0.25)
         self.assertEqual(32, len(selected))
