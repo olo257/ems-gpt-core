@@ -366,7 +366,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("TIME(slot_start)", materializations)
         self.assertIn("MODIFY COLUMN {column} TIME NULL", schema)
         self.assertIn("sensor.kotlownia_aquarea_heatpump_ems_gpt_energia_chlodzenie_pobrana", APP_SOURCE)
-        self.assertIn("AVG(COALESCE(actual_dhw_consumed_kwh,0)) mean_dhw_kwh", MODULE_SOURCES["planner_service.py"])
+        self.assertIn("AVG(COALESCE(actual_dhw_consumed_kwh,0)) mean_dhw_kwh", MODULE_SOURCES["planner_hp_service.py"])
         self.assertIn("historical_dhw_kwh", MODULE_SOURCES["planner_service.py"])
 
     def test_app_status_card_uses_backend_start_time(self):
@@ -674,7 +674,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn("hp_heating_window_indices", planner)
         self.assertIn('0 if c == "heat_pump_window" else row.get(c)', planner)
         self.assertIn('if window_start <= row["slot_start"] < window_end', hp)
-        self.assertIn("allowed_rows", planner)
+        self.assertIn("allowed_rows", hp)
 
     def test_hp_cost_replan_cycle_contract(self):
         for marker in ("hp_min_heating_hours", "hp_min_cycle_hours",
