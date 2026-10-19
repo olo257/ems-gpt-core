@@ -154,6 +154,72 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertEqual(end_of_day_soc_target(34.2, 15.0, 38.0), 38.0)
         self.assertEqual(end_of_day_soc_target(34.2, 42.0, 100.0), 42.0)
 
+    def test_over_capacity_demand_is_not_lost_before_recovery(self):
+        rows = self.rows(22)
+        for index, row in enumerate(rows):
+            row['buy_window'] = index < 2
+            row['forecast_load_kwh'] = 0.0 if index < 2 else 1.0
+        requested = deterministic_soc_target_contract(
+            rows, [17.0]*22, [17.0]*22, 15.0, 15.0,
+            0.98, 0.98, 5.0, 15, 1.0)
+        self.assertGreater(requested['raw_required'][1], 100.0)
+        recovery = validate_recoverable_soc_requirements(
+            rows, requested['raw_required'], 20.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=0.98, eta_d=0.98,
+            max_power_kw=5.0, slot_minutes=15, soc_step_pct=0.1)
+        reconciled = preserve_target_contract_after_reachability(
+            requested, recovery, set())
+        self.assertTrue(recovery['disable_battery_sales'])
+        self.assertIn(1, reconciled['over_capacity_indices'])
+        self.assertEqual(reconciled['requested_charge_targets'][:2], [100.0]*2)
+        # 2 x 1.215 kWh internal charge / 15 kWh capacity = 16.2 pp.
+        self.assertAlmostEqual(reconciled['charge_targets'][0], 36.2)
+        self.assertEqual(reconciled['charge_targets'][0], reconciled['charge_targets'][1])
+        self.assertAlmostEqual(reconciled['charge_target_shortfalls'][0]['shortfall_pct'], 63.8)
+        self.assertEqual(reconciled['required'][1], 15.0)
+        plan = optimize_energy_horizon(
+            rows, 20.0, 15.0, 15.0, .98, .98, .05, 0.0, 5.0, 15,
+            [15.0]*22, 15.0, .1, 100.0,
+            minimum_soc_targets=reconciled['charge_targets'],
+            target_due_indices=reconciled['buy_due_indices'],
+            required_soc_pcts=reconciled['required'], battery_sales_enabled=False,
+            grid_charge_caps=reconciled['charge_targets'])
+        self.assertAlmostEqual(plan['flows'][1]['soc_end_pct'], 36.2)
+        for flow in plan['flows'][:2]:
+            self.assertAlmostEqual(flow['grid_charge_kwh'], 1.215/.98)
+        self.assertTrue(all(flow['battery_sell_kwh'] == 0 for flow in plan['flows']))
+
+    def test_valid_high_buy_target_is_preserved_when_physically_reachable(self):
+        rows = self.rows(2)
+        for row in rows:
+            row['buy_window'] = True
+        requested = deterministic_soc_target_contract(
+            rows, [17.0]*2, [17.0, 95.0], 15.0, 15.0,
+            .98, .98, 5.0, 15, 0.0)
+        recovery = validate_recoverable_soc_requirements(
+            rows, requested['raw_required'], 85.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=.98, eta_d=.98, max_power_kw=5.0)
+        reconciled = preserve_target_contract_after_reachability(requested, recovery, {1})
+        self.assertEqual(reconciled['charge_targets'], [95.0, 95.0])
+        self.assertEqual(reconciled['charge_target_shortfalls'], [])
+
+    def test_short_buy_window_keeps_goal_and_publishes_physical_ceiling(self):
+        rows = self.rows(2)
+        for row in rows:
+            row['buy_window'] = True
+        requested = deterministic_soc_target_contract(
+            rows, [17.0]*2, [17.0, 60.0], 15.0, 15.0,
+            .98, .98, 5.0, 15, 0.0)
+        recovery = validate_recoverable_soc_requirements(
+            rows, requested['raw_required'], 20.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=.98, eta_d=.98, max_power_kw=5.0)
+        reconciled = preserve_target_contract_after_reachability(requested, recovery, {1})
+        self.assertEqual(reconciled['requested_charge_targets'], [60.0, 60.0])
+        self.assertEqual(reconciled['required'][1], 60.0)
+        for target in reconciled['charge_targets']:
+            self.assertAlmostEqual(target, 36.2)
+        self.assertAlmostEqual(reconciled['charge_target_shortfalls'][0]['shortfall_pct'], 23.8)
+
     def test_contract_is_not_clamped_to_economic_path(self):
         rows = self.rows(1)
         contract = build_soc_contracts(

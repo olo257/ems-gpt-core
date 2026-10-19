@@ -99,7 +99,7 @@ class OfflineContractTests(unittest.TestCase):
         planner=MODULE_SOURCES["planner_service.py"]
         self.assertNotIn("base_optimization=optimization",planner)
         self.assertIn('"DETERMINISTIC_SOC_CONTRACT_V4"',planner)
-        self.assertIn("build_soc_contracts(",planner)
+        self.assertIn("target_contract = deterministic_soc_target_contract(",planner)
         self.assertNotIn("seen_target_paths",planner)
         self.assertNotIn("target_due_indices=set()",planner)
         self.assertNotIn('raise RuntimeError(\n                        f"SOC_TARGET_PATH_OSCILLATION',planner)
@@ -131,7 +131,7 @@ class OfflineContractTests(unittest.TestCase):
                          MODULE_SOURCES["ppd_service.py"])
 
     def test_soc_hold_for_future_sale_is_completely_removed(self):
-        planner = MODULE_SOURCES["planner_service.py"]
+        planner = MODULE_SOURCES["planner_service.py"] + MODULE_SOURCES["planner_dispatch_service.py"]
         for obsolete in (
             "Ochrona SOC przed sprzedażą",
             "SOC_HOLD_FOR_FUTURE_SALE",
@@ -487,7 +487,7 @@ class OfflineContractTests(unittest.TestCase):
                       MODULE_SOURCES["planner_service.py"])
         self.assertNotIn("PPD_VOLUNTARY_GRID_LOAD_NOT_NEUTRAL", SOURCE)
         self.assertNotIn("VOLUNTARY_GRID_LOAD_WITHOUT_BATTERY_CHARGE", SOURCE)
-        self.assertIn("voluntary_grid_load =", MODULE_SOURCES["planner_service.py"])
+        self.assertIn("voluntary_grid_load =", MODULE_SOURCES["planner_dispatch_service.py"])
         ingestion = MODULE_SOURCES["ingestion_service.py"]
         config = MODULE_SOURCES["config_service.py"]
         self.assertNotIn("sale_session", ingestion)
@@ -690,7 +690,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('work["forecast_heat_pump_load_kwh"] = planned_heating_kwh', SOURCE)
         self.assertIn('work["forecast_heat_pump_dhw_load_kwh"] = historical_dhw_kwh', SOURCE)
         self.assertIn('hp_load = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25', SOURCE)
-        self.assertIn("load = native_load + hp_load", SOURCE)
+        self.assertIn('+ max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0))',
+                      MODULE_SOURCES["planner_dispatch_service.py"])
         self.assertIn("load=native_load+hp_load", SOURCE)
         self.assertIn("hp_load_kwh={hp_load:.3f}", SOURCE)
         self.assertIn('"planner_bound; published_heat_pump_window"', SOURCE)

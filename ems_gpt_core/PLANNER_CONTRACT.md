@@ -97,12 +97,22 @@ Każde przyszłe okno doby (w tym jutro po 14:00) jest uwzględniane wyłącznie
 gdy kompletne ceny RCE i prognozy znajdują się w ciągłym horyzoncie planu.
 Niewykonalność celu jest raportowana jako niedobór, bez cichego obniżenia celu
 do rezerwy.
-Recovery osiągalności może obniżyć wyłącznie pośrednie ograniczenia trajektorii;
-nie może zastąpić targetu zamknięcia doby ani sufitu BUY. Przy niewykonalnym
+Recovery osiągalności może obniżyć pośrednie ograniczenia trajektorii.
+Od 0.40.54 wykonawczy sufit ciągłego BUY jest dodatkowo ograniczony fizycznym
+maksimum osiągalnym na końcu tego okna, niezależnie od ścieżki ekonomicznej.
+Oryginalny cel pozostaje oddzielnym żądaniem w audycie. Przy niewykonalnym
 zamknięciu plan zachowuje oryginalny target w audycie, wyłącza sprzedaż baterii
 i raportuje osiągalny SOC oraz różnicę do celu. Gdy nieosiągalny jest pośredni
 most SOC, wymóg wykonawczy może spaść wyłącznie do wyliczonej osiągalności i
 nie poniżej rezerwy technicznej; niedobór pozostaje widoczny w audycie.
+
+Surowy bilans powyżej 100% trafia do walidatora bez wcześniejszego obcięcia;
+nie stanowi żądania zakupu do pełnej baterii. Zdarzenie
+`soc_charge_target_physical_limit` zapisuje liczbę takich slotów, maksymalne
+surowe zapotrzebowanie oraz żądany i wykonalny target każdego ograniczonego BUY.
+Wspólny wykonalny target obowiązuje od początku okna. W wybranym slocie zakup
+nadal wykorzystuje pełny fizyczny wolumen do tego targetu; osiągalne cele
+90–100% pozostają dopuszczone, jeśli wynikają z zapotrzebowania.
 
 W prognozie bilansu obciążenie `HP_DHW` jest już zawarte w zużyciu bazowym.
 Dodatkowo uwzględniany jest zaplanowany cykl `HP_HEAT_DHW`; nie należy

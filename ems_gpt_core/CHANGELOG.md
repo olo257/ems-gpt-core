@@ -1,5 +1,14 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.54 — wykonalny sufit ładowania BUY i jawny niedobór SOC
+
+- Surowe zapotrzebowanie SOC ponad pojemność pozostaje dostępne dla walidatora osiągalności; nie jest ukrywane jako pozornie poprawny cel 100%.
+- Wykonawczy target ciągłego okna BUY jest ograniczony fizycznym maksimum SOC osiągalnym na końcu tego okna, wyliczonym przed optymalizacją ekonomiczną. Wszystkie sloty okna dostają wspólny target od początku.
+- Oryginalny cel i brakujący SOC są zapisywane osobno w zdarzeniu `soc_charge_target_physical_limit`. Recovery nie przywraca niewykonalnego sufitu podczas kolejnych przebiegów.
+- Zachowano pełny fizyczny wolumen wybranego BUY do targetu, osiągalne wysokie cele (np. 95%), poprawne cele zamknięcia doby oraz blokadę sprzedaży przy niewykonalnym bilansie.
+- Zmiana logiki i publikacja zatwierdzone przez użytkownika 19.10.2026. Aktualizacja z 0.40.53 wymaga instalacji nowej wersji dodatku.
+- Uaktualniono stare testy kontraktu do modułów po refaktorze; bez zmiany algorytmu prognoz.
+
 ## 0.40.53 — naprawa importu profilu pompy ciepła
 
 - Dodano brakujący import `json` używany przy odczycie `heat_profile_json`; planner nie kończy już przebiegu błędem `NameError` podczas przygotowania planu HP.
