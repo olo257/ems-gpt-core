@@ -21,6 +21,8 @@ jobs:
           if [ -f ems_gpt_core/requirements.txt ]; then pip install -r ems_gpt_core/requirements.txt; fi
       - name: Compile Python sources
         run: python -m compileall -q ems_gpt_core
+      - name: Heat pump planner import regression
+        run: python -m unittest discover -s ems_gpt_core/tests -p 'test_hp_profile_import.py' -v
       - name: Planner regression tests
         run: python -m unittest discover -s ems_gpt_core/tests -p 'test_buy_deadline_regression.py' -v
 
