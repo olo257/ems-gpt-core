@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.53 — naprawa importu profilu pompy ciepła
+
+- Dodano brakujący import `json` używany przy odczycie `heat_profile_json`; planner nie kończy już przebiegu błędem `NameError` podczas przygotowania planu HP.
+- Dodano test regresyjny potwierdzający dostępność parsera JSON w module planowania HP.
+
+
 ## 0.40.52 — poprawka walidacji prognozy PV
 
 - Dodano brakujący import modułu `math`, który powodował błąd przy każdym przeliczeniu planera.
