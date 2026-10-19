@@ -49,6 +49,64 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         self.assertEqual(first_replan_soc, 42.3)
         self.assertEqual(second_replan_soc, 66.0)
 
+    def test_reachability_and_dispatch_both_charge_with_house_load(self):
+        rows = self.rows(2)
+        for row in rows:
+            row.update(buy_window=True, forecast_load_kwh=.2)
+        profile = _soc_reachability_profile(
+            rows, 20.0, 15.0, 15.0, .98, .98, 5.0, 15)
+        self.assertAlmostEqual(profile['reachable_soc_ceiling_pcts'][0], 28.1)
+        self.assertAlmostEqual(profile['reachable_soc_ceiling_pcts'][1], 36.2)
+        plan = optimize_energy_horizon(
+            rows, 20.0, 15.0, 15.0, .98, .98, 0.0, 0.0, 5.0, 15,
+            [15.0]*2, 15.0, .1, 100.0, minimum_soc_targets=[36.2]*2,
+            target_due_indices={1}, required_soc_pcts=[15.0]*2,
+            battery_sales_enabled=False, grid_charge_caps=[36.2]*2)
+        for index, flow in enumerate(plan['flows']):
+            self.assertAlmostEqual(flow['soc_end_pct'], profile['reachable_soc_ceiling_pcts'][index])
+            self.assertAlmostEqual(flow['grid_charge_kwh'], 1.215/.98)
+            self.assertAlmostEqual(flow['grid_load_kwh'], .2)
+
+    def test_reachable_buy_with_house_load_respects_site_limit(self):
+        rows = self.rows(1)
+        rows[0].update(buy_window=True, forecast_load_kwh=.2)
+        profile = _soc_reachability_profile(
+            rows, 20.0, 15.0, 15.0, .98, .98, 5.0, 15,
+            max_grid_import_kw=2.0)
+        # 0.5 kWh site limit less 0.2 kWh house; 0.294 kWh
+        # internal input rounds down to 0.285 kWh (1.9 pp).
+        self.assertAlmostEqual(profile['reachable_soc_ceiling_pcts'][0], 21.9)
+        rows[0]['buy_window'] = False
+        no_buy = _soc_reachability_profile(
+            rows, 20.0, 15.0, 15.0, .98, .98, 5.0, 15)
+        self.assertLess(no_buy['reachable_soc_ceiling_pcts'][0], 20.0)
+
+    def test_loaded_buy_window_preserves_energy_for_following_night(self):
+        rows = self.rows(20, start=datetime(2026, 10, 19, 21, 30))
+        for index, row in enumerate(rows):
+            row.update(buy_window=index < 2, forecast_load_kwh=.2)
+        requested = deterministic_soc_target_contract(
+            rows, [17.0]*20, [17.0]*20, 15.0, 15.0,
+            .98, .98, 5.0, 15, 1.0)
+        recovery = validate_recoverable_soc_requirements(
+            rows, requested['raw_required'], 30.0, 15.0, 100.0,
+            capacity_kwh=15.0, eta_c=.98, eta_d=.98, max_power_kw=5.0)
+        contract = preserve_target_contract_after_reachability(requested, recovery, set())
+        self.assertGreater(contract['charge_targets'][0], 40.0)
+        self.assertEqual(contract['charge_targets'][0], contract['charge_targets'][1])
+        plan = optimize_energy_horizon(
+            rows, 30.0, 15.0, 15.0, .98, .98, .05, 0.0, 5.0, 15,
+            [15.0]*20, 17.0, .1, 100.0,
+            minimum_soc_targets=contract['charge_targets'],
+            target_due_indices=contract['buy_due_indices'],
+            required_soc_pcts=contract['required'], battery_sales_enabled=False,
+            grid_charge_caps=contract['charge_targets'])
+        self.assertGreater(sum(f['grid_charge_kwh'] for f in plan['flows'][:2]), 2.0)
+        for flow in plan['flows'][2:]:
+            self.assertLess(flow['grid_load_kwh'], .015)
+            self.assertGreater(flow['battery_to_load_kwh'], .18)
+        self.assertGreaterEqual(plan['flows'][-1]['soc_end_pct'], 17.0)
+
     def test_buy_deadline_accounts_for_house_load_in_same_slot(self):
         rows = self.rows(2, start=datetime(2026, 10, 10, 13, 45))
         rows[1]["buy_window"] = True
@@ -426,7 +484,7 @@ class SocReplenishmentSafetyTests(unittest.TestCase):
         profile = _soc_reachability_profile(
             rows, 20.0, 15.0, 15.0, 0.98, 0.98, 5.0, 15, 0.1,
             [28.0])
-        self.assertLess(profile['feasible_soc_path_pcts'][0], 20.0)
+        self.assertAlmostEqual(profile['feasible_soc_path_pcts'][0], 28.1)
         plan = optimize_energy_horizon(
             rows, 20.0, 15.0, 15.0, 0.98, 0.98, 0.08, 0.05,
             5.0, 15, [15.0], 15.0, 0.1, 100.0,
