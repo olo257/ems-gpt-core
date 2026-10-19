@@ -139,8 +139,14 @@ def _soc_reachability_profile(
                 unavoidable_grid_load = _unavoidable_grid_load_allowed(
                     grid_load, current, following, first_unit, max_down,
                     unit_kwh, eta_discharge)
+                # Match dispatch: during a real BUY charge, the grid supplies
+                # native load as well as the battery. Rejecting that load here
+                # erased every charging transition whenever the house drew
+                # more than one SOC quantum, and collapsed BUY ceilings.
+                grid_load_during_buy_charge = buy_allowed and grid_charge > 1e-9
                 if (grid_load > unit_kwh * eta_discharge + 1e-9
-                        and not unavoidable_grid_load):
+                        and not unavoidable_grid_load
+                        and not grid_load_during_buy_charge):
                     continue
                 if grid_load + grid_charge > max_grid_slot_kwh + 1e-9:
                     continue

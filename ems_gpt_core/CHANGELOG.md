@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.55 — ładowanie BUY przy równoczesnym poborze domu
+
+- Naprawiono rozbieżność modelu osiągalności i dispatchu: rzeczywiste ładowanie baterii w BUY może współistnieć z zasilaniem domu z sieci, w granicach wspólnego limitu importu.
+- Dotychczasowa kontrola odrzucała przejścia ładowania przy obciążeniu domu; po ograniczeniu targetów w 0.40.54 prowadziło to do zerowego zakupu w BUY, spadku SOC do rezerwy i późniejszego zasilania domu z sieci.
+- Dodano regresje dla dwóch slotów BUY z obciążeniem domu, wspólnego limitu importu, zakazu ładowania poza BUY oraz zapasu na późniejsze nocne zużycie. Skorygowano starą asercję profilu, która utrwalała wadliwe odrzucanie ładowania.
+
 ## 0.40.54 — wykonalny sufit ładowania BUY i jawny niedobór SOC
 
 - Surowe zapotrzebowanie SOC ponad pojemność pozostaje dostępne dla walidatora osiągalności; nie jest ukrywane jako pozornie poprawny cel 100%.

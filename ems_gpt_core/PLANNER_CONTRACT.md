@@ -114,6 +114,12 @@ Wspólny wykonalny target obowiązuje od początku okna. W wybranym slocie zakup
 nadal wykorzystuje pełny fizyczny wolumen do tego targetu; osiągalne cele
 90–100% pozostają dopuszczone, jeśli wynikają z zapotrzebowania.
 
+Od 0.40.55 kontrola osiągalności, tak jak dispatch, dopuszcza równoczesne
+zasilanie domu z sieci i rzeczywiste ładowanie baterii w BUY. Do limitu
+importu obiektu wlicza sumę obu przepływów. Samo zasilanie domu nie jest
+ładowaniem i nie tworzy takiego wyjątku. Pobór domu nie może wyzerować
+wykonalnej mocy ładowania, jeśli limit sieci pozostawia na nią miejsce.
+
 W prognozie bilansu obciążenie `HP_DHW` jest już zawarte w zużyciu bazowym.
 Dodatkowo uwzględniany jest zaplanowany cykl `HP_HEAT_DHW`; nie należy
 doliczać ponownie profilu `HP_DHW`.
