@@ -127,13 +127,17 @@ def deterministic_soc_target_contract(
     buy_due = {i for i in selected_buy
                if i + 1 == len(rows) or i + 1 not in selected_buy}
     required = [reserve] * len(rows)
+    raw_required = [reserve] * len(rows)
     next_requirement_kwh = base_kwh
     for i in range(len(rows) - 1, -1, -1):
         requested = max(float(safety_required_soc_pcts[i]),
                         float(daily_required_soc_pcts[i]), reserve)
         after_kwh = max(next_requirement_kwh,
-                        capacity * min(100.0, requested) / 100.0)
+                        capacity * requested / 100.0)
         after_kwh = math.ceil(after_kwh / quantum_kwh - 1e-9) * quantum_kwh
+        # Preserve over-cap demand for reachability validation. Clipping here
+        # used to turn an impossible bridge into an apparently valid 100% goal.
+        raw_required[i] = after_kwh / capacity * 100.0
         required[i] = min(100.0, after_kwh / capacity * 100.0)
         row = rows[i]
         load = (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
@@ -179,6 +183,7 @@ def deterministic_soc_target_contract(
 
     return {
         "required": required,
+        "raw_required": raw_required,
         "charge_targets": charge_targets,
         "due": due,
         "source": source,
@@ -267,26 +272,58 @@ def planned_buy_execution_targets(rows: list[dict], flows: list[dict],
 def preserve_target_contract_after_reachability(
         target_contract: dict, recovery: dict,
         daily_close_indices: set[int]) -> dict:
-    """Keep daily close goals and BUY ceilings separate from reachable SOC floors.
+    """Keep requested goals separate from physically executable BUY ceilings.
 
     Reachability may relax intermediate hard floors so a rolling plan can still
-    start from measured SOC. It must not lower the requested charge ceiling or
-    erase the original target at a local-day close.
+    start from measured SOC. Keep valid daily close goals, but a BUY ceiling
+    cannot exceed the physical end-of-window frontier. Preserve its requested
+    value separately so a shortage never disappears from diagnostics.
     """
     requested = list(target_contract.get("required", []))
     reachable = list(recovery.get("required_soc_pcts", []))
     if len(requested) != len(reachable):
         raise ValueError("TARGET_RECOVERY_LENGTH_MISMATCH")
     required = list(reachable)
+    raw_required = list(target_contract.get("raw_required", requested))
+    if len(raw_required) != len(required):
+        raise ValueError("TARGET_RECOVERY_LENGTH_MISMATCH")
     for index in daily_close_indices:
         if not 0 <= index < len(required):
             raise ValueError("TARGET_RECOVERY_CLOSE_INDEX_INVALID")
-        required[index] = max(required[index], requested[index])
+        if raw_required[index] <= 100.0 + 1e-9:
+            required[index] = max(required[index], requested[index])
     result = dict(target_contract)
     result["requested_required"] = requested
     result["reachable_required"] = reachable
     result["required"] = required
-    result["charge_targets"] = list(target_contract.get("charge_targets", requested))
+    requested_targets = list(target_contract.get("charge_targets", requested))
+    targets = list(requested_targets)
+    ceilings = recovery.get("reachable_soc_ceiling_pcts")
+    shortages = []
+    if ceilings is not None:
+        if len(ceilings) != len(required):
+            raise ValueError("TARGET_RECOVERY_LENGTH_MISMATCH")
+        for index, raw in enumerate(raw_required):
+            if raw > 100.0 + 1e-9:
+                targets[index] = min(targets[index], float(ceilings[index]))
+        selected = set(target_contract.get("selected_buy_indices") or [])
+        for start in sorted(i for i in selected if i - 1 not in selected):
+            end = start
+            while end + 1 in selected:
+                end += 1
+            requested_target = max(requested_targets[start:end + 1])
+            executable_target = min(requested_target, float(ceilings[end]))
+            targets[start:end + 1] = [executable_target] * (end - start + 1)
+            if executable_target + 1e-9 < requested_target:
+                shortages.append({"start_index": start, "end_index": end,
+                                  "requested_soc_pct": requested_target,
+                                  "executable_soc_pct": executable_target,
+                                  "shortfall_pct": requested_target - executable_target})
+    result["requested_charge_targets"] = requested_targets
+    result["charge_targets"] = targets
+    result["charge_target_shortfalls"] = shortages
+    result["over_capacity_indices"] = [
+        i for i, value in enumerate(raw_required) if value > 100.0 + 1e-9]
     result["unreachable_indices"] = list(recovery.get("unreachable_indices") or [])
     result["capacity_limited_indices"] = list(recovery.get("capacity_limited_indices") or [])
     return result

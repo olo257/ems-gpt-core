@@ -59,7 +59,7 @@ from planner_soc_service import (
     validate_recoverable_soc_requirements,
 )
 
-PLANNER_VERSION = "CORE_0_40_52"
+PLANNER_VERSION = "CORE_0_40_54"
 
 @dataclass(frozen=True)
 class PlannerAdapters:
@@ -299,12 +299,23 @@ def build_planner(a: PlannerAdapters):
                 capacity, reserve, eta_c, eta_d, max_kw,
                 int(OPTIONS["slot_minutes"]), uncertainty_weight)
             target_recovery = validate_recoverable_soc_requirements(
-                horizon_rows, target_contract["required"], soc_now, reserve,
+                horizon_rows, target_contract["raw_required"], soc_now, reserve,
                 target_cap, capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
                 max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
                 soc_step_pct=0.10, max_grid_import_kw=max_grid_import_kw)
             target_contract = preserve_target_contract_after_reachability(
                 target_contract, target_recovery, daily_close_indices)
+            if target_contract["charge_target_shortfalls"] or target_contract["over_capacity_indices"]:
+                record_event("soc_charge_target_physical_limit", "planner", {
+                    "over_capacity_slot_count": len(target_contract["over_capacity_indices"]),
+                    "maximum_raw_required_soc_pct": max(target_contract["raw_required"], default=reserve),
+                    "buy_windows": [
+                        {**shortfall,
+                         "slot_start": str(horizon_rows[shortfall["start_index"]]["slot_start"]),
+                         "slot_end": str(horizon_rows[shortfall["end_index"]]["slot_end"])}
+                        for shortfall in target_contract["charge_target_shortfalls"]],
+                    "action": "EXECUTABLE_BUY_CEILING_KEEP_REQUESTED_SHORTFALL",
+                }, "WARNING")
             if target_recovery.get("unreachable_indices"):
                 unreachable = target_recovery["unreachable_indices"]
                 close_shortfalls = [
@@ -633,9 +644,8 @@ def build_planner(a: PlannerAdapters):
                 commitment = target_contract
                 required_soc = list(enforced_daily_required)
                 charge_targets = list(target_contract["charge_targets"])
-                for index in waived_daily_closes:
-                    charge_targets[index] = max(
-                        charge_targets[index], daily_required_soc[index])
+                # Requested close goals remain in diagnostics. Do not restore
+                # an unreachable BUY ceiling after relaxing a daily floor.
                 target_due_indices = set(target_contract["buy_due_indices"])
                 selected_buy_indices = set(target_contract["selected_buy_indices"])
                 optimization=optimize_remaining_pass(
