@@ -1,5 +1,17 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.56 — bilans bieżącego slotu i utrzymanie celu trwającego BUY
+
+- Rozszerzenie zatwierdzone 20.10.2026: importer RCE po przygotowaniu prognoz domu/HP/PV rozszerza nocne doliny BUY (00:00–06:00) o sąsiednie opłacalne sloty, gdy dotychczasowa pojemność czasowa nie pokrywa bilansu poranka. Uwzględnia skończoną pojemność wszystkich przyszłych BUY, rezerwę, bufor i niepewność; nie opiera wymaganej długości nocy na bazowym TOU 30%.
+- Rozszerzanie uprawnień pozostaje w `ingestion_service.py`, w tej samej transakcji co publikacja planu. Nie nadpisuje SELL, wykonanych slotów ani uprawnień dnia. Cena magazynowanej energii po stratach i degradacji musi być nie wyższa od ważonego kosztu unikanej energii poranka.
+- Audyt `morning_energy_coverage` wylicza zapas od ostatniego nocnego BUY przez cały dostępny poranek, bez zerowania bilansu na krótkim BUY. Publikowany plan z brakującą energią/buforem lub istotnym zasilaniem domu z sieci ma powód `MORNING_ENERGY_SHORTFALL`, zamiast pozornego `OK`.
+
+- Replan używa świeżego SOC i prognozuje jego zmianę przez pozostałą część aktywnego slotu do początku horyzontu. Nie traktuje pomiaru z 04:47 jako stanu na 05:00.
+- Projekcja korzysta ze świeżej znormalizowanej mocy DC baterii i limitów fizycznych. Bez aktualnej mocy nie zakłada wykonania przyszłego ładowania; uwzględnia planowane rozładowanie jako konserwatywny wariant.
+- Zaakceptowany target aktywnego zakupu przechodzi na pozostałe sloty tego samego ciągłego okna BUY. Przesunięcie początku horyzontu nie obniża progu zatrzymania falownika; nowy deficyt może podnieść cel, a jawny limit konfiguracji go ogranicza.
+- Niedobór osiągalności pozostaje raportowany osobno, przy pełnym dostępnym wolumenie BUY i bez sprzedaży baterii. Cel nie przechodzi przez przerwę lub poza BUY.
+- Nowe testy odtwarzają incydent 20.10.2026 (33,2% → 24,1%), sprawdzają dalsze pełne ładowanie do 30,1% przy rzeczywistym starcie 22% oraz jawny brak 3,1 p.p. Dodano regresję do GitHub Actions.
+
 ## 0.40.55 — ładowanie BUY przy równoczesnym poborze domu
 
 - Naprawiono rozbieżność modelu osiągalności i dispatchu: rzeczywiste ładowanie baterii w BUY może współistnieć z zasilaniem domu z sieci, w granicach wspólnego limitu importu.

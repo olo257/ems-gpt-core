@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.55**.
+Status: obowiązująca. Wersja wydania: **0.40.56**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -50,6 +50,14 @@ bazy MariaDB `ems_gpt` i nie odczytuje bazy rekordera Home Assistant.
 | Prognozy, SOC, import/eksport baterii, przepływ PV do baterii i polityki planu | Planer (`planner_service.py`) | PPD i wykonawca odczytują |
 | Podział wolnego PV na CWU/EV/eksport/ograniczenie, rekomendacja i decyzje procesów | PPD (`ppd_service.py`) | API i wykonawca odczytują |
 | Polecenia i stan wykonania | Wykonawca (`executor_service.py`) | PPD i diagnostyka odczytują |
+
+Od 0.40.56 planer przekazuje gotowe prognozy domu/HP/PV do metody
+`ensure_night_buy_capacity` importera RCE. To importer dobiera dodatkowe
+opłacalne sloty nocne i zapisuje uprawnienia, korzystając z kursora bieżącej
+transakcji planera. Publikacja lub wycofanie obejmuje oba zapisy. Diagnostyka
+`night_buy_capacity` podaje wymaganą i dostępną pojemność oraz ceny i ograniczenia.
+Audyt `morning_energy_coverage` oraz powód walidacji `MORNING_ENERGY_SHORTFALL`
+ujawniają pozostały deficyt poranka; nie oznaczają go jako pełnego pokrycia `OK`.
 
 PPD wylicza wolną nadwyżkę z prognozy PV, obciążenia bazowego i HP oraz
 przepływu PV do baterii. Nie używa poprzednich przydziałów PPD jako wejścia.

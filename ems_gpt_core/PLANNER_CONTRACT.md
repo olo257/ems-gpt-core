@@ -120,6 +120,46 @@ importu obiektu wlicza sumę obu przepływów. Samo zasilanie domu nie jest
 ładowaniem i nie tworzy takiego wyjątku. Pobór domu nie może wyzerować
 wykonalnej mocy ładowania, jeśli limit sieci pozostawia na nią miejsce.
 
+Od 0.40.56 świeży pomiar SOC jest odnoszony do czasu pomiaru, a nie bezpośrednio
+do początku następnego slotu. Przed optymalizacją prognozowana jest zmiana SOC
+przez pozostały czas bieżącego slotu na podstawie świeżej mocy DC baterii.
+Obowiązują limity fizyczne, a przy ładowaniu wyłącznie z sieci także aktywny
+target. Nieaktualna lub brakująca moc nie daje kredytu za niewykonane ładowanie;
+planowane rozładowanie stanowi konserwatywny wariant zastępczy.
+Audyt `replan_soc_time_alignment` rozdziela pomiar, prognozę na granicę slotu
+i pozostały bilans energii. Aktywny slot nie jest ponownie publikowany.
+
+W trakcie realizacji wybranego BUY jego zaakceptowany target jest utrzymywany
+na pozostałych slotach tego samego ciągłego okna RCE BUY. Samo przesunięcie
+horyzontu nie obniża progu zatrzymania ładowania. Zwiększone zapotrzebowanie
+może podnieść cel, a zmieniony limit konfiguracji go ogranicza. Niedobór wobec
+fizycznej osiągalności jest raportowany osobno i wyłącza sprzedaż baterii;
+wykonawca nadal wykorzystuje pełny wolumen do targetu lub końca BUY. Cel nie
+przechodzi przez przerwę w oknie, SELL ani do późniejszego niezależnego BUY.
+
+Importer RCE zachowuje wyłączną odpowiedzialność za uprawnienia BUY/SELL.
+Po przygotowaniu prognoz domu, HP i PV może rozszerzyć istniejącą nocną dolinę
+BUY w godzinach 00:00–06:00 o sąsiednie sloty bez SELL. Wymagana pojemność
+czasowa wynika z bilansu wstecznego całego dostępnego horyzontu, ze skończoną
+pojemnością przyszłych BUY i rzeczywistą nadwyżką PV; nie z bazowego SOC TOU.
+W kalkulacji dostępnego ładowania uwzględnia się moc baterii, pobór domu i limit
+sieci, a w zapotrzebowaniu rezerwę, bufor i korektę niepewności.
+
+Importer wybiera najtańszy opłacalny sąsiedni slot. Koszt zakupu po stratach
+ładowania/rozładowania, degradacji i wymaganej marży nie może przewyższać
+ważonej ceny unikanej energii poranka przed kolejnym dziennym BUY.
+Otwarcie uprawnienia nie wymusza zakupu ponad dynamiczny target. Nie zmienia
+SELL, cen RCE, zakończonych slotów ani dziennych uprawnień. Zmiana nocnych
+uprawnień i publikacja planu należą do jednej transakcji; odrzucenie kandydata
+wycofuje także jego rozszerzenie BUY. Niekompletna prognoza blokuje rozszerzenie.
+
+Audyt pokrycia energii poranka obejmuje dostępne sloty 06:00–12:00 oraz okres
+od ostatniego poprzedzającego BUY. Krótki BUY wewnątrz poranka wnosi wyłącznie
+swoją fizyczną pojemność i nie zeruje dalszego zapotrzebowania. Brakujący zapas
+lub istotne zasilanie domu z sieci poza rzeczywistym ładowaniem są jawnie
+oznaczane `MORNING_ENERGY_SHORTFALL`. Wariant fizycznie wykonalny może nadal
+zostać opublikowany jako plan awaryjny, lecz nie jako pełne pokrycie `OK`.
+
 W prognozie bilansu obciążenie `HP_DHW` jest już zawarte w zużyciu bazowym.
 Dodatkowo uwzględniany jest zaplanowany cykl `HP_HEAT_DHW`; nie należy
 doliczać ponownie profilu `HP_DHW`.
