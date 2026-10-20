@@ -33,6 +33,8 @@ from planner_dispatch_service import (
     optimize_energy_horizon,
     planned_buy_execution_targets,
     preserve_target_contract_after_reachability,
+    preserve_active_buy_window_target,
+    morning_energy_coverage,
     replenishment_soc_requirements,
     voluntary_load_without_charging_indices,
     validated_buy_deadline_targets,
@@ -50,6 +52,7 @@ from planner_soc_service import (
     historical_terminal_soc,
     terminal_soc_recovery,
     current_soc_for_replan,
+    project_soc_to_horizon_start,
     relax_soc_requirement_to_reachable,
     effective_required_soc_for_dispatch,
     _soc_reachability_profile,
@@ -59,7 +62,7 @@ from planner_soc_service import (
     validate_recoverable_soc_requirements,
 )
 
-PLANNER_VERSION = "CORE_0_40_55"
+PLANNER_VERSION = "CORE_0_40_56"
 
 @dataclass(frozen=True)
 class PlannerAdapters:
@@ -72,6 +75,7 @@ class PlannerAdapters:
     active_tou_program: Callable
     tou_program_snapshot: Callable
     record_event: Callable
+    prepare_buy_windows: Callable | None = None
 
 def build_planner(a: PlannerAdapters):
     OPTIONS = a.options
@@ -99,7 +103,8 @@ def build_planner(a: PlannerAdapters):
         cutoff = slot_start().replace(tzinfo=None) + timedelta(minutes=int(OPTIONS["slot_minutes"]))
         capacity = max(1.0, float(OPTIONS.get("battery_capacity_kwh", 15.0)))
         reserve = max(0.0, min(90.0, float(OPTIONS.get("battery_min_soc_pct", 15.0))))
-        # Read the HA state anew for every replan; cutoff begins at the next open slot.
+        # Fresh measured SOC is aligned to cutoff below; the live slot is not
+        # part of the optimizer's future horizon and must not disappear.
         soc_now = current_soc_for_replan(setting)
         eta_c = max(0.01, min(1.0, float(OPTIONS.get("battery_charge_efficiency", 0.90))))
         eta_d = max(0.01, min(1.0, float(OPTIONS.get("battery_discharge_efficiency", 0.95))))
@@ -123,6 +128,23 @@ def build_planner(a: PlannerAdapters):
         tou_programs = planning_tou_programs(
             tou_program_snapshot(), deye_program_soc_baselines(OPTIONS))
         with db() as conn, conn.cursor() as cur:
+            active_start = cutoff - timedelta(minutes=int(OPTIONS["slot_minutes"]))
+            cur.execute("""SELECT * FROM ems_gpt_slots
+              WHERE slot_start=%s AND plan_stage='PUBLISHED' LIMIT 1""", (active_start,))
+            active_plan_row = cur.fetchone()
+            cur.execute("""SELECT captured_at,battery_charge_power_w,
+              battery_discharge_power_w,pv_power_w,load_power_w
+              FROM ems_gpt_telemetry_snapshots
+              WHERE slot_start=%s AND captured_at<=%s
+              ORDER BY captured_at DESC LIMIT 1""", (active_start, now))
+            projection = project_soc_to_horizon_start(
+                soc_now, now, cutoff, active_plan_row, cur.fetchone(),
+                capacity, max_kw, eta_c, eta_d, int(OPTIONS["slot_minutes"]),
+                float(OPTIONS.get("telemetry_degraded_seconds", 120)))
+            soc_now = projection["horizon_initial_soc_pct"]
+            attempt["initial_soc_pct"] = float(soc_now)
+            record_event("replan_soc_time_alignment", "planner", {
+                "horizon_start": str(cutoff), **projection})
             cur.execute("""SELECT * FROM ems_gpt_slots
               WHERE slot_start>=%s AND actual_recorded_at IS NULL
                 AND price_source='PSE_API' AND price_buy_pln_kwh IS NOT NULL AND price_sell_pln_kwh IS NOT NULL
@@ -240,6 +262,15 @@ def build_planner(a: PlannerAdapters):
                 # floor.  Deliberate export is allowed only in SELL windows;
                 # its exact stop SOC is derived from the accepted flow below.
                 sale_constraints.append(reserve if work["sale_window"] else 100.0)
+            if a.prepare_buy_windows is not None:
+                night_capacity = a.prepare_buy_windows(horizon_rows, cur)
+                horizon_rows = night_capacity["rows"]
+                for index in night_capacity["changed_indices"]:
+                    row = horizon_rows[index]
+                    rows[index].update(buy_window=True, sale_window=False, market_window='BUY')
+                    cur.execute("""UPDATE ems_gpt_plan_stage_rows SET
+                      buy_window=1,sale_window=0,market_window='BUY'
+                      WHERE run_id=%s AND slot_start=%s""", (run_id, row['slot_start']))
             planning_days = sorted({row.get("local_day") or row["slot_start"].date()
                                     for row in horizon_rows})
             terminal_day = planning_days[-1]
@@ -305,6 +336,17 @@ def build_planner(a: PlannerAdapters):
                 soc_step_pct=0.10, max_grid_import_kw=max_grid_import_kw)
             target_contract = preserve_target_contract_after_reachability(
                 target_contract, target_recovery, daily_close_indices)
+            target_contract = preserve_active_buy_window_target(
+                horizon_rows, active_plan_row, target_contract, target_cap, flow_threshold)
+            active_buy_commitment = target_contract["active_buy_target_preserved"]
+            active_buy_shortfall = False
+            if active_buy_commitment:
+                ceiling = target_recovery["reachable_soc_ceiling_pcts"][active_buy_commitment["end_index"]]
+                active_buy_shortfall = active_buy_commitment["execution_target_pct"] > ceiling + 1e-9
+                record_event("active_buy_target_preserved", "planner", {
+                    **active_buy_commitment, "physical_ceiling_pct": ceiling,
+                    "physical_shortfall_pct": max(0.0, active_buy_commitment["execution_target_pct"] - ceiling),
+                }, "WARNING" if active_buy_shortfall else "INFO")
             if target_contract["charge_target_shortfalls"] or target_contract["over_capacity_indices"]:
                 record_event("soc_charge_target_physical_limit", "planner", {
                     "over_capacity_slot_count": len(target_contract["over_capacity_indices"]),
@@ -363,7 +405,7 @@ def build_planner(a: PlannerAdapters):
             enforced_daily_required = list(target_contract["required"])
             waived_daily_closes = set()
             battery_sales_enabled = not bool(recovery.get("disable_battery_sales")) and not bool(
-                target_recovery.get("disable_battery_sales"))
+                target_recovery.get("disable_battery_sales")) and not active_buy_shortfall
             if recovery.get("capacity_limited_indices"):
                 record_event("soc_bridge_limited_to_physical_capacity", "planner", {
                     "physical_soc_cap_pct": 100.0,
@@ -863,6 +905,16 @@ def build_planner(a: PlannerAdapters):
             purchase_slots=sum(float(flow["grid_charge_kwh"])>flow_threshold for flow in optimization["flows"])
             audit_stage(cur,run_id,"REPLENISHMENT","OK",purchase_slots,
                         "pass 5: load, falling PV, sale preparation and recovery")
+            morning_coverage = morning_energy_coverage(
+                horizon_rows, optimization['flows'], capacity, reserve,
+                float(OPTIONS.get('soc_replenishment_buffer_pct', 2.)),
+                eta_c, eta_d, max_kw, int(OPTIONS['slot_minutes']), uncertainty_weight,
+                technical_threshold)
+            validation_reason = ('MORNING_ENERGY_SHORTFALL' if any(
+                r['status'] == 'SHORTFALL' for r in morning_coverage) else 'OK')
+            if morning_coverage:
+                record_event('morning_energy_coverage', 'planner', {'reports': morning_coverage},
+                             'WARNING' if validation_reason != 'OK' else 'INFO')
             # ``soc_floor`` is the stop level of a concrete, accepted battery
             # sale.  It is not copied from TOU and it never limits native-load
             # discharge.  Non-sale slots publish only the technical reserve.
@@ -988,18 +1040,19 @@ def build_planner(a: PlannerAdapters):
               p.heat_pump_window=s.heat_pump_window,
               p.plan_run_id=%s,p.plan_stage='PUBLISHED',
               p.plan_stage_version=%s,p.plan_stage_updated_at=NOW(6),
-              p.plan_validation_status='ACCEPTED',p.plan_validation_reason='OK',
+              p.plan_validation_status='ACCEPTED',p.plan_validation_reason=%s,
               p.plan_published_at=NOW(6),p.plan_published=1 WHERE p.actual_recorded_at IS NULL AND p.slot_start>=%s""",
-              (run_id,run_id,PLANNER_VERSION,cutoff))
+              (run_id,run_id,PLANNER_VERSION,validation_reason,cutoff))
             published=cur.rowcount
             cur.execute("""UPDATE ems_gpt_plan_runs SET status='PUBLISHED',current_stage='VALIDATE',
               validated_at=NOW(6),published_at=NOW(6),validation_status='ACCEPTED',
-              validation_reason='OK',updated_at=NOW(6) WHERE run_id=%s""",(run_id,))
+              validation_reason=%s,updated_at=NOW(6) WHERE run_id=%s""",(validation_reason,run_id))
             audit_stage(cur,run_id,"VALIDATE","ACCEPTED",published,"atomic publish")
         record_event("plan_published","planner",{"run_id":run_id,"run_type":run_type,"rows":published})
         for shortfall in hp_shortfalls:
             record_event("hp_minimum_heating_shortfall", "planner", shortfall, "WARNING")
-        return {"run_id":run_id,"rows":published}
+        return {"run_id":run_id,"rows":published,"validation_reason":validation_reason,
+                "morning_coverage":morning_coverage}
 
     def run_planner(run_type: str = "scheduled") -> dict:
         attempt = {

@@ -328,6 +328,53 @@ def preserve_target_contract_after_reachability(
     result["capacity_limited_indices"] = list(recovery.get("capacity_limited_indices") or [])
     return result
 
+def preserve_active_buy_window_target(
+        rows: list[dict], active_row: dict | None, contract: dict,
+        target_cap_pct: float, threshold_kwh: float = .02) -> dict:
+    """Carry the accepted ceiling through a currently charging BUY window.
+
+    Moving the horizon must not discard the active slot's commitment. Keep any
+    physical shortfall explicit rather than lower the inverter stop threshold
+    while it is charging. Never carry a goal across a gap or outside RCE BUY.
+    """
+    result = dict(contract)
+    result["active_buy_target_preserved"] = None
+    if not rows or not active_row:
+        return result
+    if (active_row.get("slot_end") != rows[0].get("slot_start")
+            or float(active_row.get("planned_buy_kwh") or 0.0) <= threshold_kwh
+            or not strict_database_bool(active_row.get("buy_window", False), "buy_window")
+            or strict_database_bool(active_row.get("sale_window", False), "sale_window")):
+        return result
+    previous = active_row.get("soc_charge_target_pct")
+    if previous is None:
+        return result
+    previous = float(previous)
+    if not math.isfinite(previous) or not 0.0 <= previous <= 100.0:
+        raise ValueError("INVALID_ACTIVE_BUY_TARGET")
+    end = 0
+    while end < len(rows):
+        row = rows[end]
+        if (not strict_database_bool(row.get("buy_window", False), "buy_window")
+                or strict_database_bool(row.get("sale_window", False), "sale_window")
+                or (end > 0 and row.get("slot_start") != rows[end-1].get("slot_end"))):
+            break
+        end += 1
+    if not end:
+        return result
+    targets = list(contract["charge_targets"])
+    goal = min(float(target_cap_pct), max(previous, max(targets[:end])))
+    if goal <= max(targets[:end]) + 1e-9:
+        return result
+    targets[:end] = [goal] * end
+    result["charge_targets"] = targets
+    result["active_buy_target_preserved"] = {
+        "previous_target_pct": previous, "recalculated_target_pct": max(contract["charge_targets"][:end]),
+        "execution_target_pct": goal, "end_index": end-1,
+        "action": "KEEP_ACTIVE_BUY_GOAL_REPORT_ANY_PHYSICAL_SHORTFALL"}
+    return result
+
+
 def replenishment_soc_requirements(rows: list[dict], capacity_kwh: float,
                                    reserve_pct: float, buffer_pct: float,
                                    eta_c: float, eta_d: float,
@@ -371,6 +418,53 @@ def replenishment_soc_requirements(rows: list[dict], capacity_kwh: float,
         supply = math.floor(supply / quantum_kwh + 1e-9) * quantum_kwh
         required_after = max(base_kwh, required_after + deficit - supply)
     return result
+
+
+def morning_energy_coverage(
+        rows: list[dict], flows: list[dict], capacity_kwh: float, reserve_pct: float,
+        buffer_pct: float, eta_c: float, eta_d: float, max_power_kw: float,
+        slot_minutes: int, uncertainty_weight: float, threshold_kwh: float = .05) -> list[dict]:
+    """Audit morning energy from the last night BUY to real replenishment.
+
+    Required energy is not reset to reserve by reachability recovery. Report
+    any missing bridge/buffer or material grid supply instead of calling a
+    best-effort plan fully covered.
+    """
+    if len(rows) != len(flows):
+        raise ValueError('MORNING_COVERAGE_LENGTH_MISMATCH')
+    reports = []
+    for day in sorted({row['slot_start'].date() for row in rows}):
+        morning = [i for i,r in enumerate(rows)
+                   if r['slot_start'].date() == day and 6 <= r['slot_start'].hour < 12]
+        if not morning:
+            continue
+        buys = [i for i,r in enumerate(rows) if strict_database_bool(r.get('buy_window', False), 'buy_window')
+                and not strict_database_bool(r.get('sale_window', False), 'sale_window')]
+        prior = [i for i in buys if i < morning[0]]
+        start = prior[-1]+1 if prior else 0
+        # A short BUY inside the morning cannot reset the bridge. Include
+        # its finite supply and all remaining morning slots in this audit.
+        boundary = morning[-1]+1
+        if boundary <= start:
+            continue
+        dummy = dict(forecast_load_kwh=0., forecast_pv_total_kwh=0., buy_window=False, sale_window=False)
+        required = replenishment_soc_requirements(
+            [dummy]+rows[start:boundary], capacity_kwh, reserve_pct, buffer_pct,
+            eta_c, eta_d, max_power_kw, slot_minutes, uncertainty_weight)[0]
+        available = float(flows[start]['soc_start_pct'])
+        grid_load = sum(float(flows[i].get('grid_load_kwh') or 0.)
+                        for i in morning if i < boundary
+                        and float(flows[i].get('grid_charge_kwh') or 0.) <= threshold_kwh
+                        and float(flows[i].get('grid_load_kwh') or 0.) > threshold_kwh)
+        shortage = max(0., required-available)
+        reports.append({'day': str(day), 'bridge_start': str(rows[start]['slot_start']),
+                        'coverage_until': str(rows[boundary-1]['slot_end']),
+                        'required_soc_pct': required, 'planned_soc_pct': available,
+                        'missing_internal_kwh': shortage*capacity_kwh/100.,
+                        'morning_grid_load_kwh': grid_load,
+                        'status': 'SHORTFALL' if shortage*capacity_kwh/100. > threshold_kwh
+                                  or grid_load > threshold_kwh else 'COVERED'})
+    return reports
 
 
 def economic_sell_indices(rows: list[dict], eta_c: float, eta_d: float,

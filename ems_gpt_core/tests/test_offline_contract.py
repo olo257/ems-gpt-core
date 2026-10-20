@@ -309,8 +309,8 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('"rce_dependent_cycle_failed"', APP_SOURCE)
         self.assertIn('"planner": {"status": "ERROR", "error": str(exc)}', APP_SOURCE)
         self.assertIn('"RCE dependent cycle failed after complete import"', APP_SOURCE)
-        self.assertIn('should_run_slot_replan(clock, start, last_run, rce_done)', loop)
-        self.assertIn('"slot_replan"', loop)
+        self.assertIn('should_run_slot_replan(clock, start, last_run, rce_done, trigger["reasons"])', loop)
+        self.assertIn('"event_replan"', loop)
         self.assertNotIn('"hourly_replan"', loop)
         self.assertIn('"slot_replan_failed"', loop)
         self.assertIn('"RCE state restored: status=ALREADY_COMPLETED rows=%s/%s target=%s"', loop)
@@ -811,5 +811,3 @@ class OfflineContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

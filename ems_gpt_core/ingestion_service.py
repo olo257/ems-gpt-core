@@ -11,6 +11,8 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 
 from config_service import deye_program_soc_baselines
+from planner_dispatch_service import replenishment_soc_requirements
+from planner_validation_service import strict_database_bool
 
 
 def select_pv_profile(slots: list[dict], profiles: list[dict], month: int) -> tuple[list[float], int | None]:
@@ -140,6 +142,99 @@ def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
     return windows
 
 
+def extend_night_buy_capacity(
+        rows: list[dict], capacity_kwh: float, reserve_pct: float, buffer_pct: float,
+        eta_c: float, eta_d: float, max_power_kw: float, slot_minutes: int,
+        uncertainty_weight: float, degradation: float, min_margin: float,
+        grid_import_limit_kw: float = 12.0) -> dict:
+    """Give the price valley enough night capacity for the following morning.
+
+    This only opens permissions next to existing night BUY valleys. Load/PV
+    determine capacity; morning avoided import prices bound economics. SELL,
+    completed slots and daytime permissions are never overwritten here.
+    """
+    work = [dict(row) for row in rows]
+    changed, reports = set(), []
+    hours = slot_minutes/60.0
+    quantum = capacity_kwh*.001
+    # Prepare later nights first: earlier bridges may rely on their finite
+    # charge capacity, never just on the existence of a later BUY flag.
+    for day in sorted({row['slot_start'].date() for row in work}, reverse=True):
+        night = [i for i, row in enumerate(work)
+                 if row['slot_start'].date() == day and row['slot_start'].hour < 6]
+        selected = {i for i in night if strict_database_bool(work[i].get('buy_window', False), 'buy_window')
+                    and not strict_database_bool(work[i].get('sale_window', False), 'sale_window')}
+        if not selected:
+            continue
+        morning = [i for i, row in enumerate(work)
+                   if row['slot_start'].date() == day and row['slot_start'].hour >= 6]
+        if not morning:
+            reports.append({'day': str(day), 'status': 'WAITING_MORNING_FORECAST'})
+            continue
+        boundary = next((i for i in morning if strict_database_bool(
+            work[i].get('buy_window', False), 'buy_window') and not strict_database_bool(
+            work[i].get('sale_window', False), 'sale_window')), morning[-1]+1)
+        checked = work[min(night):]
+        if (not checked or any(row.get(key) is None for row in checked
+                              for key in ('forecast_load_kwh', 'forecast_pv_total_kwh'))
+                or any(checked[i]['slot_start']-checked[i-1]['slot_start'] != timedelta(minutes=slot_minutes)
+                       for i in range(1, len(checked)))):
+            reports.append({'day': str(day), 'status': 'WAITING_COMPLETE_FORECAST'})
+            continue
+
+        def deficit(i):
+            row = work[i]
+            return max(0., float(row['forecast_load_kwh'])
+                       + float(row.get('forecast_heat_pump_load_kwh') or 0.)
+                       - float(row['forecast_pv_total_kwh']))
+
+        demand = sum(deficit(i) for i in morning if i < boundary)
+        if demand <= 1e-9:
+            continue
+        avoided_price = sum(deficit(i)*float(work[i]['price_buy_pln_kwh'])
+                            for i in morning if i < boundary)/demand
+        added = []
+        while True:
+            left, right = min(selected), max(selected)
+            required_after = replenishment_soc_requirements(
+                work[right:], capacity_kwh, reserve_pct, buffer_pct,
+                eta_c, eta_d, max_power_kw, slot_minutes, uncertainty_weight)[0]
+            gap_load = sum(deficit(i)/eta_d*(1.+.1*uncertainty_weight)
+                           for i in range(left, right+1) if i not in selected)
+            needed = max(0., capacity_kwh*(min(100., required_after)-reserve_pct)/100.) + gap_load
+            available = sum(math.floor(min(max_power_kw*hours,
+                max(0., grid_import_limit_kw*hours-deficit(i)))*eta_c/quantum+1e-9)*quantum
+                for i in selected)
+            if available + 1e-9 >= needed:
+                status = 'BATTERY_CAPACITY_LIMIT' if required_after > 100.+1e-9 else 'CAPACITY_READY'
+                break
+            neighbours = {j for i in selected for j in (i-1, i+1)
+                          if j in night and j not in selected
+                          and not strict_database_bool(work[j].get('sale_window', False), 'sale_window')}
+            affordable = [j for j in neighbours if float(work[j]['price_buy_pln_kwh'])/(eta_c*eta_d)
+                          + degradation + min_margin <= avoided_price + 1e-9]
+            if not affordable:
+                status = 'ECONOMIC_OR_NIGHT_CAPACITY_LIMIT'
+                break
+            index = min(affordable, key=lambda i: (float(work[i]['price_buy_pln_kwh']), i))
+            work[index].update(buy_window=True, sale_window=False, market_window='BUY')
+            selected.add(index)
+            changed.add(index)
+            added.append(index)
+        reports.append({'day': str(day), 'status': status,
+                        'window_end': str(work[max(selected)]['slot_end']),
+                        'coverage_until': str(work[boundary-1]['slot_end']),
+                        'forecast_horizon_end': str(work[-1]['slot_end']),
+                        'requirement_source': 'FULL_HORIZON_FINITE_FUTURE_BUY',
+                        'required_soc_after_window_pct': required_after,
+                        'battery_capacity_shortfall_pct': max(0., required_after-100.),
+                        'required_charge_kwh': needed, 'available_charge_kwh': available,
+                        'window_capacity_shortfall_kwh': max(0., needed-available),
+                        'avoided_morning_price_pln_kwh': avoided_price,
+                        'added_slots': [str(work[i]['slot_start']) for i in added]})
+    return {'rows': work, 'changed_indices': sorted(changed), 'reports': reports}
+
+
 @dataclass(frozen=True)
 class IngestionAdapters:
     options: dict
@@ -160,6 +255,30 @@ def build_ingestion(a: IngestionAdapters):
     db, local_now, slot_start = a.db, a.local_now, a.slot_start
     canonical_slots_for_day, number, ha_state = a.canonical_slots_for_day, a.number, a.ha_state
     ha_service_response, record_event = a.ha_service_response, a.record_event
+
+    def ensure_night_buy_capacity(rows: list[dict], cur) -> dict:
+        result = extend_night_buy_capacity(
+            rows, float(OPTIONS.get('battery_capacity_kwh', 15.)),
+            float(OPTIONS.get('battery_min_soc_pct', 15.)),
+            float(OPTIONS.get('soc_replenishment_buffer_pct', 2.)),
+            float(OPTIONS.get('battery_charge_efficiency', .9)),
+            float(OPTIONS.get('battery_discharge_efficiency', .95)),
+            float(OPTIONS.get('battery_max_power_kw', 5.)), int(OPTIONS.get('slot_minutes', 15)),
+            float(OPTIONS.get('forecast_uncertainty_weight', 1.)),
+            float(OPTIONS.get('battery_degradation_cost_pln_kwh', .08)),
+            float(OPTIONS.get('minimum_arbitrage_margin_pln_kwh', .05)),
+            float(OPTIONS.get('grid_import_limit_kw', 12.)))
+        if result['changed_indices']:
+            for index in result['changed_indices']:
+                cur.execute("""UPDATE ems_gpt_slots SET buy_window=1,market_window='BUY'
+                  WHERE slot_start=%s AND actual_recorded_at IS NULL
+                    AND price_source='PSE_API' AND sale_window=0""",
+                    (result['rows'][index]['slot_start'],))
+                if cur.rowcount != 1:
+                    raise RuntimeError('NIGHT_BUY_PERMISSION_CHANGED_DURING_PREPARATION')
+        if result['reports']:
+            record_event('night_buy_capacity', 'rce_import', {'reports': result['reports']})
+        return result
 
     def refresh_pv_forecast() -> dict:
         """Disaggregate Open-Meteo daily PV energy using an actual-production profile."""
@@ -347,6 +466,7 @@ def build_ingestion(a: IngestionAdapters):
         return result
 
     return SimpleNamespace(
+        ensure_night_buy_capacity=ensure_night_buy_capacity,
         refresh_pv_forecast=refresh_pv_forecast,
         refresh_weather_forecast=refresh_weather_forecast,
         refresh_rce=refresh_rce,

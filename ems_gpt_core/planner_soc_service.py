@@ -316,6 +316,50 @@ def current_soc_for_replan(setting: Callable) -> float:
         raise RuntimeError(f"INVALID_INITIAL_SOC:sensor.inverter_battery={soc!r}")
     return float(soc)
 
+
+def project_soc_to_horizon_start(
+        measured_soc_pct: float, now: datetime, horizon_start: datetime,
+        active_row: dict | None, telemetry: dict | None,
+        capacity_kwh: float, max_power_kw: float, eta_c: float, eta_d: float,
+        slot_minutes: int = 15, max_age_seconds: float = 120.0) -> dict:
+    """Align fresh SOC with the next-slot horizon using only remaining time.
+
+    Normalized telemetry power is DC battery power: do not apply efficiency
+    twice. Missing/stale power never earns forecast charging credit; planned
+    discharge remains a conservative fallback. The live slot is not rewritten.
+    """
+    measured = float(measured_soc_pct)
+    if not math.isfinite(measured) or not 0.0 <= measured <= 100.0:
+        raise RuntimeError(f"INVALID_INITIAL_SOC:{measured!r}")
+    remaining = (horizon_start - now).total_seconds()
+    if not 0.0 <= remaining <= slot_minutes * 60:
+        raise ValueError("SOC_PROJECTION_INTERVAL_MISMATCH")
+    row, sample = active_row or {}, telemetry or {}
+    captured = sample.get("captured_at")
+    age = (now - captured).total_seconds() if isinstance(captured, datetime) else math.inf
+    powers = [sample.get("battery_charge_power_w"), sample.get("battery_discharge_power_w")]
+    fresh = (0.0 <= age <= max_age_seconds and all(
+        value is not None and math.isfinite(float(value)) and float(value) >= 0.0
+        for value in powers))
+    if fresh:
+        charge_kw = min(float(powers[0])/1000.0, max_power_kw * eta_c)
+        discharge_kw = min(float(powers[1])/1000.0, max_power_kw / max(.01, eta_d))
+        delta_kwh = (charge_kw - discharge_kw) * remaining / 3600.0
+        source = "FRESH_BATTERY_DC_POWER"
+    else:
+        delta_kwh = -max(0.0, float(row.get("planned_battery_discharge_kwh") or 0.0)) * remaining / (slot_minutes * 60)
+        source = "NO_FRESH_POWER_NO_CHARGE_CREDIT"
+    projected = max(0.0, min(100.0, measured + delta_kwh / max(.001, capacity_kwh) * 100.0))
+    if (delta_kwh > 0.0 and float(row.get("planned_buy_kwh") or 0.0) > 0.0
+            and sample.get("pv_power_w") is not None and sample.get("load_power_w") is not None
+            and float(sample["pv_power_w"]) <= float(sample["load_power_w"])):
+        target = row.get("soc_charge_target_pct")
+        if target is not None and math.isfinite(float(target)):
+            projected = min(projected, max(measured, float(target)))
+    return {"measured_soc_pct": measured, "horizon_initial_soc_pct": projected,
+            "remaining_seconds": remaining, "delta_kwh": (projected-measured)*capacity_kwh/100.0,
+            "source": source}
+
 def relax_soc_requirement_to_reachable(requested_soc_pct: float,
                                         reachable_soc_pct: float,
                                         reserve_pct: float) -> float:

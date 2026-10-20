@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
+from replan_policy_service import inspect_replan_inputs
+
 
 def publish_current_slot_prices(db: Callable, current_slot: datetime,
                                 ha_service_response: Callable,
@@ -86,17 +88,19 @@ def planner_retry_allowed(state: dict, now: datetime) -> bool:
 
 def should_run_slot_replan(clock: datetime, current_slot: datetime,
                            last_published_at: datetime | None,
-                           rce_ready: bool) -> bool:
-    """Run at most once per open slot, after inputs settle and only with valid RCE."""
-    if not rce_ready or clock.hour == 0:
-        return False
-    minute_in_slot = clock.minute % 15
-    if minute_in_slot < 2 or minute_in_slot > 6:
+                           rce_ready: bool, reasons: list[str] | None = None) -> bool:
+    """Boundary/event scheduling; no unconditional quarter-hour optimization."""
+    if not rce_ready or not reasons:
         return False
     if last_published_at is None:
         return True
     published = last_published_at.replace(tzinfo=None)
-    return published < current_slot.replace(tzinfo=None)
+    if published >= current_slot.replace(tzinfo=None):
+        return False
+    if any(reason in {"BEFORE_BUY", "BEFORE_SELL"} for reason in reasons):
+        return True
+    # Persistent deviations cannot turn the minute monitor into a full planner.
+    return clock.replace(tzinfo=None)-published >= timedelta(minutes=15)
 
 
 def update_telemetry_health(state: dict, lock: Any, telemetry_ok: bool,
@@ -173,6 +177,9 @@ def run_scheduler(a: SchedulerAdapters) -> None:
     previous = None
     last_price_publish_slot = None
     recovery_rebuild_day = None
+    telemetry_recovery_pending = True
+    telemetry_was_lost = False
+    last_buy_completion = None
     todo_archive_day = None
     def module_activity(module: str, activity: str, status: str | None = None) -> None:
         with a.lock:
@@ -196,6 +203,11 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                 int(a.options.get("telemetry_degraded_seconds", 120)),
                 int(a.options.get("telemetry_stale_seconds", 300)),
             )
+            if not telemetry_ok:
+                telemetry_was_lost = True
+            elif telemetry_was_lost:
+                telemetry_recovery_pending = True
+                telemetry_was_lost = False
             a.close_finished_slots()
             a.backfill_execution_details()
             if recovery_rebuild_day is None or (clock.hour == 1 and recovery_rebuild_day != clock.date()):
@@ -277,6 +289,11 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                         a.record_event(rce_key, "core", result)
                         completed = a.complete_rce_cycle(result, "rce_import")
                     planner_status = completed.get("planner", {}).get("status")
+                    if planner_status == "ACCEPTED":
+                        # This cycle already published a complete RCE-dependent
+                        # plan. Do not schedule a second recovery/boundary plan.
+                        last_run = a.local_now().replace(tzinfo=None)
+                        telemetry_recovery_pending = False
                     planner_health = "RUNNING" if planner_status == "ACCEPTED" else "DEGRADED"
                     with a.lock:
                         a.state["rce"] = {
@@ -299,19 +316,36 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                     raise
             with a.lock:
                 planner_retry_ready = planner_retry_allowed(a.state, clock)
+            trigger = {"reasons": []}
+            if telemetry_ok and rce_done:
+                trigger = inspect_replan_inputs(
+                    a.db, clock, start, last_run, a.options,
+                    recovered=telemetry_recovery_pending,
+                    planner_failed=bool(a.state.get("planner_failure_latched")
+                                        or a.state.get("ppd_failure_latched")),
+                )
+                completion = trigger.get("buy_completion")
+                completion_key = (completion["window_end"], completion["status"]) if completion else None
+                if completion and completion_key != last_buy_completion:
+                    a.record_event("buy_window_completion_check", "planner", completion,
+                                   "WARNING" if completion["status"] != "ON_PLAN" else "INFO")
+                    last_buy_completion = completion_key
+                with a.lock:
+                    a.state["replan_monitor"] = {"checked_at": clock.isoformat(), **trigger}
             if (telemetry_ok and planner_retry_ready
-                    and should_run_slot_replan(clock, start, last_run, rce_done)):
-                module_activity("planner", "Przeliczanie planu dla bieżącego slotu", "RUNNING")
+                    and should_run_slot_replan(clock, start, last_run, rce_done, trigger["reasons"])):
+                a.record_event("event_replan_started", "planner", {"slot_start": key, **trigger})
+                module_activity("planner", "Przeliczanie: " + ", ".join(trigger["reasons"]), "RUNNING")
                 module_activity("ppd", "Oczekiwanie na wynik planera", "WAITING")
                 try:
-                    replan = a.run_serialized("planner", a.run_planner, "slot_replan")
+                    replan = a.run_serialized("planner", a.run_planner, "event_replan")
                     planner_health = "RUNNING" if replan.get("status") != "WAITING" else "WAITING"
                     module_activity("planner", "Plan opublikowany", planner_health)
                     if planner_health == "RUNNING":
                         module_activity("ppd", "Wyliczanie decyzji z opublikowanego planu", "RUNNING")
                         try:
                             ppd = a.run_serialized(
-                                "ppd", a.run_ppd, replan.get("run_id"), "slot_replan")
+                                "ppd", a.run_ppd, replan.get("run_id"), "event_replan")
                             if not isinstance(ppd, dict) or ppd.get("status") != "COMPLETED":
                                 status = ppd.get("status") if isinstance(ppd, dict) else type(ppd).__name__
                                 raise RuntimeError(f"PPD_NOT_COMPLETED:{status}")
@@ -336,12 +370,14 @@ def run_scheduler(a: SchedulerAdapters) -> None:
                         module_activity("ppd", "Oczekiwanie na plan", "WAITING")
                         with a.lock:
                             a.state["ppd_failure_latched"] = "WAITING_FOR_VALID_PLAN"
+                    if planner_health == "RUNNING":
+                        telemetry_recovery_pending = False
                     with a.lock:
                         a.state["planner_failure_latched"] = None
                         a.state["planner_retry_after"] = None
                         a.state["planner_retry_failures"] = 0
                     a.record_event("slot_replan_completed", "planner", {
-                        "slot_start": key, **replan, "ppd": ppd,
+                        "slot_start": key, "trigger_reasons": trigger["reasons"], **replan, "ppd": ppd,
                     })
                 except Exception as exc:
                     planner_health = "DEGRADED"
