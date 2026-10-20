@@ -405,4 +405,3 @@ niezmienionym celu 33,3%. Dodatkowe testy odrzucają obejście wymaganego SOC
 oraz próbę zastosowania ścieżki ze sprzedażą baterii. Po instalacji konieczna
 jest weryfikacja pełnego przeliczenia na produkcyjnej bazie; przygotowanie
 lokalne nie usuwa aktualnego błędu produkcji.
-

@@ -2069,5 +2069,3 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
 - agregacja dobowa: OK;
 - restart wyłącznie aplikacji: OK, plan i baza zachowane;
 - brak poleceń do urządzeń: potwierdzony.
-
-

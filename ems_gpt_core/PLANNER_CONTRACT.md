@@ -691,4 +691,3 @@ Jest to jawna zmiana zasad publikacji niepełnego celu BUY: wcześniejsze
 odrzucenie całego planu pozostaje dla niedoboru obowiązkowego SOC, lecz nie
 dla samego nieosiągnięcia wyższego celu ładowania przy spełnionych minimach.
 Publikację tej zmiany zatwierdził użytkownik 16.10.2026.
-

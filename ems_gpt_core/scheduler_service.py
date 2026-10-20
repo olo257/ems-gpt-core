@@ -455,4 +455,3 @@ def run_scheduler(a: SchedulerAdapters) -> None:
             a.state["last_heartbeat"] = datetime.now(timezone.utc).isoformat()
             a.state["last_error"] = error
         time.sleep(60)
-
