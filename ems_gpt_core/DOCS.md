@@ -239,6 +239,48 @@ ale zakup nadal podlega ograniczeniom BUY, pojemności i targetu.
 - ręczny i automatyczny replan korzystają z tej samej serializowanej ścieżki;
 - executor pozostaje domyślnie wyłączony i wymaga osobnej decyzji operatora.
 
+### Harmonogram replanu od 0.40.56
+
+Pełny replan nie uruchamia się automatycznie w każdym kwadransie.
+
+| Wyzwalacz | Działanie |
+|---|---|
+| Kompletny import RCE | Pełny plan dostępnego horyzontu |
+| Slot przed początkiem ciągłego BUY/SELL | Replan w minutach 2–6 tego slotu, przed wejściem w okno |
+| Koniec ciągłego BUY | Kontrola wykonanej energii baterii i SOC; replan przy niedoborze |
+| Istotne odchylenie lub odzyskanie wejść | Replan zdarzeniowy |
+| Neutralny slot lub wnętrze prawidłowo realizowanego BUY/SELL | Monitor i wykonawca, bez pełnej optymalizacji |
+
+Monitor odczytuje dane co cykl, około minuty. SOC porównuje w czasie pomiaru
+z interpolowanym SOC planu, z progiem 5 p.p. Zagrożenie rezerwy obejmuje SOC
+poniżej minimum lub spadek poniżej minimum przy utrzymaniu aktualnej mocy
+przez kolejny slot. Zmiana prognozy domu/PV w najbliższych 6 godzinach wymaga
+jednocześnie co najmniej 1 kWh różnicy i 20% względem opublikowanej prognozy;
+różnice liczone per slot wykrywają także przesunięcie energii w czasie.
+Nowa kwalifikacja HP po trzecim odczycie poniżej progu, restart/powrót
+telemetrii, brak przyszłego planu oraz błąd planera/PPD również wyzwalają replan.
+Nie zmienia to ręcznego przeliczenia ani ścieżki po imporcie RCE.
+
+Kontrola końca BUY porównuje energię ładowania baterii (bez poboru domu),
+końcowy SOC i wymagany zapas energii. Niedobór co najmniej 0,25 kWh lub
+2 p.p. końcowego SOC względem planu wymaga przeliczenia. Brak danych oznacza
+`WAITING_TELEMETRY`; poprawne wykonanie oznacza `ON_PLAN`, nie potwierdzenie
+niezmienności przyszłych prognoz. Monitor zachowuje oddzielny status prognoz.
+
+Automatyczny replan publikuje najwyżej raz na slot. Dla zdarzeń poza granicami
+okien odstęp od ostatniej publikacji wynosi co najmniej 15 minut; retry po
+błędzie dodatkowo respektuje dotychczasowy backoff. Granice BUY/SELL mają
+pierwszeństwo przed tym odstępem. Warunkiem jest telemetria i gotowe RCE;
+nie obowiązuje dawna całogodzinna blokada replanu 00:00–00:59.
+Minutowy executor nadal realizuje polecenia, limity SOC i zabezpieczenia.
+
+`/api/status` udostępnia `replan_monitor` z przyczynami i odchyleniami.
+Zdarzenie `event_replan_started` zapisuje powód przeliczenia,
+`buy_window_completion_check` wynik kontroli końca BUY, a istniejące
+`slot_replan_completed` zachowuje nazwę dla kompatybilności i zawiera
+`trigger_reasons`. Bazowe prognozy są odczytywane z opublikowanych rekordów
+etapowych, więc restart nie zeruje punktu porównania.
+
 ### Kolejność komend wykonawcy
 
 Komendy OFF kończą się przed uruchomieniem ON. Dispatch wywołuje nazwaną usługę
@@ -363,3 +405,4 @@ niezmienionym celu 33,3%. Dodatkowe testy odrzucają obejście wymaganego SOC
 oraz próbę zastosowania ścieżki ze sprzedażą baterii. Po instalacji konieczna
 jest weryfikacja pełnego przeliczenia na produkcyjnej bazie; przygotowanie
 lokalne nie usuwa aktualnego błędu produkcji.
+

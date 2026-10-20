@@ -35,6 +35,10 @@ jobs:
         run: python -m unittest discover -s ems_gpt_core/tests -p 'test_soc_replenishment_safety.py' -v
       - name: Replan SOC time alignment and active BUY target regression
         run: python -m unittest discover -s ems_gpt_core/tests -p 'test_replan_soc_alignment.py' -v
+      - name: Event driven replan and scheduler tests
+        run: python -m unittest discover -s ems_gpt_core/tests -p 'test_replan_policy.py' -v
+      - name: Scheduler runtime regression
+        run: python -m unittest discover -s ems_gpt_core/tests -p 'test_scheduler_service.py' -v
       - name: Night BUY capacity and morning energy coverage
         run: python -m unittest discover -s ems_gpt_core/tests -p 'test_night_buy_capacity.py' -v
       - name: Pass 4 arbitrage economics tests
@@ -48,3 +52,4 @@ jobs:
         run: |
           python -m unittest discover -s ems_gpt_core/tests -p 'test_component_forecast.py' -v
           python -m unittest discover -s ems_gpt_core/tests -p 'test_analytics_service.py' -v
+

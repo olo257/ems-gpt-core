@@ -129,6 +129,18 @@ planowane rozładowanie stanowi konserwatywny wariant zastępczy.
 Audyt `replan_soc_time_alignment` rozdziela pomiar, prognozę na granicę slotu
 i pozostały bilans energii. Aktywny slot nie jest ponownie publikowany.
 
+Pełny replan od 0.40.56 jest wyzwalany przez import RCE, początek okna
+BUY/SELL (w poprzedzającym slocie) albo istotne zdarzenie bilansu. Nie jest
+obowiązkowym przebiegiem co 15 minut. Wewnątrz ciągłego okna poprawne wykonanie
+nie wyzwala nowej optymalizacji. Kontrola i wykonawca działają co minutę.
+Progi i reguły deduplikacji definiuje sekcja „Harmonogram replanu” w DOCS.md:
+SOC 5 p.p., prognoza na 6 godzin: co najmniej 1 kWh i 20%, po BUY niedobór
+0,25 kWh lub 2 p.p. względem końcowego planu. Zagrożenie minimum, nowa
+kwalifikacja HP, restart/powrót telemetrii i błędy również wyzwalają replan.
+Przyczyny i kontrola końca BUY są jawne w statusie i zdarzeniach. Brak danych
+wykonania nie jest interpretowany jako zerowe ładowanie.
+
+
 W trakcie realizacji wybranego BUY jego zaakceptowany target jest utrzymywany
 na pozostałych slotach tego samego ciągłego okna RCE BUY. Samo przesunięcie
 horyzontu nie obniża progu zatrzymania ładowania. Zwiększone zapotrzebowanie
@@ -679,3 +691,4 @@ Jest to jawna zmiana zasad publikacji niepełnego celu BUY: wcześniejsze
 odrzucenie całego planu pozostaje dla niedoboru obowiązkowego SOC, lecz nie
 dla samego nieosiągnięcia wyższego celu ładowania przy spełnionych minimach.
 Publikację tej zmiany zatwierdził użytkownik 16.10.2026.
+

@@ -123,16 +123,16 @@ class RceRestoreKeysTests(unittest.TestCase):
         self.assertEqual(rce_event_keys(datetime(2026, 9, 13, 14, 0)), (
             "RCE_2026-09-13_NEXT",))
 
-    def test_replan_runs_once_for_each_settled_slot_with_complete_rce(self):
+    def test_boundary_replan_runs_once_with_complete_rce(self):
         slot = datetime(2026, 9, 15, 15, 15)
         self.assertTrue(should_run_slot_replan(
             datetime(2026, 9, 15, 15, 17), slot,
-            datetime(2026, 9, 15, 15, 14), True))
+            datetime(2026, 9, 15, 15, 14), True, ["BEFORE_BUY"]))
         self.assertFalse(should_run_slot_replan(
             datetime(2026, 9, 15, 15, 18), slot,
-            datetime(2026, 9, 15, 15, 17), True))
+            datetime(2026, 9, 15, 15, 17), True, ["BEFORE_BUY"]))
 
-    def test_replan_waits_for_rce_and_forecast_refresh_blackout(self):
+    def test_replan_requires_rce_and_an_explicit_reason(self):
         slot = datetime(2026, 9, 15, 14, 0)
         self.assertFalse(should_run_slot_replan(
             datetime(2026, 9, 15, 14, 2), slot, None, False))
@@ -168,3 +168,4 @@ class PlannerRetryBackoffTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
