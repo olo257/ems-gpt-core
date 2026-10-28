@@ -263,7 +263,7 @@ def build_planner(a: PlannerAdapters):
                 # its exact stop SOC is derived from the accepted flow below.
                 sale_constraints.append(reserve if work["sale_window"] else 100.0)
             if a.prepare_buy_windows is not None:
-                night_capacity = a.prepare_buy_windows(horizon_rows, cur)
+                night_capacity = a.prepare_buy_windows(horizon_rows, cur, soc_now)
                 horizon_rows = night_capacity["rows"]
                 for index in night_capacity["changed_indices"]:
                     row = horizon_rows[index]
@@ -538,10 +538,10 @@ def build_planner(a: PlannerAdapters):
                         "reason": str(exc),
                     }, "WARNING")
             if target_seed.get("buy_target_shortfalls"):
-                battery_sales_enabled = False
                 record_event("buy_charge_target_shortfall_safe_plan", "planner", {
                     "run_id": run_id, "slots": target_seed["buy_target_shortfalls"],
-                    "action": "KEEP_TARGET_AND_REQUIRED_SOC_DISABLE_BATTERY_SALES"}, "WARNING")
+                    "action": "REJECT_PLAN_PRESERVE_LAST_PUBLISHED"}, "ERROR")
+                raise RuntimeError("BUY_TARGET_UNREACHABLE_AFTER_WINDOW_EXPANSION")
             if target_seed.get("terminal_shortfall_pct", 0.0) > 1e-9:
                 requested_terminal_soc = terminal_soc
                 terminal_soc = float(target_seed["achieved_terminal_soc_pct"])
@@ -793,8 +793,9 @@ def build_planner(a: PlannerAdapters):
             if unreachable_buy_targets:
                 record_event("buy_soc_target_shortfall", "planner", {
                     "slots": unreachable_buy_targets,
-                    "action": "PRESERVE_SLOT_BALANCE_AND_IMPORT_CAP",
-                }, "WARNING")
+                    "action": "REJECT_PLAN_PRESERVE_LAST_PUBLISHED",
+                }, "ERROR")
+                raise RuntimeError("BUY_TARGET_UNREACHABLE_AFTER_OPTIMIZATION")
             validated_deadline_targets = validated_buy_deadline_targets(
                 optimization, targets, required_soc, battery_sales_enabled)
             target_due_indices = validate_active_soc_target_deadlines(

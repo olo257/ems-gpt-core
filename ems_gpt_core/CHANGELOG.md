@@ -1,3 +1,8 @@
+## 0.40.60 — wymagany zapas energii przed SELL
+
+- Rozszerzaj dostępne okna BUY przed drogimi oknami SELL według prognozy obciążenia i PV.
+- Odrzucaj plan z nieosiągalnym targetem SOC, zachowując poprzedni opublikowany plan.
+
 # EMS-GPT Core — historia zmian
 
 ## 0.40.59 — ponowienie historycznej blokady prognozy
