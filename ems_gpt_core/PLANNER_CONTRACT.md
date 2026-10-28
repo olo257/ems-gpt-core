@@ -616,10 +616,13 @@ Uczenie korzysta wyłącznie z ostatnich 7 dni zamkniętych slotów Core, minima
 liczby próbek, pokrycia oraz kompletnych źródeł. Brak kanału, nieznany stan
 PV_CWU lub niespójny bilans wykluczają próbkę. Brak minimum 3 próbek kwadransa
 lub 2 kompletnych cykli CWU zachowuje wcześniejszą prognozę tego samego slotu,
-w razie potrzeby z ostatniej opublikowanej migawki planu, i zapisuje źródło w
-statusie partii. Jeśli takiej prognozy nie ma, pozostaje `NULL` i planer blokuje
-przebieg. Batch niekompletny otrzymuje jedną ponowną próbę, a potem jest
-buforowany do kolejnej zmiany slotu, aby uniknąć nieograniczonego przeliczania.
+w razie potrzeby z ostatniej opublikowanej migawki planu. Jeśli brak 3 próbek
+tej ćwiartki doby, bazowe zużycie może użyć najbliższej ćwiartki (maksymalnie
+30 minut różnicy) z co najmniej 3 kompletnymi próbkami z tego samego 7-dniowego
+okna. Źródło jest zapisane w metadanych prognozy. Bez wiarygodnej prognozy
+lokalnej lub sąsiedniej wartości pozostaje `NULL` i planer blokuje przebieg.
+Batch niekompletny otrzymuje jedną ponowną próbę, a potem jest buforowany do
+kolejnej zmiany slotu, aby uniknąć nieograniczonego przeliczania.
 Średnia energii domu zachowuje wpływ rzeczywistych zdarzeń zużycia; nie dodaje
 osobnego arbitralnego bufora AGD.
 

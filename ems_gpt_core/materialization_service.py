@@ -657,7 +657,8 @@ def build_materializations(a: MaterializationAdapters):
                 estimate = model["slots"][slot]
                 valid = estimate["house_kwh"] is not None
                 status = "READY" if valid else None
-                evidence = dict(metadata)
+                evidence = {**metadata,
+                    "house_forecast_source": estimate.get("house_source")}
                 fallback_load = None
                 if not valid:
                     if row.get("forecast_load_kwh") is not None:

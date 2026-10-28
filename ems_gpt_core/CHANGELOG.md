@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.58 — sąsiednia prognoza przy rzadkich próbkach kwadransa
+
+- Gdy dokładny kwadrans ma mniej niż 3 kompletne próbki, użyj średniej z najbliższego kwadransa do 30 minut dalej, jeśli ma on co najmniej 3 próbki w tym samym 7-dniowym oknie.
+- Zapisz źródło oszacowania w metadanych prognozy; bez wiarygodnej próbki w pobliżu planer nadal blokuje przebieg.
+- Dodano regresję dla slotu z 2 próbkami dokładnymi i wiarygodnym profilem sąsiednim.
+
 ## 0.40.57 — zachowanie prognozy zużycia przy niekompletnej historii
 
 - Przy brakujących próbkach bazowego zużycia zachowaj prognozę z ostatniego opublikowanego planu wyłącznie dla tego samego slotu.
