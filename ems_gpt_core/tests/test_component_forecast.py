@@ -173,5 +173,56 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(len(batches),2)
         self.assertEqual(batches[0],batches[1])
 
+    def test_incomplete_batch_retries_and_restores_last_published_same_slot(self):
+        future=[{'slot_start':NOW,'forecast_load_kwh':None}]
+        cur=MagicMock()
+        cur.fetchall.side_effect=[future,[]]
+        cur.fetchone.side_effect=[
+            {'generated_at':NOW,'last_slot':NOW,'slot_count':1,'unresolved':1},
+            {'forecast_load_kwh':.73},
+        ]
+        cur.rowcount=1
+        conn=MagicMock();conn.cursor.return_value.__enter__.return_value=cur
+        context=MagicMock();context.__enter__.return_value=conn
+        events=[]
+        service=build_materializations(MaterializationAdapters(options={},app_version='test',
+                db=lambda:context,local_now=lambda:NOW,slot_start=lambda:NOW,
+                record_event=lambda *args:events.append(args)))
+
+        service.learn_missing_load()
+
+        fallback_query=next(call for call in cur.execute.call_args_list
+                            if 'JOIN ems_gpt_plan_runs' in call.args[0])
+        self.assertEqual(fallback_query.args[1],(NOW,))
+        restore=next(call for call in cur.execute.call_args_list
+                     if 'SET forecast_load_kwh=%s' in call.args[0])
+        self.assertEqual(restore.args[1],(.73,NOW))
+        batch=next(call for call in cur.execute.call_args_list
+                   if 'INSERT INTO ems_gpt_core_consumption_forecasts' in call.args[0])
+        self.assertEqual(batch.args[1][8],'PRESERVED_LAST_PUBLISHED_PLAN')
+        self.assertIn('PUBLISHED_PLAN_SAME_SLOT',batch.args[1][9])
+        self.assertTrue(any("status='PRESERVED_INCOMPLETE_HISTORY'" in call.args[0]
+                            for call in cur.execute.call_args_list))
+
+    def test_missing_history_without_published_fallback_stays_blocked(self):
+        future=[{'slot_start':NOW,'forecast_load_kwh':None}]
+        cur=MagicMock()
+        cur.fetchall.side_effect=[future,[]]
+        cur.fetchone.side_effect=[None,{}]
+        cur.rowcount=0
+        conn=MagicMock();conn.cursor.return_value.__enter__.return_value=cur
+        context=MagicMock();context.__enter__.return_value=conn
+        service=build_materializations(MaterializationAdapters(options={},app_version='test',
+                db=lambda:context,local_now=lambda:NOW,slot_start=lambda:NOW,
+                record_event=lambda *args:None))
+
+        service.learn_missing_load()
+
+        batch=next(call for call in cur.execute.call_args_list
+                   if 'INSERT INTO ems_gpt_core_consumption_forecasts' in call.args[0])
+        self.assertEqual(batch.args[1][8],'BLOCKED_NO_ACCEPTED_FALLBACK')
+        self.assertFalse(any('SET forecast_load_kwh=%s' in call.args[0]
+                             for call in cur.execute.call_args_list))
+
 
 if __name__=='__main__': unittest.main()

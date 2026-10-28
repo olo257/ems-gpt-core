@@ -1,5 +1,13 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.57 — zachowanie prognozy zużycia przy niekompletnej historii
+
+- Przy brakujących próbkach bazowego zużycia zachowaj prognozę z ostatniego opublikowanego planu wyłącznie dla tego samego slotu.
+- Oznacz brak wiarygodnej prognozy bez takiego fallbacku jawnie jako zablokowany; replan pozostaje fail-closed.
+- Nie zatrzymuj ponownego przeliczenia po batchu oznaczonym jako niekompletny; stabilne wyniki zachowują idempotencję.
+- Dodano regresje dla odzyskania prognozy z opublikowanego planu i blokady bez wiarygodnego fallbacku.
+
+
 ## 0.40.56 — bilans SOC, nocne BUY i replan zdarzeniowy
 
 - Dodatkowo zatwierdzono 20.10.2026 ograniczenie pełnego replanu: po imporcie RCE, w slocie przed początkiem ciągłego BUY/SELL oraz po istotnych zdarzeniach. W neutralnych slotach i wewnątrz prawidłowo realizowanego okna nie przelicza się całego planu co 15 minut.
@@ -1419,16 +1427,19 @@ Ten plik rejestruje wydania. Nie jest specyfikacją; obowiązujące reguły są 
 
 ## 0.34.0
 
-- Okno `BUY` jest wyłącznie ze…3345 tokens truncated…nych slotów
-  zakupu.
-- Usunięto archiwalne wymuszenie `evening_soc_target_pct=60%` o 19:45 oraz
-  sztuczny końcowy target zależny od `historical_soc_drop_p80_pct` i
-  `terminal_soc_value_weight`.
-- Bufor niepewności pozostaje proporcjonalny do energii wymaganej na odcinku,
-  zamiast dodawać stałą liczbę punktów SOC.
-- Dodano regresje dla autokonsumpcji poniżej floor, blokady sprzedaży, bilansu
-  do kolejnego zakupu, wpływu PV oraz braku zależności od godziny zegarowej.
-- Bez zapisów do programów SOC Deye 1–6.
+- Okno `BUY` jest wyłącznie zezwoleniem. Target nie jest już zerowany na każdym
+  kolejnym oknie, lecz na faktycznie wybranym ekonomicznie uzupełnieniu.
+- Dodano wieloprzebiegowe planowanie: pełnohoryzontowy dispatch, wsteczny
+  kontrakt SOC z wybranej ścieżki oraz ponowną optymalizację do zbieżności.
+- Wcześniejszy tani BUY może zasilić baterię ponad późniejszym drogim oknem,
+  z zachowaniem pojemności, sprawności, limitu 5 kW i końcowego SOC.
+- `soc_target` pozostaje sufitem ładowania, a w slocie sprzedaży jest co
+  najmniej równy podłodze sprzedaży `soc_floor`.
+- Zablokowano niejawne zasilanie domu z sieci przy technicznym minimum SOC;
+  wyjątek pozostaje wyłącznie dla potwierdzonej ekonomicznej ochrony SOC przed
+  późniejszą sprzedażą.
+- Dodano regresje dla taniego wieczornego BUY, drogiego porannego BUY oraz
+  częściowej odbudowy przez PV. Wykonawca pozostaje domyślnie wyłączony.
 
 ## 0.31.2
 

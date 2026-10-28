@@ -603,24 +603,34 @@ def build_materializations(a: MaterializationAdapters):
     
     
     def learn_missing_load() -> int:
-        """Publish one versioned component batch from complete recent telemetry."""
+        """Publish component forecasts, preserving only exact-slot accepted fallbacks."""
         import uuid
         from component_forecast import build_component_forecast
 
         cutoff = slot_start().replace(tzinfo=None)
         updated = 0
+        preserved = 0
+        blocked = 0
         with db() as conn, conn.cursor() as cur:
             cur.execute("""SELECT slot_start,forecast_load_kwh FROM ems_gpt_slots
               WHERE slot_start>=%s AND actual_recorded_at IS NULL ORDER BY slot_start""", (cutoff,))
             future = list(cur.fetchall())
             if not future:
                 return 0
-            cur.execute("""SELECT MAX(generated_at) generated_at,MAX(slot_start) last_slot,COUNT(*) slot_count
-              FROM ems_gpt_core_consumption_forecasts""")
+            last_slot = future[-1]["slot_start"]
+            # A complete batch can be reused during this slot. A legacy
+            # PRESERVED_INCOMPLETE_HISTORY row gets one retry after this fix so
+            # it can recover from the last accepted plan for the exact slot.
+            cur.execute("""SELECT MAX(generated_at) generated_at,MAX(slot_start) last_slot,
+              COUNT(*) slot_count,SUM(status='PRESERVED_INCOMPLETE_HISTORY') unresolved
+              FROM ems_gpt_core_consumption_forecasts
+              WHERE generated_at=%s AND slot_start>=%s AND slot_start<=%s""",
+              (cutoff, cutoff, last_slot))
             latest = cur.fetchone()
             if (latest and latest.get("generated_at") == cutoff
-                    and latest.get("last_slot") == future[-1]["slot_start"]
-                    and int(latest.get("slot_count") or 0) >= len(future)):
+                    and latest.get("last_slot") == last_slot
+                    and int(latest.get("slot_count") or 0) >= len(future)
+                    and int(latest.get("unresolved") or 0) == 0):
                 return 0
             cur.execute("""SELECT s.slot_start,s.actual_load_kwh,s.actual_mode,
               s.execution_reason,s.actual_heating_consumed_kwh,s.actual_dhw_consumed_kwh,
@@ -643,9 +653,37 @@ def build_materializations(a: MaterializationAdapters):
             batch_id = str(uuid.uuid4())
             metadata = {key: value for key, value in model.items() if key != "slots"}
             for row in future:
-                estimate = model["slots"][row["slot_start"]]
+                slot = row["slot_start"]
+                estimate = model["slots"][slot]
                 valid = estimate["house_kwh"] is not None
-                status = "READY" if valid else "PRESERVED_INCOMPLETE_HISTORY"
+                status = "READY" if valid else None
+                evidence = dict(metadata)
+                fallback_load = None
+                if not valid:
+                    if row.get("forecast_load_kwh") is not None:
+                        status = "PRESERVED_EXISTING_FORECAST"
+                        preserved += 1
+                    else:
+                        cur.execute("""SELECT p.forecast_load_kwh
+                          FROM ems_gpt_plan_stage_rows p
+                          JOIN ems_gpt_plan_runs r ON r.run_id=p.run_id
+                          WHERE p.slot_start=%s AND r.status='PUBLISHED'
+                            AND p.forecast_load_kwh IS NOT NULL
+                          ORDER BY r.published_at DESC LIMIT 1""", (slot,))
+                        previous = cur.fetchone() or {}
+                        candidate = previous.get("forecast_load_kwh")
+                        if candidate is not None and float(candidate) >= 0:
+                            fallback_load = round(float(candidate), 6)
+                            status = "PRESERVED_LAST_PUBLISHED_PLAN"
+                            evidence["fallback_source"] = "PUBLISHED_PLAN_SAME_SLOT"
+                            cur.execute("""UPDATE ems_gpt_slots SET forecast_load_kwh=%s,
+                              load_correction=1 WHERE slot_start=%s AND actual_recorded_at IS NULL
+                                AND forecast_load_kwh IS NULL""", (fallback_load, slot))
+                            preserved += cur.rowcount
+                        else:
+                            status = "BLOCKED_NO_ACCEPTED_FALLBACK"
+                            evidence["fallback_source"] = "NONE"
+                            blocked += 1
                 cur.execute("""INSERT INTO ems_gpt_core_consumption_forecasts
                   (slot_start,batch_id,model_version,generated_at,house_kwh,dhw_kwh,
                    heat_profile_json,sample_count,status,evidence_json)
@@ -654,19 +692,20 @@ def build_materializations(a: MaterializationAdapters):
                   generated_at=VALUES(generated_at),house_kwh=VALUES(house_kwh),dhw_kwh=VALUES(dhw_kwh),
                   heat_profile_json=VALUES(heat_profile_json),
                   sample_count=VALUES(sample_count),status=VALUES(status),evidence_json=VALUES(evidence_json)""",
-                  (row["slot_start"],batch_id,model["version"],cutoff,estimate["house_kwh"],
+                  (slot,batch_id,model["version"],cutoff,estimate["house_kwh"],
                    estimate["dhw_kwh"],json.dumps(model["heat_profile"]),
-                   estimate["sample_count"],status,json.dumps(metadata)))
+                   estimate["sample_count"],status,json.dumps(evidence)))
                 if not valid:
                     continue
                 total = sum(estimate[key] for key in ("house_kwh", "dhw_kwh"))
                 cur.execute("""UPDATE ems_gpt_slots SET forecast_load_kwh=%s,load_correction=1
-                  WHERE slot_start=%s AND actual_recorded_at IS NULL""", (round(total,6),row["slot_start"]))
+                  WHERE slot_start=%s AND actual_recorded_at IS NULL""", (round(total,6),slot))
                 updated += cur.rowcount
         record_event("component_consumption_forecast", "load_learning", {
-            "batch_id": batch_id, "updated": updated, "preserved": len(future)-updated,
-            **metadata})
+            "batch_id": batch_id, "updated": updated, "preserved": preserved,
+            "blocked": blocked, **metadata})
         return updated
+
 
     return SimpleNamespace(
         close_finished_slots=close_finished_slots,
