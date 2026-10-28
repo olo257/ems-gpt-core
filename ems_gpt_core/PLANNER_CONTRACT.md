@@ -702,3 +702,7 @@ Jest to jawna zmiana zasad publikacji niepełnego celu BUY: wcześniejsze
 odrzucenie całego planu pozostaje dla niedoboru obowiązkowego SOC, lecz nie
 dla samego nieosiągnięcia wyższego celu ładowania przy spełnionych minimach.
 Publikację tej zmiany zatwierdził użytkownik 16.10.2026.
+
+## Pre-Sell Capacity
+
+Open adjacent BUY slots before SELL according to forecast consumption, PV and heating demand. Preserve the SOC requirement if capacity is insufficient and reject the candidate plan instead of publishing a shortfall.
