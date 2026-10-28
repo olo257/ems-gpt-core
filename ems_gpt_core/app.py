@@ -250,7 +250,7 @@ _PLANNER = build_planner(PlannerAdapters(
     options=OPTIONS, db=db, local_now=local_now, slot_start=slot_start,
     setting=setting, audit_stage=audit_stage, active_tou_program=active_tou_program,
     tou_program_snapshot=tou_program_snapshot, record_event=record_event,
-    prepare_buy_windows=lambda rows, cur: _INGESTION.ensure_night_buy_capacity(rows, cur),
+    prepare_buy_windows=lambda rows, cur, soc=None: _INGESTION.ensure_night_buy_capacity(rows, cur, soc),
 ))
 optimize_hp_heating_slots = _PLANNER.optimize_hp_heating_slots
 run_planner = _PLANNER.run_planner
