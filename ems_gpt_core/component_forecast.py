@@ -146,11 +146,24 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
     result = {}
     for when in horizon:
         samples = quarters.get((when.hour, when.minute), [])
-        valid = len(samples) >= 3 and dhw_profile is not None
+        house_source = "EXACT_QUARTER" if len(samples) >= 3 else None
+        house_samples = samples
+        if house_source is None:
+            target_minute = when.hour * 60 + when.minute
+            nearby = []
+            for (hour, minute), candidates in quarters.items():
+                distance = abs(((hour * 60 + minute - target_minute + 720) % 1440) - 720)
+                if len(candidates) >= 3 and distance <= 30:
+                    nearby.append((distance, hour * 60 + minute, candidates))
+            if nearby:
+                _, _, house_samples = min(nearby, key=lambda item: (item[0], item[1]))
+                house_source = "NEAREST_QUALIFIED_QUARTER"
+        valid = house_source is not None and dhw_profile is not None
         result[when] = {
-            "house_kwh": round(mean(item["house_kwh"] for item in samples), 6) if valid else None,
+            "house_kwh": round(mean(item["house_kwh"] for item in house_samples), 6) if valid else None,
             "dhw_kwh": round(dhw_by_slot[when], 6) if valid else None,
             "sample_count": len(samples),
+            "house_source": house_source if valid else "NO_QUALIFIED_QUARTER",
         }
     return {"version": MODEL_VERSION, "slots": result, "heat_profile": heat_profile,
             "dhw_profile": dhw_profile, "dhw_cycle_count": len(dhw_cycles),
