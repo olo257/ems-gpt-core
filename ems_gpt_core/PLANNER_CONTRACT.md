@@ -714,3 +714,6 @@ Rozszerzanie okien BUY działa wyłącznie od bieżącego slotu i pomija sloty z
 
 
 Cutoff przekazany przez HA może zawierać strefę `Europe/Warsaw`; przed porównaniem z naiwnymi lokalnymi datami slotów należy usunąć wyłącznie metadane strefy, zachowując lokalny czas.
+
+
+Przed otwarciem sąsiedniego slotu BUY należy wykluczyć sloty, które już mają `buy_window=true`; mogą one stanowić istniejącą nieciągłą część okna, ale nie są nowymi uprawnieniami.
