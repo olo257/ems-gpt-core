@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.61**.
+Status: obowiązująca. Wersja wydania: **0.40.62**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -415,3 +415,8 @@ Planer rozszerza sąsiednie okna BUY według prognozy zużycia i PV, aby osiągn
 ## Ochrona zakończonych slotów BUY
 
 Przy rozszerzaniu BUY planer pomija sloty wcześniejsze niż bieżący slot oraz wszystkie sloty zarejestrowane jako wykonane. Nie zmienia uprawnień rynku w historii i może rozszerzać wyłącznie niezakończone sloty.
+
+
+## Lokalny cutoff slotów
+
+Cutoff z Home Assistant jest normalizowany do lokalnego `datetime` używanego przez sloty MariaDB przed porównaniem.
