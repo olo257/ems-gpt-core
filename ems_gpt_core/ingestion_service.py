@@ -299,6 +299,7 @@ def extend_buy_capacity_before_sell(
                     break
                 neighbours = {j for i in selected for j in (i-1, i+1)
                               if j in indices and j < sell_start and j not in selected
+                              and not flag(work[j], 'buy_window')
                               and not flag(work[j], 'sale_window')
                               and work[j].get('actual_recorded_at') is None
                               and work[j].get('price_buy_pln_kwh') is not None}
