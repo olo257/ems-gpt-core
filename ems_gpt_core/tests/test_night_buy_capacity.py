@@ -110,6 +110,7 @@ class NightBuyCapacityTests(unittest.TestCase):
         self.assertTrue(all(not row['buy_window'] for row in result['rows'][28:]))
 
     def test_daytime_expansion_never_reopens_completed_buy_windows(self):
+        from zoneinfo import ZoneInfo
         from ingestion_service import extend_buy_capacity_before_sell
         start = datetime(2026, 10, 20, 6)
         rows = []
@@ -126,11 +127,19 @@ class NightBuyCapacityTests(unittest.TestCase):
                 actual_recorded_at=clock if i < 16 else None))
         result = extend_buy_capacity_before_sell(
             rows, 15., 15., 2., .98, .98, 5., 15, 1.,
-            earliest_slot_start=start + timedelta(minutes=15*16))
+            earliest_slot_start=(start + timedelta(minutes=15*16)).replace(tzinfo=ZoneInfo('Europe/Warsaw')))
         self.assertTrue(result['changed_indices'])
         self.assertTrue(all(i >= 16 for i in result['changed_indices']))
         self.assertTrue(all(result['rows'][i]['actual_recorded_at'] is None
                             for i in result['changed_indices']))
+
+    def test_night_capacity_accepts_aware_local_cutoff(self):
+        from zoneinfo import ZoneInfo
+        rows = self.rows()
+        result = extend_night_buy_capacity(
+            rows, 15., 15., 2., .98, .98, 5., 15, 1., .05, 0.,
+            earliest_slot_start=datetime(2026, 10, 20, 9, tzinfo=ZoneInfo('Europe/Warsaw')))
+        self.assertEqual(result['changed_indices'], [])
 
     def dispatch(self, rows):
         requested = deterministic_soc_target_contract(
