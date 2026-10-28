@@ -109,6 +109,29 @@ class NightBuyCapacityTests(unittest.TestCase):
         self.assertTrue(all(i < 28 for i in result['changed_indices']))
         self.assertTrue(all(not row['buy_window'] for row in result['rows'][28:]))
 
+    def test_daytime_expansion_never_reopens_completed_buy_windows(self):
+        from ingestion_service import extend_buy_capacity_before_sell
+        start = datetime(2026, 10, 20, 6)
+        rows = []
+        for i in range(40):
+            clock = start + timedelta(minutes=15*i)
+            buy = i in (14, 24)
+            sell = i >= 28
+            rows.append(dict(
+                slot_start=clock, slot_end=clock+timedelta(minutes=15),
+                buy_window=buy, sale_window=sell,
+                market_window='SELL' if sell else 'BUY' if buy else 'NEUTRAL',
+                price_buy_pln_kwh=.3 + i*.01, forecast_load_kwh=.25,
+                forecast_pv_total_kwh=0., forecast_heat_pump_load_kwh=0.,
+                actual_recorded_at=clock if i < 16 else None))
+        result = extend_buy_capacity_before_sell(
+            rows, 15., 15., 2., .98, .98, 5., 15, 1.,
+            earliest_slot_start=start + timedelta(minutes=15*16))
+        self.assertTrue(result['changed_indices'])
+        self.assertTrue(all(i >= 16 for i in result['changed_indices']))
+        self.assertTrue(all(result['rows'][i]['actual_recorded_at'] is None
+                            for i in result['changed_indices']))
+
     def dispatch(self, rows):
         requested = deterministic_soc_target_contract(
             rows, [17.]*len(rows), [17.]*len(rows), 15., 15., .98, .98, 5., 15, 1.)
