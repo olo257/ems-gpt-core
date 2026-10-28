@@ -1,3 +1,8 @@
+## 0.40.61 — pomijanie zakończonych slotów przy rozszerzaniu BUY
+
+- Nie otwieraj ponownie slotów historycznych ani zarejestrowanych jako wykonane.
+- Rozszerzaj okna BUY wyłącznie od bieżącego slotu, aby uniknąć konfliktu zapisu blokującego przeliczenie planu.
+
 ## 0.40.60 — wymagany zapas energii przed SELL
 
 - Rozszerzaj dostępne okna BUY przed drogimi oknami SELL według prognozy obciążenia i PV.

@@ -146,7 +146,8 @@ def extend_night_buy_capacity(
         rows: list[dict], capacity_kwh: float, reserve_pct: float, buffer_pct: float,
         eta_c: float, eta_d: float, max_power_kw: float, slot_minutes: int,
         uncertainty_weight: float, degradation: float, min_margin: float,
-        grid_import_limit_kw: float = 12.0) -> dict:
+        grid_import_limit_kw: float = 12.0,
+        earliest_slot_start: datetime | None = None) -> dict:
     """Give the price valley enough night capacity for the following morning.
 
     This only opens permissions next to existing night BUY valleys. Load/PV
@@ -161,13 +162,17 @@ def extend_night_buy_capacity(
     # charge capacity, never just on the existence of a later BUY flag.
     for day in sorted({row['slot_start'].date() for row in work}, reverse=True):
         night = [i for i, row in enumerate(work)
-                 if row['slot_start'].date() == day and row['slot_start'].hour < 6]
+                 if row['slot_start'].date() == day and row['slot_start'].hour < 6
+                 and (earliest_slot_start is None or row['slot_start'] >= earliest_slot_start)
+                 and row.get('actual_recorded_at') is None]
         selected = {i for i in night if strict_database_bool(work[i].get('buy_window', False), 'buy_window')
                     and not strict_database_bool(work[i].get('sale_window', False), 'sale_window')}
         if not selected:
             continue
         morning = [i for i, row in enumerate(work)
-                   if row['slot_start'].date() == day and row['slot_start'].hour >= 6]
+                   if row['slot_start'].date() == day and row['slot_start'].hour >= 6
+                   and (earliest_slot_start is None or row['slot_start'] >= earliest_slot_start)
+                   and row.get('actual_recorded_at') is None]
         if not morning:
             reports.append({'day': str(day), 'status': 'WAITING_MORNING_FORECAST'})
             continue
@@ -210,7 +215,8 @@ def extend_night_buy_capacity(
                 break
             neighbours = {j for i in selected for j in (i-1, i+1)
                           if j in night and j not in selected
-                          and not strict_database_bool(work[j].get('sale_window', False), 'sale_window')}
+                          and not strict_database_bool(work[j].get('sale_window', False), 'sale_window')
+                          and work[j].get('actual_recorded_at') is None}
             affordable = [j for j in neighbours if float(work[j]['price_buy_pln_kwh'])/(eta_c*eta_d)
                           + degradation + min_margin <= avoided_price + 1e-9]
             if not affordable:
@@ -238,7 +244,8 @@ def extend_night_buy_capacity(
 def extend_buy_capacity_before_sell(
         rows: list[dict], capacity_kwh: float, reserve_pct: float, buffer_pct: float,
         eta_c: float, eta_d: float, max_power_kw: float, slot_minutes: int,
-        uncertainty_weight: float, grid_import_limit_kw: float = 12.0) -> dict:
+        uncertainty_weight: float, grid_import_limit_kw: float = 12.0,
+        earliest_slot_start: datetime | None = None) -> dict:
     """Open enough adjacent BUY slots before SELL to meet forecast SOC needs."""
     work = [dict(row) for row in rows]
     changed, reports = set(), []
@@ -256,7 +263,9 @@ def extend_buy_capacity_before_sell(
 
     for day in days:
         indices = [i for i, row in enumerate(work)
-                   if row['slot_start'].date() == day and 6 <= row['slot_start'].hour < 22]
+                   if row['slot_start'].date() == day and 6 <= row['slot_start'].hour < 22
+                   and (earliest_slot_start is None or row['slot_start'] >= earliest_slot_start)
+                   and row.get('actual_recorded_at') is None]
         starts = [i for i in indices if flag(work[i], 'sale_window')
                   and (i == 0 or work[i-1]['slot_start'].date() != day
                        or not flag(work[i-1], 'sale_window'))]
@@ -285,6 +294,7 @@ def extend_buy_capacity_before_sell(
                 neighbours = {j for i in selected for j in (i-1, i+1)
                               if j in indices and j < sell_start and j not in selected
                               and not flag(work[j], 'sale_window')
+                              and work[j].get('actual_recorded_at') is None
                               and work[j].get('price_buy_pln_kwh') is not None}
                 if not neighbours:
                     status = 'SELL_COVERAGE_CAPACITY_LIMIT'
@@ -333,7 +343,7 @@ def build_ingestion(a: IngestionAdapters):
             float(OPTIONS.get('forecast_uncertainty_weight', 1.)),
             float(OPTIONS.get('battery_degradation_cost_pln_kwh', .08)),
             float(OPTIONS.get('minimum_arbitrage_margin_pln_kwh', .05)),
-            float(OPTIONS.get('grid_import_limit_kw', 12.)))
+            float(OPTIONS.get('grid_import_limit_kw', 12.)), slot_start())
         result = extend_buy_capacity_before_sell(
             night['rows'], float(OPTIONS.get('battery_capacity_kwh', 15.)),
             float(OPTIONS.get('battery_min_soc_pct', 15.)),
@@ -342,7 +352,7 @@ def build_ingestion(a: IngestionAdapters):
             float(OPTIONS.get('battery_discharge_efficiency', .95)),
             float(OPTIONS.get('battery_max_power_kw', 5.)), int(OPTIONS.get('slot_minutes', 15)),
             float(OPTIONS.get('forecast_uncertainty_weight', 1.)),
-            float(OPTIONS.get('grid_import_limit_kw', 12.)))
+            float(OPTIONS.get('grid_import_limit_kw', 12.)), slot_start())
         result['changed_indices'] = sorted(set(night['changed_indices']) | set(result['changed_indices']))
         result['reports'] = night['reports'] + result['reports']
         if result['changed_indices']:

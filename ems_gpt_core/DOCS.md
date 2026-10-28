@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.60**.
+Status: obowiązująca. Wersja wydania: **0.40.61**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -410,3 +410,8 @@ lokalne nie usuwa aktualnego błędu produkcji.
 ## Ładowanie przed drogimi oknami SELL
 
 Planer rozszerza sąsiednie okna BUY według prognozy zużycia i PV, aby osiągnąć wymagany SOC przed SELL. Jeśli fizyczna moc ładowania lub dostępne okna nie wystarczą, kandydat planu jest odrzucany, a poprzedni opublikowany plan pozostaje aktywny.
+
+
+## Ochrona zakończonych slotów BUY
+
+Przy rozszerzaniu BUY planer pomija sloty wcześniejsze niż bieżący slot oraz wszystkie sloty zarejestrowane jako wykonane. Nie zmienia uprawnień rynku w historii i może rozszerzać wyłącznie niezakończone sloty.

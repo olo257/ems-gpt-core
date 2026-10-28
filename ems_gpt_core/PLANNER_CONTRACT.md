@@ -706,3 +706,8 @@ Publikację tej zmiany zatwierdził użytkownik 16.10.2026.
 ## Pre-Sell Capacity
 
 Open adjacent BUY slots before SELL according to forecast consumption, PV and heating demand. Preserve the SOC requirement if capacity is insufficient and reject the candidate plan instead of publishing a shortfall.
+
+
+## Niezakończone okna BUY
+
+Rozszerzanie okien BUY działa wyłącznie od bieżącego slotu i pomija sloty z `actual_recorded_at`. Sloty historyczne nie mogą otrzymać nowego uprawnienia ani blokować publikacji przez konflikt zapisu.
