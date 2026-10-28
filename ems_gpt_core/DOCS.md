@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.59**.
+Status: obowiązująca. Wersja wydania: **0.40.60**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -405,3 +405,8 @@ niezmienionym celu 33,3%. Dodatkowe testy odrzucają obejście wymaganego SOC
 oraz próbę zastosowania ścieżki ze sprzedażą baterii. Po instalacji konieczna
 jest weryfikacja pełnego przeliczenia na produkcyjnej bazie; przygotowanie
 lokalne nie usuwa aktualnego błędu produkcji.
+
+
+## Ładowanie przed drogimi oknami SELL
+
+Planer rozszerza sąsiednie okna BUY według prognozy zużycia i PV, aby osiągnąć wymagany SOC przed SELL. Jeśli fizyczna moc ładowania lub dostępne okna nie wystarczą, kandydat planu jest odrzucany, a poprzedni opublikowany plan pozostaje aktywny.
