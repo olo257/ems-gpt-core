@@ -322,8 +322,8 @@ def build_ingestion(a: IngestionAdapters):
     canonical_slots_for_day, number, ha_state = a.canonical_slots_for_day, a.number, a.ha_state
     ha_service_response, record_event = a.ha_service_response, a.record_event
 
-    def ensure_night_buy_capacity(rows: list[dict], cur) -> dict:
-        result = extend_night_buy_capacity(
+    def ensure_night_buy_capacity(rows: list[dict], cur, initial_soc_pct=None) -> dict:
+        night = extend_night_buy_capacity(
             rows, float(OPTIONS.get('battery_capacity_kwh', 15.)),
             float(OPTIONS.get('battery_min_soc_pct', 15.)),
             float(OPTIONS.get('soc_replenishment_buffer_pct', 2.)),
@@ -334,6 +334,17 @@ def build_ingestion(a: IngestionAdapters):
             float(OPTIONS.get('battery_degradation_cost_pln_kwh', .08)),
             float(OPTIONS.get('minimum_arbitrage_margin_pln_kwh', .05)),
             float(OPTIONS.get('grid_import_limit_kw', 12.)))
+        result = extend_buy_capacity_before_sell(
+            night['rows'], float(OPTIONS.get('battery_capacity_kwh', 15.)),
+            float(OPTIONS.get('battery_min_soc_pct', 15.)),
+            float(OPTIONS.get('soc_replenishment_buffer_pct', 2.)),
+            float(OPTIONS.get('battery_charge_efficiency', .9)),
+            float(OPTIONS.get('battery_discharge_efficiency', .95)),
+            float(OPTIONS.get('battery_max_power_kw', 5.)), int(OPTIONS.get('slot_minutes', 15)),
+            float(OPTIONS.get('forecast_uncertainty_weight', 1.)),
+            float(OPTIONS.get('grid_import_limit_kw', 12.)))
+        result['changed_indices'] = sorted(set(night['changed_indices']) | set(result['changed_indices']))
+        result['reports'] = night['reports'] + result['reports']
         if result['changed_indices']:
             for index in result['changed_indices']:
                 cur.execute("""UPDATE ems_gpt_slots SET buy_window=1,market_window='BUY'
