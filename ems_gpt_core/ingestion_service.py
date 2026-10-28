@@ -155,6 +155,9 @@ def extend_night_buy_capacity(
     completed slots and daytime permissions are never overwritten here.
     """
     work = [dict(row) for row in rows]
+    if earliest_slot_start is not None and earliest_slot_start.tzinfo is not None:
+        # HA supplies the cutoff as Warsaw-aware time; DB slots are local naive.
+        earliest_slot_start = earliest_slot_start.replace(tzinfo=None)
     changed, reports = set(), []
     hours = slot_minutes/60.0
     quantum = capacity_kwh*.001
@@ -248,6 +251,9 @@ def extend_buy_capacity_before_sell(
         earliest_slot_start: datetime | None = None) -> dict:
     """Open enough adjacent BUY slots before SELL to meet forecast SOC needs."""
     work = [dict(row) for row in rows]
+    if earliest_slot_start is not None and earliest_slot_start.tzinfo is not None:
+        # HA supplies the cutoff as Warsaw-aware time; DB slots are local naive.
+        earliest_slot_start = earliest_slot_start.replace(tzinfo=None)
     changed, reports = set(), []
     hours = slot_minutes / 60.0
     quantum = max(0.001, capacity_kwh * 0.001)

@@ -1,3 +1,8 @@
+## 0.40.62 — normalizacja czasu granicznego slotu
+
+- Normalizuj strefę czasu przekazaną przez HA przed porównaniem z lokalnym `datetime` slotu.
+- Dodaj regresje dla cutoffów strefowych w rozszerzaniu okien BUY.
+
 ## 0.40.61 — pomijanie zakończonych slotów przy rozszerzaniu BUY
 
 - Nie otwieraj ponownie slotów historycznych ani zarejestrowanych jako wykonane.

@@ -711,3 +711,6 @@ Open adjacent BUY slots before SELL according to forecast consumption, PV and he
 ## Niezakończone okna BUY
 
 Rozszerzanie okien BUY działa wyłącznie od bieżącego slotu i pomija sloty z `actual_recorded_at`. Sloty historyczne nie mogą otrzymać nowego uprawnienia ani blokować publikacji przez konflikt zapisu.
+
+
+Cutoff przekazany przez HA może zawierać strefę `Europe/Warsaw`; przed porównaniem z naiwnymi lokalnymi datami slotów należy usunąć wyłącznie metadane strefy, zachowując lokalny czas.
