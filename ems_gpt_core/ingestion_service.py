@@ -235,6 +235,72 @@ def extend_night_buy_capacity(
     return {'rows': work, 'changed_indices': sorted(changed), 'reports': reports}
 
 
+def extend_buy_capacity_before_sell(
+        rows: list[dict], capacity_kwh: float, reserve_pct: float, buffer_pct: float,
+        eta_c: float, eta_d: float, max_power_kw: float, slot_minutes: int,
+        uncertainty_weight: float, grid_import_limit_kw: float = 12.0) -> dict:
+    """Open enough adjacent BUY slots before SELL to meet forecast SOC needs."""
+    work = [dict(row) for row in rows]
+    changed, reports = set(), []
+    hours = slot_minutes / 60.0
+    quantum = max(0.001, capacity_kwh * 0.001)
+    days = sorted({row['slot_start'].date() for row in work})
+
+    def flag(row, key):
+        return strict_database_bool(row.get(key, False), key)
+
+    def deficit(row):
+        return max(0.0, float(row['forecast_load_kwh'])
+                   + float(row.get('forecast_heat_pump_load_kwh') or 0.0)
+                   - float(row['forecast_pv_total_kwh']))
+
+    for day in days:
+        indices = [i for i, row in enumerate(work)
+                   if row['slot_start'].date() == day and 6 <= row['slot_start'].hour < 22]
+        starts = [i for i in indices if flag(work[i], 'sale_window')
+                  and (i == 0 or work[i-1]['slot_start'].date() != day
+                       or not flag(work[i-1], 'sale_window'))]
+        for sell_start in starts:
+            buys = [i for i in indices if i < sell_start and flag(work[i], 'buy_window')
+                    and not flag(work[i], 'sale_window')]
+            if not buys:
+                reports.append({'sell_start': str(work[sell_start]['slot_start']),
+                                'status': 'NO_PRE_SELL_BUY_WINDOW'})
+                continue
+            selected = set([max(buys)])
+            while selected:
+                right = max(selected)
+                requirements = replenishment_soc_requirements(
+                    work[right:], capacity_kwh, reserve_pct, buffer_pct,
+                    eta_c, eta_d, max_power_kw, slot_minutes, uncertainty_weight)
+                required = max(0.0, capacity_kwh
+                               * (min(100.0, requirements[0]) - reserve_pct) / 100.0)
+                available = sum(math.floor(min(
+                    max_power_kw * hours,
+                    max(0.0, grid_import_limit_kw * hours - deficit(work[i])))
+                    * eta_c / quantum + 1e-9) * quantum for i in selected)
+                if available + 1e-9 >= required:
+                    status = 'SELL_ENERGY_READY'
+                    break
+                neighbours = {j for i in selected for j in (i-1, i+1)
+                              if j in indices and j < sell_start and j not in selected
+                              and not flag(work[j], 'sale_window')
+                              and work[j].get('price_buy_pln_kwh') is not None}
+                if not neighbours:
+                    status = 'SELL_COVERAGE_CAPACITY_LIMIT'
+                    break
+                j = min(neighbours, key=lambda k: (float(work[k]['price_buy_pln_kwh']), k))
+                work[j].update(buy_window=True, sale_window=False, market_window='BUY')
+                selected.add(j)
+                changed.add(j)
+            reports.append({'sell_start': str(work[sell_start]['slot_start']),
+                            'status': status, 'required_charge_kwh': required,
+                            'available_charge_kwh': available,
+                            'added_slots': [str(work[i]['slot_start'])
+                                            for i in sorted(selected) if i in changed]})
+    return {'rows': work, 'changed_indices': sorted(changed), 'reports': reports}
+
+
 @dataclass(frozen=True)
 class IngestionAdapters:
     options: dict
