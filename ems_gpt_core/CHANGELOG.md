@@ -1,5 +1,12 @@
 # EMS-GPT Core — historia zmian
 
+## Unreleased — zachowanie prognozy zużycia przy niekompletnej historii
+
+- Przy brakujących próbkach bazowego zużycia zachowaj prognozę z ostatniego opublikowanego planu wyłącznie dla tego samego slotu.
+- Oznacz brak wiarygodnej prognozy bez takiego fallbacku jawnie jako zablokowany; replan pozostaje fail-closed.
+- Nie zatrzymuj ponownego przeliczenia po batchu oznaczonym jako niekompletny; stabilne wyniki zachowują idempotencję.
+
+
 ## 0.40.56 — bilans SOC, nocne BUY i replan zdarzeniowy
 
 - Dodatkowo zatwierdzono 20.10.2026 ograniczenie pełnego replanu: po imporcie RCE, w slocie przed początkiem ciągłego BUY/SELL oraz po istotnych zdarzeniach. W neutralnych slotach i wewnątrz prawidłowo realizowanego okna nie przelicza się całego planu co 15 minut.
