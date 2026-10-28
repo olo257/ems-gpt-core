@@ -116,7 +116,7 @@ class NightBuyCapacityTests(unittest.TestCase):
         rows = []
         for i in range(40):
             clock = start + timedelta(minutes=15*i)
-            buy = i in (14, 24)
+            buy = i in (14, 20, 21)
             sell = i >= 28
             rows.append(dict(
                 slot_start=clock, slot_end=clock+timedelta(minutes=15),
@@ -129,6 +129,8 @@ class NightBuyCapacityTests(unittest.TestCase):
             rows, 15., 15., 2., .98, .98, 5., 15, 1.,
             earliest_slot_start=(start + timedelta(minutes=15*16)).replace(tzinfo=ZoneInfo('Europe/Warsaw')))
         self.assertTrue(result['changed_indices'])
+        self.assertNotIn(20, result['changed_indices'])
+        self.assertNotIn(21, result['changed_indices'])
         self.assertTrue(all(i >= 16 for i in result['changed_indices']))
         self.assertTrue(all(result['rows'][i]['actual_recorded_at'] is None
                             for i in result['changed_indices']))
