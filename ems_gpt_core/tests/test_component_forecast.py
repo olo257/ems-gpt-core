@@ -96,6 +96,18 @@ class ComponentTests(unittest.TestCase):
         self.assertIsNone(result['slots'][NOW]['house_kwh'])
         self.assertIn('INSUFFICIENT_COMPLETE_DHW_CYCLES',result['reasons'])
 
+    def test_two_exact_quarter_samples_use_nearest_qualified_quarter(self):
+        rows=history()
+        exact=[row for row in rows if row['slot_start'].hour==NOW.hour
+               and row['slot_start'].minute==NOW.minute]
+        for row in exact[:5]:
+            row['sample_count']=0
+        estimate=build_component_forecast(rows,[NOW],now=NOW)['slots'][NOW]
+        self.assertEqual(estimate['sample_count'],2)
+        self.assertEqual(estimate['house_source'],'NEAREST_QUALIFIED_QUARTER')
+        self.assertAlmostEqual(estimate['house_kwh'],.2)
+        self.assertIsNotNone(estimate['dhw_kwh'])
+
     def test_heating_pause_does_not_repeat_startup(self):
         future=[NOW,NOW+SLOT*4,NOW+SLOT*20]
         result=heating_profile_for_plan(future,[.5,.3,.1],
@@ -146,14 +158,13 @@ class ComponentTests(unittest.TestCase):
                             for call in cur.execute.call_args_list))
 
     def test_materialization_writes_same_batch_and_preserves_missing_rows(self):
-        valid_time=NOW.replace(minute=0)
+        valid_time=NOW.replace(minute=30)
         missing_time=valid_time+SLOT
         samples=history()
         for row in samples:
-            if row['slot_start'].hour==6 and row['slot_start'].minute==15:
+            if row['slot_start'].hour==missing_time.hour and row['slot_start'].minute==missing_time.minute:
                 row['sample_count']=0
-        # 06:30 stays valid; later cycles supply complete DHW training examples.
-        valid_time=NOW.replace(minute=30)
+        # 06:30 stays valid; 06:45 uses the nearest qualified quarter.
         future=[{'slot_start':valid_time,'forecast_load_kwh':9},
                 {'slot_start':missing_time,'forecast_load_kwh':8}]
         cur=MagicMock();cur.fetchall.side_effect=[future,samples];cur.fetchone.return_value=None
@@ -165,9 +176,8 @@ class ComponentTests(unittest.TestCase):
         service.learn_missing_load()
         writes=[call.args[1] for call in cur.execute.call_args_list
                 if 'SET forecast_load_kwh=' in call.args[0]]
-        self.assertEqual(len(writes),1)
-        self.assertEqual(writes[0][1],valid_time)
-        self.assertAlmostEqual(writes[0][0],.2)
+        self.assertEqual([write[1] for write in writes],[valid_time,missing_time])
+        self.assertEqual([write[0] for write in writes],[.2,.2])
         batches=[call.args[1][1] for call in cur.execute.call_args_list
                  if 'INSERT INTO ems_gpt_core_consumption_forecasts' in call.args[0]]
         self.assertEqual(len(batches),2)
