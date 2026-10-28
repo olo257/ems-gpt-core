@@ -15,8 +15,9 @@ może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
   rekordach.
 - Dla każdego slotu tego horyzontu muszą istnieć prognozy zużycia i PV. Brak
   prognozy nie oznacza zera: przy niepełnej historii składników zachowywana
-  jest poprzednia kompletna prognoza tego samego slotu. Pozostały `NULL`
-  odrzuca cały przebieg.
+  jest poprzednia kompletna prognoza tego samego slotu, w tym z ostatniej
+  opublikowanej migawki planu. Prognoz z innych slotów, dni ani wykonania nie
+  wolno kopiować. Pozostały `NULL` odrzuca cały przebieg.
 - Przejście miesiąca nie może wyzerować prognozy PV. Przy braku kompletnego
   profilu danego miesiąca używany jest najbliższy kompletny profil historyczny,
   z cyklicznym dystansem miesięcy (grudzień sąsiaduje ze styczniem).
@@ -614,7 +615,11 @@ targetu do PV/BUY; reguły BUY, sufitu targetu i ekonomiki nie zmieniają się.
 Uczenie korzysta wyłącznie z ostatnich 7 dni zamkniętych slotów Core, minimalnej
 liczby próbek, pokrycia oraz kompletnych źródeł. Brak kanału, nieznany stan
 PV_CWU lub niespójny bilans wykluczają próbkę. Brak minimum 3 próbek kwadransa
-lub 2 kompletnych cykli CWU zachowuje wcześniejszą prognozę i zapisuje status.
+lub 2 kompletnych cykli CWU zachowuje wcześniejszą prognozę tego samego slotu,
+w razie potrzeby z ostatniej opublikowanej migawki planu, i zapisuje źródło w
+statusie partii. Jeśli takiej prognozy nie ma, pozostaje `NULL` i planer blokuje
+przebieg. Batch niekompletny otrzymuje jedną ponowną próbę, a potem jest
+buforowany do kolejnej zmiany slotu, aby uniknąć nieograniczonego przeliczania.
 Średnia energii domu zachowuje wpływ rzeczywistych zdarzeń zużycia; nie dodaje
 osobnego arbitralnego bufora AGD.
 
