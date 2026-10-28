@@ -619,10 +619,11 @@ def build_materializations(a: MaterializationAdapters):
                 return 0
             last_slot = future[-1]["slot_start"]
             # A complete batch can be reused during this slot. A legacy
-            # PRESERVED_INCOMPLETE_HISTORY row gets one retry after this fix so
-            # it can recover from the last accepted plan for the exact slot.
+            # Legacy incomplete and blocked batches get one retry so new
+            # nearby-quarter fallbacks can resolve them after an upgrade.
             cur.execute("""SELECT MAX(generated_at) generated_at,MAX(slot_start) last_slot,
-              COUNT(*) slot_count,SUM(status='PRESERVED_INCOMPLETE_HISTORY') unresolved
+              COUNT(*) slot_count,SUM(status IN (
+                'PRESERVED_INCOMPLETE_HISTORY','BLOCKED_NO_ACCEPTED_FALLBACK')) unresolved
               FROM ems_gpt_core_consumption_forecasts
               WHERE generated_at=%s AND slot_start>=%s AND slot_start<=%s""",
               (cutoff, cutoff, last_slot))
@@ -682,7 +683,7 @@ def build_materializations(a: MaterializationAdapters):
                                 AND forecast_load_kwh IS NULL""", (fallback_load, slot))
                             preserved += cur.rowcount
                         else:
-                            status = "BLOCKED_NO_ACCEPTED_FALLBACK"
+                            status = "BLOCKED_NO_NEARBY_FALLBACK"
                             evidence["fallback_source"] = "NONE"
                             blocked += 1
                 cur.execute("""INSERT INTO ems_gpt_core_consumption_forecasts

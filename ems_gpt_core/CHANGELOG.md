@@ -1,5 +1,11 @@
 # EMS-GPT Core — historia zmian
 
+## 0.40.59 — ponowienie historycznej blokady prognozy
+
+- Ponów raz batch z `BLOCKED_NO_ACCEPTED_FALLBACK`, aby prognoza sąsiedniego kwadransa mogła odblokować już istniejący slot po aktualizacji.
+- Jeśli nadal brak kwalifikowanej próbki w promieniu 30 minut, zapisz terminalny status `BLOCKED_NO_NEARBY_FALLBACK`, bez ciasnej pętli ponowień.
+- Dodano regresję dla ponowienia blokady zapisanej przez poprzednią wersję.
+
 ## 0.40.58 — sąsiednia prognoza przy rzadkich próbkach kwadransa
 
 - Gdy dokładny kwadrans ma mniej niż 3 kompletne próbki, użyj średniej z najbliższego kwadransa do 30 minut dalej, jeśli ma on co najmniej 3 próbki w tym samym 7-dniowym oknie.

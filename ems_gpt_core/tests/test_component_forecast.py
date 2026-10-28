@@ -211,8 +211,10 @@ class ComponentTests(unittest.TestCase):
                    if 'INSERT INTO ems_gpt_core_consumption_forecasts' in call.args[0])
         self.assertEqual(batch.args[1][8],'PRESERVED_LAST_PUBLISHED_PLAN')
         self.assertIn('PUBLISHED_PLAN_SAME_SLOT',batch.args[1][9])
-        self.assertTrue(any("status='PRESERVED_INCOMPLETE_HISTORY'" in call.args[0]
-                            for call in cur.execute.call_args_list))
+        retry_query=next(call.args[0] for call in cur.execute.call_args_list
+                         if 'unresolved' in call.args[0])
+        self.assertIn("'PRESERVED_INCOMPLETE_HISTORY'",retry_query)
+        self.assertIn("'BLOCKED_NO_ACCEPTED_FALLBACK'",retry_query)
 
     def test_missing_history_without_published_fallback_stays_blocked(self):
         future=[{'slot_start':NOW,'forecast_load_kwh':None}]
@@ -230,7 +232,7 @@ class ComponentTests(unittest.TestCase):
 
         batch=next(call for call in cur.execute.call_args_list
                    if 'INSERT INTO ems_gpt_core_consumption_forecasts' in call.args[0])
-        self.assertEqual(batch.args[1][8],'BLOCKED_NO_ACCEPTED_FALLBACK')
+        self.assertEqual(batch.args[1][8],'BLOCKED_NO_NEARBY_FALLBACK')
         self.assertFalse(any('SET forecast_load_kwh=%s' in call.args[0]
                              for call in cur.execute.call_args_list))
 

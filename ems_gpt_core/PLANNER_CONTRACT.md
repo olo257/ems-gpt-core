@@ -622,7 +622,10 @@ tej ćwiartki doby, bazowe zużycie może użyć najbliższej ćwiartki (maksyma
 okna. Źródło jest zapisane w metadanych prognozy. Bez wiarygodnej prognozy
 lokalnej lub sąsiedniej wartości pozostaje `NULL` i planer blokuje przebieg.
 Batch niekompletny otrzymuje jedną ponowną próbę, a potem jest buforowany do
-kolejnej zmiany slotu, aby uniknąć nieograniczonego przeliczania.
+kolejnej zmiany slotu, aby uniknąć nieograniczonego przeliczania. Blokada
+zapisana przez wcześniejszą wersję bez sąsiedniego fallbacku otrzymuje jedną
+ponowną próbę po aktualizacji; bez danych lokalnych kończy jako
+`BLOCKED_NO_NEARBY_FALLBACK`.
 Średnia energii domu zachowuje wpływ rzeczywistych zdarzeń zużycia; nie dodaje
 osobnego arbitralnego bufora AGD.
 
