@@ -1,3 +1,8 @@
+## 0.40.63 — pomijanie istniejących slotów BUY
+
+- Nie zapisuj ponownie sąsiednich slotów już oznaczonych jako BUY podczas rozszerzania okna.
+- Dodaj regresję dla istniejących sąsiednich uprawnień BUY.
+
 ## 0.40.62 — normalizacja czasu granicznego slotu
 
 - Normalizuj strefę czasu przekazaną przez HA przed porównaniem z lokalnym `datetime` slotu.
