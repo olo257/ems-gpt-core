@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 13588)
+Total output lines: 717
+
 """Slot closure, aggregates and recovery materializations."""
 from __future__ import annotations
 
@@ -344,84 +347,7 @@ def build_materializations(a: MaterializationAdapters):
               SUM(COALESCE(actual_sell_kwh,0)+COALESCE(actual_pv_export_kwh,0)) aexport,
               SUM((COALESCE(planned_sell_kwh,0)+COALESCE(planned_pv_export_kwh,0))*COALESCE(price_sell_pln_kwh,0)-COALESCE(planned_buy_kwh,0)*COALESCE(price_buy_pln_kwh,0)) pnet,
               SUM((COALESCE(actual_sell_kwh,0)+COALESCE(actual_pv_export_kwh,0))*COALESCE(price_sell_pln_kwh,0)-COALESCE(actual_buy_kwh,0)*COALESCE(price_buy_pln_kwh,0)) anet,
-              SUBSTRING_INDEX(GROUP_CONCAT(soc_end_pct ORDER BY slot_start DESC),',',1) soc
-              FROM ems_gpt_slots WHERE slot_start>=%s
-              GROUP BY DATE_FORMAT(slot_start,'%%Y-%%m-%%d %%H:00:00')""",(day_start,))
-            hours=cur.fetchall()
-            for r in hours:
-                cur.execute("""INSERT INTO ems_gpt_core_hourly
-                  (hour_start,slot_count,forecast_pv_kwh,actual_pv_kwh,forecast_load_kwh,actual_load_kwh,
-                   planned_import_kwh,actual_import_kwh,planned_export_kwh,actual_export_kwh,
-                   planned_net_pln,actual_net_pln,soc_end_pct,updated_at,quality_status)
-                  VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(6),%s)
-                  ON DUPLICATE KEY UPDATE slot_count=VALUES(slot_count),forecast_pv_kwh=VALUES(forecast_pv_kwh),
-                   actual_pv_kwh=VALUES(actual_pv_kwh),forecast_load_kwh=VALUES(forecast_load_kwh),
-                   actual_load_kwh=VALUES(actual_load_kwh),planned_import_kwh=VALUES(planned_import_kwh),
-                   actual_import_kwh=VALUES(actual_import_kwh),planned_export_kwh=VALUES(planned_export_kwh),
-                   actual_export_kwh=VALUES(actual_export_kwh),planned_net_pln=VALUES(planned_net_pln),
-                   actual_net_pln=VALUES(actual_net_pln),soc_end_pct=VALUES(soc_end_pct),
-                   updated_at=NOW(6),quality_status=VALUES(quality_status)""",
-                  (r["hour_start"],r["slots"],r["fpv"],r["apv"],r["fload"],r["aload"],r["pbuy"],r["abuy"],
-                   r["pexport"],r["aexport"],r["pnet"],r["anet"],float(r["soc"]) if r["soc"] not in (None,"") else None,
-                   "COMPLETE" if int(r["actual_n"] or 0)==4 else "OPEN"))
-                hour_start_value = r["hour_start"]
-                if isinstance(hour_start_value, str):
-                    hour_start_value = datetime.strptime(hour_start_value, "%Y-%m-%d %H:%M:%S")
-                soc_open, soc_close = _actual_soc_bounds(cur, hour_start_value, hour_start_value+timedelta(hours=1))
-                cur.execute("""UPDATE ems_gpt_core_hourly SET soc_start_pct=%s,soc_end_pct=%s
-                  WHERE hour_start=%s""", (soc_open,soc_close,hour_start_value))
-            cur.execute("""SELECT COUNT(*) slots,SUM(actual_recorded_at IS NOT NULL) actual_n,
-              SUM(forecast_pv_total_kwh) fpv,SUM(actual_pv_total_kwh) apv,
-              SUM(planned_battery_discharge_kwh) pdis,SUM(actual_battery_discharge_kwh) adis,
-              SUM(planned_buy_kwh) pbuy,SUM(actual_buy_kwh) abuy,
-              SUM(forecast_load_kwh) fload,SUM(actual_load_kwh) aload,
-              SUM(planned_battery_charge_kwh) pcharge,SUM(actual_battery_charge_kwh) acharge,
-              SUM(COALESCE(planned_sell_kwh,0)+COALESCE(planned_pv_export_kwh,0)) pexport,
-              SUM(COALESCE(actual_sell_kwh,0)+COALESCE(actual_pv_export_kwh,0)) aexport,
-              SUM((COALESCE(planned_sell_kwh,0)+COALESCE(planned_pv_export_kwh,0))*COALESCE(price_sell_pln_kwh,0)-COALESCE(planned_buy_kwh,0)*COALESCE(price_buy_pln_kwh,0)) pnet,
-              SUM((COALESCE(actual_sell_kwh,0)+COALESCE(actual_pv_export_kwh,0))*COALESCE(price_sell_pln_kwh,0)-COALESCE(actual_buy_kwh,0)*COALESCE(price_buy_pln_kwh,0)) anet
-              FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s""",(day_start,day_start+timedelta(days=1)))
-            d=cur.fetchone()
-            cur.execute("""INSERT INTO ems_gpt_daily(day_date,closed_at,slot_count,expected_slot_count,
-              forecast_pv_kwh,actual_pv_kwh,forecast_battery_discharge_kwh,actual_battery_discharge_kwh,
-              forecast_import_kwh,actual_import_kwh,forecast_load_kwh,actual_load_kwh,
-              forecast_battery_charge_kwh,actual_battery_charge_kwh,forecast_export_kwh,actual_export_kwh,
-              forecast_pv_export_kwh,actual_pv_export_kwh,planned_net_pln,actual_net_pln)
-              VALUES(%s,NOW(6),%s,96,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-              ON DUPLICATE KEY UPDATE closed_at=NOW(6),slot_count=VALUES(slot_count),
-              forecast_pv_kwh=VALUES(forecast_pv_kwh),actual_pv_kwh=VALUES(actual_pv_kwh),
-              forecast_battery_discharge_kwh=VALUES(forecast_battery_discharge_kwh),
-              actual_battery_discharge_kwh=VALUES(actual_battery_discharge_kwh),
-              forecast_import_kwh=VALUES(forecast_import_kwh),actual_import_kwh=VALUES(actual_import_kwh),
-              forecast_load_kwh=VALUES(forecast_load_kwh),actual_load_kwh=VALUES(actual_load_kwh),
-              forecast_battery_charge_kwh=VALUES(forecast_battery_charge_kwh),
-              actual_battery_charge_kwh=VALUES(actual_battery_charge_kwh),
-              forecast_export_kwh=VALUES(forecast_export_kwh),actual_export_kwh=VALUES(actual_export_kwh),
-              forecast_pv_export_kwh=VALUES(forecast_pv_export_kwh),
-              actual_pv_export_kwh=VALUES(actual_pv_export_kwh),
-              planned_net_pln=VALUES(planned_net_pln),actual_net_pln=VALUES(actual_net_pln)""",
-              (day_start.date(),d["slots"],d["fpv"],d["apv"],d["pdis"],d["adis"],d["pbuy"],d["abuy"],
-               d["fload"],d["aload"],d["pcharge"],d["acharge"],d["pexport"],d["aexport"],
-               d["pexport"],d["aexport"],d["pnet"],d["anet"]))
-            soc_open, soc_close = _actual_soc_bounds(cur, day_start, day_start+timedelta(days=1))
-            cur.execute("""UPDATE ems_gpt_daily SET soc_start_pct=%s,soc_end_pct=%s
-              WHERE day_date=%s""", (soc_open,soc_close,day_start.date()))
-            cur.execute("""SELECT
-              MIN(CASE WHEN actual_pv_total_kwh>0.001 THEN TIME(slot_start) END) pv_start,
-              MAX(CASE WHEN actual_pv_total_kwh>0.001 THEN TIME(slot_end) END) pv_end
-              FROM ems_gpt_slots WHERE slot_start>=%s AND slot_start<%s""",
-              (day_start,day_start+timedelta(days=1)))
-            pv_bounds=cur.fetchone()
-            cur.execute("""UPDATE ems_gpt_daily SET pv_production_start_time=%s,
-              pv_production_end_time=%s WHERE day_date=%s""",
-              (pv_bounds["pv_start"],pv_bounds["pv_end"],day_start.date()))
-            _update_daily_soc_history(cur,day_start.date())
-    
-    
-    def rebuild_recovery_materializations(days: int = 7) -> dict:
-        """Rebuild affected HOUR/DAILY rows after an outage without inventing actual values."""
-        now = local_now().replace(tzinfo=None)
-        first_day = (now-timedelta(days=max(1, days)-1)).replace(hour=0,minute=0,second=0,microsecond=0)
+              SUBSTRING_INDEX(GROUP_CONCAT(soc_end_pct ORDER BY…1588 tokens truncated…_day = (now-timedelta(days=max(1, days)-1)).replace(hour=0,minute=0,second=0,microsecond=0)
         with db() as conn, conn.cursor() as cur:
             cur.execute("""SELECT DATE_FORMAT(s.slot_start,'%%Y-%%m-%%d %%H:00:00') hour_start,
               COUNT(*) expected_n,SUM(s.actual_recorded_at IS NOT NULL) terminal_n,
@@ -657,7 +583,8 @@ def build_materializations(a: MaterializationAdapters):
                 estimate = model["slots"][slot]
                 valid = estimate["house_kwh"] is not None
                 status = "READY" if valid else None
-                evidence = dict(metadata)
+                evidence = {**metadata,
+                    "house_forecast_source": estimate.get("house_source")}
                 fallback_load = None
                 if not valid:
                     if row.get("forecast_load_kwh") is not None:
