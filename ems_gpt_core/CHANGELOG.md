@@ -1,9 +1,9 @@
-## 0.40.64 — pełne wymagane grzanie HP
+## 0.40.64 — ogrzewanie HP i rezerwa nocna
 
-- Traktuj minimalną liczbę godzin HP jako twarde wymaganie kwalifikowanego dnia.
-- Gdy do 19:00 brakuje czasu, wykorzystaj dostępne sloty do 20:00, nadal przed SELL.
-- Wlicz pełne obciążenie HP do zapotrzebowania na energię i ładowanie w dozwolonych BUY.
-- Nie publikuj harmonogramu z brakującymi godzinami; jawnie odrzuć replan, gdy pełny cykl nie mieści się w dozwolonym oknie.
+- Preferuj start HP od pierwszego dostępnego slotu około 07:00, z możliwością wydłużenia do 20:00 przed SELL.
+- Niedobór godzin HP raportuj jako ostrzeżenie; nie blokuj planera i publikuj maksymalny wykonalny harmonogram.
+- Wylicz rezerwę z nocnego BUY na HP do pierwszego późniejszego dziennego BUY, uwzględniając PV, sprawność i bufor.
+- Raportuj brak nocnego BUY lub niewystarczającą pojemność; nie otwieraj importu poza BUY.
 
 ## 0.40.63 — pomijanie istniejących slotów BUY
 
