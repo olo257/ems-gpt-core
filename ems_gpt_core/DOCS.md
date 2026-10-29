@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.63**.
+Status: obowiązująca. Wersja wydania: **0.40.64**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -136,15 +136,22 @@ wartości `1` z poprzednio opublikowanego planu.
 
 Okno jest takie samo w dni robocze i weekend:
 
-- start najwcześniej o 07:00, zaraz po porannym oknie `SELL`;
-- koniec najpóźniej o 19:00 albo wcześniej, przed wieczornym `SELL`;
+- start od pierwszego dostępnego slotu około 07:00, po porannym `SELL`;
+  planer preferuje wczesny start;
+- standardowy koniec o 19:00; jeśli brakuje godzin, harmonogram może sięgnąć
+  do 20:00, nadal przed wieczornym `SELL`;
 - `BUY` nie wyznacza początku ani końca okna;
 - żaden slot `SELL` nie może uruchomić ogrzewania.
 
-Jeżeli warunek temperatury jest spełniony, energia HP wchodzi do bilansu i może
-zwiększyć energię ładowania baterii w wybranym oknie `BUY`. Sam proces HP nie
-tworzy okna BUY. Planer publikuje rekomendowany przebieg niezależnie od trybu
-wykonawczego. `AUTO` wykonuje rekomendację, `FORCE_ON` ją zastępuje włączeniem,
+Jeżeli warunek temperatury jest spełniony, HP jest obciążeniem krytycznym:
+planer dąży do pełnej liczby godzin niezależnie od SOC i ilości ładowania.
+W razie braku miejsca publikuje maksymalny wykonalny harmonogram i ostrzeżenie,
+bez zatrzymywania replanu. Prognozowane zużycie HP podnosi rezerwę wyliczaną
+z nocnego BUY do pierwszego późniejszego dziennego BUY; nadwyżka PV ponad load
+domu pomniejsza wymaganą energię z baterii. Jeśli nocnego BUY brakuje albo jego
+pojemność jest niewystarczająca, zapisuje się diagnostykę, ale planer pracuje
+dalej. Import nadal może występować wyłącznie w ekonomicznych oknach BUY;
+samo HP nie tworzy BUY. Planer publikuje rekomendowany przebieg niezależnie od trybu wykonawczego. `AUTO` wykonuje rekomendację, `FORCE_ON` ją zastępuje włączeniem,
 a `FORCE_OFF` blokuje wykonanie. Override nie przelicza historycznego planu ani
 targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
 

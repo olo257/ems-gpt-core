@@ -62,7 +62,7 @@ from planner_soc_service import (
     validate_recoverable_soc_requirements,
 )
 
-PLANNER_VERSION = "CORE_0_40_56"
+PLANNER_VERSION = "CORE_0_40_64"
 
 @dataclass(frozen=True)
 class PlannerAdapters:

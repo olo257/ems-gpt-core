@@ -1,3 +1,10 @@
+## 0.40.64 — ogrzewanie HP i rezerwa nocna
+
+- Preferuj start HP od pierwszego dostępnego slotu około 07:00, z możliwością wydłużenia do 20:00 przed SELL.
+- Niedobór godzin HP raportuj jako ostrzeżenie; nie blokuj planera i publikuj maksymalny wykonalny harmonogram.
+- Wylicz rezerwę z nocnego BUY na HP do pierwszego późniejszego dziennego BUY, uwzględniając PV, sprawność i bufor.
+- Raportuj brak nocnego BUY lub niewystarczającą pojemność; nie otwieraj importu poza BUY.
+
 ## 0.40.63 — pomijanie istniejących slotów BUY
 
 - Nie zapisuj ponownie sąsiednich slotów już oznaczonych jako BUY podczas rozszerzania okna.

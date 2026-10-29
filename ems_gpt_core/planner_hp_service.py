@@ -71,7 +71,8 @@ def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], require
         grid_energy = max(0.0, slot_energy - pv_cover)
         buy_price = float(row.get("price_buy_pln_kwh") or 0.0)
         sell_price = max(0.0, float(row.get("price_sell_pln_kwh") or 0.0))
-        on_cost = grid_energy * buy_price + pv_cover * sell_price
+        on_cost = (grid_energy * buy_price + pv_cover * sell_price
+                    + max(0.0, float(row.get("_hp_start_delay_penalty_pln") or 0.0)))
         for state, (cost, selected) in states.items():
             delivered, current_phase, current_run, current_gap = state
             # A cycle already running at the replan boundary is a
@@ -144,12 +145,13 @@ def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[
     return states, unknown
 
 
-def hp_heating_window_indices(rows: list[dict], day_value) -> set[int]:
-    """Return slots allowed for automatic Heat+DHW on one local day."""
+def hp_heating_window_indices(rows: list[dict], day_value,
+                              latest_end_hour: int = 19) -> set[int]:
+    """Return allowed heating slots, capped by evening SELL and end hour."""
     day_start = datetime.combine(day_value, datetime.min.time())
     earliest_start = day_start + timedelta(hours=7)
     midday = day_start + timedelta(hours=12)
-    latest_end = day_start + timedelta(hours=19)
+    latest_end = day_start + timedelta(hours=latest_end_hour)
     morning_sell_ends = [
         row.get("slot_end") or (row["slot_start"] + timedelta(minutes=15))
         for row in rows
@@ -274,20 +276,42 @@ def prepare_heat_pump_plan(cur, source: list[dict], rows: list[dict], now,
                 "action": "NO_HEATING_CREDIT_CONTINUE_PLANNING",
             }, "WARNING")
         day_rows = [row for _, row in indexed_rows]
-        allowed_local = hp_heating_window_indices(day_rows, day_value)
-        allowed_rows = [row for index, row in enumerate(day_rows)
-                        if index in allowed_local]
-        selected_allowed = optimize_hp_heating_slots(
-            allowed_rows, past_states, required_slots,
-            min_cycle_slots, min_gap_slots, max_gap_slots, planned_hp_kw, cycle_penalty)
-        allowed_positions = sorted(allowed_local)
-        selected_local = {allowed_positions[index] for index in selected_allowed}
-        hp_selected_indices.update(indexed_rows[index][0] for index in selected_local)
+        def select_with_end_hour(end_hour: int) -> set[int]:
+            allowed = hp_heating_window_indices(day_rows, day_value, end_hour)
+            allowed_positions = sorted(allowed)
+            first_slot = day_rows[allowed_positions[0]]["slot_start"] if allowed_positions else None
+            candidate_rows = []
+            for index in allowed_positions:
+                row = dict(day_rows[index])
+                delay_slots = max(0, int(
+                    (row["slot_start"] - first_slot).total_seconds() // 900
+                )) if first_slot is not None else 0
+                row["_hp_start_delay_penalty_pln"] = delay_slots * 0.75
+                candidate_rows.append(row)
+            selected = optimize_hp_heating_slots(
+                candidate_rows, past_states, required_slots,
+                min_cycle_slots, min_gap_slots, max_gap_slots,
+                planned_hp_kw, cycle_penalty)
+            return {allowed_positions[index] for index in selected}
+
+        # Keep the ordinary 19:00 boundary when it can meet the full daily
+        # heating requirement. If not, use the remaining time through 20:00,
+        # still stopping before SELL. HP energy then feeds the existing SOC
+        # and BUY-capacity calculations as a required load.
+        selected_local = select_with_end_hour(19)
         delivered_slots = sum(past_states) + len(selected_local)
         if delivered_slots < required_slots:
-            hp_shortfalls.append({"day": day_key, "required_slots": required_slots,
-                                  "scheduled_slots": delivered_slots,
-                                  "missing_hours": round((required_slots-delivered_slots)/4, 2)})
+            selected_local = select_with_end_hour(20)
+            delivered_slots = sum(past_states) + len(selected_local)
+        if delivered_slots < required_slots:
+            hp_shortfalls.append({
+                "day": day_key, "required_slots": required_slots,
+                "scheduled_slots": delivered_slots,
+                "missing_hours": round((required_slots-delivered_slots)/4, 2),
+            })
+        # A shortfall is reported after publication, but it never aborts the
+        # planner. The best feasible comfort schedule remains in the plan.
+        hp_selected_indices.update(indexed_rows[index][0] for index in selected_local)
 
     # Consume the same versioned batch used for household + DHW.
     # A missing component preserves previous production input explicitly.
