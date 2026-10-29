@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.63**.
+Status: obowiązująca. Wersja wydania: **0.40.64**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -137,13 +137,16 @@ wartości `1` z poprzednio opublikowanego planu.
 Okno jest takie samo w dni robocze i weekend:
 
 - start najwcześniej o 07:00, zaraz po porannym oknie `SELL`;
-- koniec najpóźniej o 19:00 albo wcześniej, przed wieczornym `SELL`;
+- standardowy koniec o 19:00; jeśli dzienne minimum nie zostało osiągnięte,
+  harmonogram może sięgnąć do 20:00, nadal przed wieczornym `SELL`;
 - `BUY` nie wyznacza początku ani końca okna;
 - żaden slot `SELL` nie może uruchomić ogrzewania.
 
-Jeżeli warunek temperatury jest spełniony, energia HP wchodzi do bilansu i może
-zwiększyć energię ładowania baterii w wybranym oknie `BUY`. Sam proces HP nie
-tworzy okna BUY. Planer publikuje rekomendowany przebieg niezależnie od trybu
+Jeżeli warunek temperatury jest spełniony, wymagane godziny HP nie zależą od
+SOC ani od dostępności ładowania. Energia HP wchodzi do prognozy obciążenia,
+wymaganego SOC i wyliczenia ładowania w dozwolonych oknach `BUY`. Sam proces HP
+nie tworzy okna BUY. Plan nie może zostać opublikowany z brakującymi godzinami;
+jeśli minimum nie mieści się do 20:00 bez wejścia w `SELL`, replan zgłasza błąd. Planer publikuje rekomendowany przebieg niezależnie od trybu
 wykonawczego. `AUTO` wykonuje rekomendację, `FORCE_ON` ją zastępuje włączeniem,
 a `FORCE_OFF` blokuje wykonanie. Override nie przelicza historycznego planu ani
 targetu; różnica jest zapisywana jako odchylenie plan–wykonanie.
