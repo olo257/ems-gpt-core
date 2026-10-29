@@ -71,7 +71,8 @@ def optimize_hp_heating_slots(rows: list[dict], past_states: list[bool], require
         grid_energy = max(0.0, slot_energy - pv_cover)
         buy_price = float(row.get("price_buy_pln_kwh") or 0.0)
         sell_price = max(0.0, float(row.get("price_sell_pln_kwh") or 0.0))
-        on_cost = grid_energy * buy_price + pv_cover * sell_price
+        on_cost = (grid_energy * buy_price + pv_cover * sell_price
+                    + max(0.0, float(row.get("_hp_start_delay_penalty_pln") or 0.0)))
         for state, (cost, selected) in states.items():
             delivered, current_phase, current_run, current_gap = state
             # A cycle already running at the replan boundary is a
@@ -277,14 +278,21 @@ def prepare_heat_pump_plan(cur, source: list[dict], rows: list[dict], now,
         day_rows = [row for _, row in indexed_rows]
         def select_with_end_hour(end_hour: int) -> set[int]:
             allowed = hp_heating_window_indices(day_rows, day_value, end_hour)
-            candidate_rows = [row for index, row in enumerate(day_rows)
-                              if index in allowed]
+            allowed_positions = sorted(allowed)
+            first_slot = day_rows[allowed_positions[0]]["slot_start"] if allowed_positions else None
+            candidate_rows = []
+            for index in allowed_positions:
+                row = dict(day_rows[index])
+                delay_slots = max(0, int(
+                    (row["slot_start"] - first_slot).total_seconds() // 900
+                )) if first_slot is not None else 0
+                row["_hp_start_delay_penalty_pln"] = delay_slots * 0.75
+                candidate_rows.append(row)
             selected = optimize_hp_heating_slots(
                 candidate_rows, past_states, required_slots,
                 min_cycle_slots, min_gap_slots, max_gap_slots,
                 planned_hp_kw, cycle_penalty)
-            positions = sorted(allowed)
-            return {positions[index] for index in selected}
+            return {allowed_positions[index] for index in selected}
 
         # Keep the ordinary 19:00 boundary when it can meet the full daily
         # heating requirement. If not, use the remaining time through 20:00,
@@ -296,14 +304,13 @@ def prepare_heat_pump_plan(cur, source: list[dict], rows: list[dict], now,
             selected_local = select_with_end_hour(20)
             delivered_slots = sum(past_states) + len(selected_local)
         if delivered_slots < required_slots:
-            shortfall = {"day": day_key, "required_slots": required_slots,
-                         "scheduled_slots": delivered_slots,
-                         "missing_hours": round((required_slots-delivered_slots)/4, 2)}
-            record_event("hp_minimum_heating_unavailable", "planner", shortfall, "ERROR")
-            raise RuntimeError(
-                "HP_MINIMUM_HEATING_UNAVAILABLE:"
-                f"{day_key}:{delivered_slots}/{required_slots} slots")
-
+            hp_shortfalls.append({
+                "day": day_key, "required_slots": required_slots,
+                "scheduled_slots": delivered_slots,
+                "missing_hours": round((required_slots-delivered_slots)/4, 2),
+            })
+        # A shortfall is reported after publication, but it never aborts the
+        # planner. The best feasible comfort schedule remains in the plan.
         hp_selected_indices.update(indexed_rows[index][0] for index in selected_local)
 
     # Consume the same versioned batch used for household + DHW.
