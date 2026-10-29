@@ -466,20 +466,24 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
   z okresu 00:00–06:00 i minimum ściśle niższego od progu. Mniejsza liczba
   zapisów oraz wartość równa progowi lub wyższa blokują ogrzewanie. Prognoza
   `weather.dom` nie jest źródłem tej decyzji.
-- Okno zaczyna się najwcześniej o 07:00 po porannym `SELL`. Do 19:00 planer
-  układa zwykły harmonogram; jeżeli nie wystarcza to do dziennego minimum,
-  może wykorzystać sloty do 20:00, zawsze kończąc przed wieczornym `SELL`.
-  Reguła jest taka sama w dni robocze i weekend.
-- `hp_min_heating_hours` jest pełnym wymaganiem kwalifikowanego dnia, a nie
-  limitem zależnym od SOC lub dostępnego ładowania. Zaplanowane HP wchodzi w
-  prognozę zużycia, wymagany SOC i wyliczenie potrzebnej pojemności BUY.
-  Plan z brakującymi godzinami nie może zostać opublikowany; jeśli pełnego
-  minimum nie da się zmieścić do 20:00 bez naruszenia SELL, replan kończy się
-  jawnym błędem.
+- Ogrzewanie startuje od pierwszego dostępnego slotu około 07:00, po porannym
+  `SELL`. Planer preferuje wczesny start. Do 19:00 układa zwykły harmonogram;
+  gdy brakuje godzin, może wykorzystać sloty do 20:00, zawsze kończąc przed
+  wieczornym `SELL`. Reguła obowiązuje w dni robocze i weekend.
+- `hp_min_heating_hours` jest celem pełnego ogrzewania, niezależnym od SOC
+  i ilości ładowania. Planer wybiera maksymalny wykonalny harmonogram HP i
+  nigdy nie przerywa przez niego własnego przebiegu; niewykonalna część jest
+  raportowana jako ostrzeżenie, a plan pozostaje publikowalny.
+- Nocne BUY ma zgromadzić rezerwę na prognozowane obciążenie HP od 07:00 do
+  pierwszego późniejszego dziennego BUY. Rezerwę wylicza się z HP po odjęciu
+  nadwyżki PV ponad obciążenie domu i z uwzględnieniem sprawności oraz bufora.
+  Można rozszerzyć istniejącą ekonomiczną dolinę BUY, ale nie wolno otwierać
+  importu w SELL ani NEUTRAL; brak nocnego BUY lub pojemności jest raportowany,
+  bez blokowania planera.
 - `BUY` nie wyznacza granic okna HP. Żaden slot `SELL` nie może mieć
   automatycznego `HP_HEAT_DHW=ON`. Energia HP zwiększa zapotrzebowanie na
-  ładowanie w istniejących ekonomicznie dopuszczonych oknach BUY; HP samo nie
-  tworzy BUY ani nie zezwala na import w neutralnym slocie.
+  ładowanie w ekonomicznie dopuszczonych oknach BUY; HP samo nie tworzy BUY
+  ani nie zezwala na import w neutralnym slocie.
 - Planer nie odczytuje PPD ani override'ów. `heat_pump_window` zawsze opisuje
   rekomendowany przebieg użyty w bilansie i target.
 - `AUTO`, `FORCE_ON` i `FORCE_OFF` należą do warstwy PPD/executora. Zmieniają
@@ -714,7 +718,12 @@ Publikację tej zmiany zatwierdził użytkownik 16.10.2026.
 
 ## Pre-Sell Capacity
 
-Open adjacent BUY slots before SELL according to forecast consumption, PV and heating demand. Preserve the SOC requirement if capacity is insufficient and reject the candidate plan instead of publishing a shortfall.
+Open adjacent BUY slots before SELL according to forecast consumption, PV and
+heating demand. The night BUY bridge reserves energy for HP_HEAT_DHW before
+the first later daytime BUY. If the HP-specific reserve cannot be met, report
+the shortfall and continue publishing the best feasible plan; the HP requirement
+must not abort the planner. Existing mandatory SOC safety validation remains
+in force, and imports outside BUY remain forbidden.
 
 
 ## Niezakończone okna BUY
