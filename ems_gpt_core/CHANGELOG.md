@@ -1,3 +1,9 @@
+## 0.40.65 — HP priorytetowo względem SELL
+
+- Pozwól krytycznemu HP kontynuować grzanie w slotach SELL, aby osiągnąć wymagane godziny.
+- Podczas pracy HP blokuj sprzedaż energii z baterii; sprzedaż PV pozostaje ograniczona do nadwyżki po obciążeniu domu i HP.
+- Zachowaj ładowanie rezerwowe z nocnego BUY i zakaz importu poza BUY.
+
 ## 0.40.64 — ogrzewanie HP i rezerwa nocna
 
 - Preferuj start HP od pierwszego dostępnego slotu około 07:00, z możliwością wydłużenia do 20:00 przed SELL.
