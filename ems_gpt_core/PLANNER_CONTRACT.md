@@ -466,11 +466,20 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
   z okresu 00:00–06:00 i minimum ściśle niższego od progu. Mniejsza liczba
   zapisów oraz wartość równa progowi lub wyższa blokują ogrzewanie. Prognoza
   `weather.dom` nie jest źródłem tej decyzji.
-- Okno zaczyna się najwcześniej o 07:00 po porannym `SELL`, a kończy
-  najpóźniej o 19:00 lub przed wieczornym `SELL`. Reguła jest taka sama w dni
-  robocze i weekend.
+- Okno zaczyna się najwcześniej o 07:00 po porannym `SELL`. Do 19:00 planer
+  układa zwykły harmonogram; jeżeli nie wystarcza to do dziennego minimum,
+  może wykorzystać sloty do 20:00, zawsze kończąc przed wieczornym `SELL`.
+  Reguła jest taka sama w dni robocze i weekend.
+- `hp_min_heating_hours` jest pełnym wymaganiem kwalifikowanego dnia, a nie
+  limitem zależnym od SOC lub dostępnego ładowania. Zaplanowane HP wchodzi w
+  prognozę zużycia, wymagany SOC i wyliczenie potrzebnej pojemności BUY.
+  Plan z brakującymi godzinami nie może zostać opublikowany; jeśli pełnego
+  minimum nie da się zmieścić do 20:00 bez naruszenia SELL, replan kończy się
+  jawnym błędem.
 - `BUY` nie wyznacza granic okna HP. Żaden slot `SELL` nie może mieć
-  automatycznego `HP_HEAT_DHW=ON`.
+  automatycznego `HP_HEAT_DHW=ON`. Energia HP zwiększa zapotrzebowanie na
+  ładowanie w istniejących ekonomicznie dopuszczonych oknach BUY; HP samo nie
+  tworzy BUY ani nie zezwala na import w neutralnym slocie.
 - Planer nie odczytuje PPD ani override'ów. `heat_pump_window` zawsze opisuje
   rekomendowany przebieg użyty w bilansie i target.
 - `AUTO`, `FORCE_ON` i `FORCE_OFF` należą do warstwy PPD/executora. Zmieniają
@@ -538,7 +547,7 @@ Każda zmiana planera musi obejmować co najmniej:
 - zakończenie obliczeń przed granicą kolejnego slotu;
 - wyzerowanie odziedziczonego `heat_pump_window` na początku przebiegu;
 - HP wyłączone przy niepełnej prognozie i temperaturze równej progowi;
-- brak HP przed 07:00, po 19:00 i w każdym slocie `SELL`;
+- brak HP przed 07:00, po 20:00 i w każdym slocie `SELL`;
 - publikację cen jednego slotu wyłącznie do dwóch kanonicznych helperów.
 
 
