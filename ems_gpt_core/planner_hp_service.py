@@ -147,7 +147,11 @@ def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[
 
 def hp_heating_window_indices(rows: list[dict], day_value,
                               latest_end_hour: int = 19) -> set[int]:
-    """Return allowed heating slots, capped by evening SELL and end hour."""
+    """Return heating slots from the morning window through the end hour.
+
+    Morning SELL delays the start; later SELL windows do not stop critical heat.
+    Battery exports are separately suppressed in slots with HP heating.
+    """
     day_start = datetime.combine(day_value, datetime.min.time())
     earliest_start = day_start + timedelta(hours=7)
     midday = day_start + timedelta(hours=12)
@@ -158,19 +162,14 @@ def hp_heating_window_indices(rows: list[dict], day_value,
         if row["slot_start"] < midday
         and strict_database_bool(row.get("sale_window", False), "sale_window")
     ]
-    evening_sell_starts = [
-        row["slot_start"] for row in rows
-        if midday <= row["slot_start"] < latest_end
-        and strict_database_bool(row.get("sale_window", False), "sale_window")
-    ]
     window_start = max(earliest_start, max(morning_sell_ends)) \
         if morning_sell_ends else earliest_start
-    window_end = min(latest_end, min(evening_sell_starts)) \
-        if evening_sell_starts else latest_end
+    # Evening SELL constrains battery export, not the critical HP schedule.
+    # Its energy is reserved in BUY windows and battery sales are blocked
+    # while HP is active.
     return {
         index for index, row in enumerate(rows)
-        if window_start <= row["slot_start"] < window_end
-        and not strict_database_bool(row.get("sale_window", False), "sale_window")
+        if window_start <= row["slot_start"] < latest_end
     }
 
 
