@@ -144,12 +144,13 @@ def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[
     return states, unknown
 
 
-def hp_heating_window_indices(rows: list[dict], day_value) -> set[int]:
-    """Return slots allowed for automatic Heat+DHW on one local day."""
+def hp_heating_window_indices(rows: list[dict], day_value,
+                              latest_end_hour: int = 19) -> set[int]:
+    """Return allowed heating slots, capped by evening SELL and end hour."""
     day_start = datetime.combine(day_value, datetime.min.time())
     earliest_start = day_start + timedelta(hours=7)
     midday = day_start + timedelta(hours=12)
-    latest_end = day_start + timedelta(hours=19)
+    latest_end = day_start + timedelta(hours=latest_end_hour)
     morning_sell_ends = [
         row.get("slot_end") or (row["slot_start"] + timedelta(minutes=15))
         for row in rows
@@ -274,20 +275,36 @@ def prepare_heat_pump_plan(cur, source: list[dict], rows: list[dict], now,
                 "action": "NO_HEATING_CREDIT_CONTINUE_PLANNING",
             }, "WARNING")
         day_rows = [row for _, row in indexed_rows]
-        allowed_local = hp_heating_window_indices(day_rows, day_value)
-        allowed_rows = [row for index, row in enumerate(day_rows)
-                        if index in allowed_local]
-        selected_allowed = optimize_hp_heating_slots(
-            allowed_rows, past_states, required_slots,
-            min_cycle_slots, min_gap_slots, max_gap_slots, planned_hp_kw, cycle_penalty)
-        allowed_positions = sorted(allowed_local)
-        selected_local = {allowed_positions[index] for index in selected_allowed}
-        hp_selected_indices.update(indexed_rows[index][0] for index in selected_local)
+        def select_with_end_hour(end_hour: int) -> set[int]:
+            allowed = hp_heating_window_indices(day_rows, day_value, end_hour)
+            candidate_rows = [row for index, row in enumerate(day_rows)
+                              if index in allowed]
+            selected = optimize_hp_heating_slots(
+                candidate_rows, past_states, required_slots,
+                min_cycle_slots, min_gap_slots, max_gap_slots,
+                planned_hp_kw, cycle_penalty)
+            positions = sorted(allowed)
+            return {positions[index] for index in selected}
+
+        # Keep the ordinary 19:00 boundary when it can meet the full daily
+        # heating requirement. If not, use the remaining time through 20:00,
+        # still stopping before SELL. HP energy then feeds the existing SOC
+        # and BUY-capacity calculations as a required load.
+        selected_local = select_with_end_hour(19)
         delivered_slots = sum(past_states) + len(selected_local)
         if delivered_slots < required_slots:
-            hp_shortfalls.append({"day": day_key, "required_slots": required_slots,
-                                  "scheduled_slots": delivered_slots,
-                                  "missing_hours": round((required_slots-delivered_slots)/4, 2)})
+            selected_local = select_with_end_hour(20)
+            delivered_slots = sum(past_states) + len(selected_local)
+        if delivered_slots < required_slots:
+            shortfall = {"day": day_key, "required_slots": required_slots,
+                         "scheduled_slots": delivered_slots,
+                         "missing_hours": round((required_slots-delivered_slots)/4, 2)}
+            record_event("hp_minimum_heating_unavailable", "planner", shortfall, "ERROR")
+            raise RuntimeError(
+                "HP_MINIMUM_HEATING_UNAVAILABLE:"
+                f"{day_key}:{delivered_slots}/{required_slots} slots")
+
+        hp_selected_indices.update(indexed_rows[index][0] for index in selected_local)
 
     # Consume the same versioned batch used for household + DHW.
     # A missing component preserves previous production input explicitly.
