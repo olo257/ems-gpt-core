@@ -171,6 +171,17 @@ def extend_night_buy_capacity(
         selected = {i for i in night if strict_database_bool(work[i].get('buy_window', False), 'buy_window')
                     and not strict_database_bool(work[i].get('sale_window', False), 'sale_window')}
         if not selected:
+            hp_forecast_kwh = sum(
+                max(0., float(row.get('forecast_heat_pump_load_kwh') or 0.))
+                for row in work if row['slot_start'].date() == day
+                and row['slot_start'].hour >= 7
+                and row.get('actual_recorded_at') is None)
+            if hp_forecast_kwh > 0.001:
+                reports.append({
+                    'day': str(day),
+                    'status': 'NO_NIGHT_BUY_WINDOW_FOR_HP_RESERVE',
+                    'hp_forecast_kwh': round(hp_forecast_kwh, 3),
+                })
             continue
         morning = [i for i, row in enumerate(work)
                    if row['slot_start'].date() == day and row['slot_start'].hour >= 6
@@ -201,12 +212,28 @@ def extend_night_buy_capacity(
             continue
         avoided_price = sum(deficit(i)*float(work[i]['price_buy_pln_kwh'])
                             for i in morning if i < boundary)/demand
+        # Make the night BUY bridge carry a dedicated HP reserve from 07:00
+        # until the first later daytime BUY. Surplus PV after household load
+        # can serve HP first; remaining heat is reserved in battery kWh.
+        hp_bridge = [i for i in morning if i < boundary
+                     and work[i]['slot_start'].hour >= 7]
+        hp_uncertainty = max(0., min(2., float(uncertainty_weight))) * .10
+        hp_reserve_kwh = sum(
+            max(0., float(work[i].get('forecast_heat_pump_load_kwh') or 0.)
+                - max(0., float(work[i].get('forecast_pv_total_kwh') or 0.)
+                      - float(work[i].get('forecast_load_kwh') or 0.)))
+            / max(.01, eta_d) * (1. + hp_uncertainty)
+            for i in hp_bridge
+        )
         added = []
         while True:
             left, right = min(selected), max(selected)
             required_after = replenishment_soc_requirements(
                 work[right:], capacity_kwh, reserve_pct, buffer_pct,
                 eta_c, eta_d, max_power_kw, slot_minutes, uncertainty_weight)[0]
+            hp_required_after = (capacity_kwh * (reserve_pct + buffer_pct) / 100.
+                                 + hp_reserve_kwh) / capacity_kwh * 100.
+            required_after = max(required_after, hp_required_after)
             gap_load = sum(deficit(i)/eta_d*(1.+.1*uncertainty_weight)
                            for i in range(left, right+1) if i not in selected)
             needed = max(0., capacity_kwh*(min(100., required_after)-reserve_pct)/100.) + gap_load
@@ -238,6 +265,8 @@ def extend_night_buy_capacity(
                         'required_soc_after_window_pct': required_after,
                         'battery_capacity_shortfall_pct': max(0., required_after-100.),
                         'required_charge_kwh': needed, 'available_charge_kwh': available,
+                        'hp_reserve_kwh': round(hp_reserve_kwh, 3),
+                        'hp_reserve_until': str(work[boundary-1]['slot_end']),
                         'window_capacity_shortfall_kwh': max(0., needed-available),
                         'avoided_morning_price_pln_kwh': avoided_price,
                         'added_slots': [str(work[i]['slot_start']) for i in added]})
