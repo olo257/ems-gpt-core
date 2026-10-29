@@ -53,6 +53,11 @@ def tou_sale_safety_floors(rows: list[dict], tou_by_index: list[dict | None],
     for i, row in enumerate(rows):
         if not strict_database_bool(row.get("sale_window", False), "sale_window"):
             continue
+        if max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)) > 1e-9:
+            # Critical HP load outranks battery exports during SELL. The
+            # floor blocks selling stored energy, not discharge to serve load.
+            floors[i] = 100.0
+            continue
         program = tou_by_index[i]
         if not program:
             continue
