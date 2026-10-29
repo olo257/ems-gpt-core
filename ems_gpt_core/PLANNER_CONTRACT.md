@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.49. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.65. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -468,8 +468,9 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
   `weather.dom` nie jest źródłem tej decyzji.
 - Ogrzewanie startuje od pierwszego dostępnego slotu około 07:00, po porannym
   `SELL`. Planer preferuje wczesny start. Do 19:00 układa zwykły harmonogram;
-  gdy brakuje godzin, może wykorzystać sloty do 20:00, zawsze kończąc przed
-  wieczornym `SELL`. Reguła obowiązuje w dni robocze i weekend.
+  gdy brakuje godzin, może wykorzystać sloty do 20:00. Wieczorne `SELL` nie
+  zatrzymuje HP; podczas pracy HP sprzedaż energii z baterii jest zablokowana.
+  Reguła obowiązuje w dni robocze i weekend.
 - `hp_min_heating_hours` jest celem pełnego ogrzewania, niezależnym od SOC
   i ilości ładowania. Planer wybiera maksymalny wykonalny harmonogram HP i
   nigdy nie przerywa przez niego własnego przebiegu; niewykonalna część jest
@@ -480,10 +481,10 @@ telemetrii, aktualnego zaakceptowanego planu i spełnionych bram bezpieczeństwa
   Można rozszerzyć istniejącą ekonomiczną dolinę BUY, ale nie wolno otwierać
   importu w SELL ani NEUTRAL; brak nocnego BUY lub pojemności jest raportowany,
   bez blokowania planera.
-- `BUY` nie wyznacza granic okna HP. Żaden slot `SELL` nie może mieć
-  automatycznego `HP_HEAT_DHW=ON`. Energia HP zwiększa zapotrzebowanie na
-  ładowanie w ekonomicznie dopuszczonych oknach BUY; HP samo nie tworzy BUY
-  ani nie zezwala na import w neutralnym slocie.
+- `BUY` nie wyznacza granic okna HP. HP może pracować w slocie `SELL`,
+  ponieważ jest procesem krytycznym; w takim slocie planer blokuje
+  `SELL_BAT`, a `SELL_PV` może wykorzystać wyłącznie nadwyżkę PV po load
+  domu i HP. HP nie tworzy BUY ani nie zezwala na import w SELL/NEUTRAL.
 - Planer nie odczytuje PPD ani override'ów. `heat_pump_window` zawsze opisuje
   rekomendowany przebieg użyty w bilansie i target.
 - `AUTO`, `FORCE_ON` i `FORCE_OFF` należą do warstwy PPD/executora. Zmieniają
@@ -551,7 +552,7 @@ Każda zmiana planera musi obejmować co najmniej:
 - zakończenie obliczeń przed granicą kolejnego slotu;
 - wyzerowanie odziedziczonego `heat_pump_window` na początku przebiegu;
 - HP wyłączone przy niepełnej prognozie i temperaturze równej progowi;
-- brak HP przed 07:00, po 20:00 i w każdym slocie `SELL`;
+- brak HP przed 07:00 i po 20:00; brak `SELL_BAT` w slotach aktywnego HP;
 - publikację cen jednego slotu wyłącznie do dwóch kanonicznych helperów.
 
 

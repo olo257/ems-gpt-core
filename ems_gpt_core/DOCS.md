@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.64**.
+Status: obowiązująca. Wersja wydania: **0.40.65**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -125,7 +125,8 @@ warunków:
    00:00–06:00;
 3. minimalna rzeczywista temperatura jest **ściśle niższa** od progu;
 4. slot należy do dziennego okna ogrzewania;
-5. slot nie należy do okna `SELL`.
+5. slot należy do dziennego okna; jeśli wypada w `SELL`, HP ma pierwszeństwo
+   przed eksportem energii z baterii.
 
 Mniej niż 3 zapisy, temperatura równa progowi albo wyższa oraz błąd odczytu
 działają fail-closed: `heat_pump_window=0` i energia `HP_HEAT=0`. Prognoza z
@@ -139,15 +140,16 @@ Okno jest takie samo w dni robocze i weekend:
 - start od pierwszego dostępnego slotu około 07:00, po porannym `SELL`;
   planer preferuje wczesny start;
 - standardowy koniec o 19:00; jeśli brakuje godzin, harmonogram może sięgnąć
-  do 20:00, nadal przed wieczornym `SELL`;
+  do 20:00; wieczorne `SELL` nie zatrzymuje HP;
 - `BUY` nie wyznacza początku ani końca okna;
 - żaden slot `SELL` nie może uruchomić ogrzewania.
 
 Jeżeli warunek temperatury jest spełniony, HP jest obciążeniem krytycznym:
 planer dąży do pełnej liczby godzin niezależnie od SOC i ilości ładowania.
 W razie braku miejsca publikuje maksymalny wykonalny harmonogram i ostrzeżenie,
-bez zatrzymywania replanu. Prognozowane zużycie HP podnosi rezerwę wyliczaną
-z nocnego BUY do pierwszego późniejszego dziennego BUY; nadwyżka PV ponad load
+bez zatrzymywania replanu. HP może pracować także w `SELL`; wtedy planer
+blokuje sprzedaż energii z baterii, zachowując zasilanie obciążenia HP.
+Prognozowane zużycie HP podnosi rezerwę z nocnego BUY; nadwyżka PV ponad load
 domu pomniejsza wymaganą energię z baterii. Jeśli nocnego BUY brakuje albo jego
 pojemność jest niewystarczająca, zapisuje się diagnostykę, ale planer pracuje
 dalej. Import nadal może występować wyłącznie w ekonomicznych oknach BUY;

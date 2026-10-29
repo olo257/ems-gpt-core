@@ -62,7 +62,7 @@ from planner_soc_service import (
     validate_recoverable_soc_requirements,
 )
 
-PLANNER_VERSION = "CORE_0_40_64"
+PLANNER_VERSION = "CORE_0_40_65"
 
 @dataclass(frozen=True)
 class PlannerAdapters:
@@ -259,9 +259,12 @@ def build_planner(a: PlannerAdapters):
                 program = active_tou_program(row["slot_start"], tou_programs)
                 tou_by_index.append(program)
                 # The TOU program SOC is an executor baseline, not a planning
-                # floor.  Deliberate export is allowed only in SELL windows;
-                # its exact stop SOC is derived from the accepted flow below.
+                # floor. Battery export is possible only in SELL, and HP has
+                # priority over it: the HP slot gets a 100% sale floor while
+                # the battery may still discharge to serve the HP load.
                 sale_constraints.append(reserve if work["sale_window"] else 100.0)
+                if index in hp_selected_indices:
+                    sale_constraints[-1] = 100.0
             if a.prepare_buy_windows is not None:
                 night_capacity = a.prepare_buy_windows(horizon_rows, cur, soc_now)
                 horizon_rows = night_capacity["rows"]
