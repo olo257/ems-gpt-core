@@ -1,3 +1,10 @@
+## 0.40.64 — pełne wymagane grzanie HP
+
+- Traktuj minimalną liczbę godzin HP jako twarde wymaganie kwalifikowanego dnia.
+- Gdy do 19:00 brakuje czasu, wykorzystaj dostępne sloty do 20:00, nadal przed SELL.
+- Wlicz pełne obciążenie HP do zapotrzebowania na energię i ładowanie w dozwolonych BUY.
+- Nie publikuj harmonogramu z brakującymi godzinami; jawnie odrzuć replan, gdy pełny cykl nie mieści się w dozwolonym oknie.
+
 ## 0.40.63 — pomijanie istniejących slotów BUY
 
 - Nie zapisuj ponownie sąsiednich slotów już oznaczonych jako BUY podczas rozszerzania okna.
