@@ -388,7 +388,7 @@ def build_planner(a: PlannerAdapters):
                 }, "WARNING")
             terminal_soc = max(terminal_soc, target_contract["required"][-1])
             record_event("replenishment_soc_safety", "planner", {
-                "minimum_soc_pct": max(15.0, reserve),
+                "minimum_soc_pct": reserve,
                 "buffer_pp": float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
                 "maximum_required_soc_pct": max(safety_required_soc),
                 "historical_target_applies": "DAILY_CLOSE_ONLY",
