@@ -111,7 +111,7 @@ def deterministic_soc_target_contract(
             == len(daily_required_soc_pcts)):
         raise ValueError("DIRECT_SOC_CONTRACT_LENGTH_MISMATCH")
     capacity = max(0.001, float(capacity_kwh))
-    reserve = max(15.0, float(reserve_pct))
+    reserve = max(0.0, min(90.0, float(reserve_pct)))
     base_kwh = capacity * reserve / 100.0
     charge_efficiency = max(0.01, float(eta_c))
     discharge_efficiency = max(0.01, float(eta_d))
@@ -392,7 +392,7 @@ def replenishment_soc_requirements(rows: list[dict], capacity_kwh: float,
     an impossible safety bridge must be reported rather than silently waived.
     """
     capacity = max(0.001, float(capacity_kwh))
-    reserve = max(15.0, float(reserve_pct))
+    reserve = max(0.0, min(90.0, float(reserve_pct)))
     buffer = max(0.0, float(buffer_pct))
     base_kwh = capacity * (reserve + buffer) / 100.0
     charge_efficiency = max(0.01, float(eta_c))
