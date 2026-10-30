@@ -1,3 +1,8 @@
+## 0.40.67 — poprawka profilu CWU po fallbacku historii
+
+- Napraw odwołania do listy próbek po rozdzieleniu świeżych danych od historii SQL; usuń błąd runtime „name 'rows' is not defined” podczas generowania prognozy.
+- Zachowaj awaryjny fallback z kompletnych próbek SQL z dni 8–30, jeśli świeże 7 dni nie wystarczają.
+
 ## 0.40.66 — odporny fallback prognozy zużycia
 
 - Przy 1–2 kompletnych próbkach kwadransa zachowaj najlepszą lokalną prognozę zamiast blokować cały horyzont.
