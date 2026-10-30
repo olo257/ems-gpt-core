@@ -648,7 +648,7 @@ def build_materializations(a: MaterializationAdapters):
                 ON d.slot_start=s.slot_start
               WHERE s.slot_start>=%s AND s.slot_start<%s
                 AND s.actual_recorded_at IS NOT NULL ORDER BY s.slot_start""",
-              (cutoff - timedelta(days=7), cutoff))
+              (cutoff - timedelta(days=30), cutoff))
             model = build_component_forecast(list(cur.fetchall()),
                 [row["slot_start"] for row in future], now=cutoff,
                 minimum_samples=int(OPTIONS.get("telemetry_min_samples_per_slot", 10)))
