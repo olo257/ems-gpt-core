@@ -605,7 +605,7 @@ def build_materializations(a: MaterializationAdapters):
     def learn_missing_load() -> int:
         """Publish component forecasts, preserving only exact-slot accepted fallbacks."""
         import uuid
-        from component_forecast import build_component_forecast
+        from component_forecast import MODEL_VERSION, build_component_forecast
 
         cutoff = slot_start().replace(tzinfo=None)
         updated = 0
@@ -622,7 +622,7 @@ def build_materializations(a: MaterializationAdapters):
             # Legacy incomplete and blocked batches get one retry so new
             # nearby-quarter fallbacks can resolve them after an upgrade.
             cur.execute("""SELECT MAX(generated_at) generated_at,MAX(slot_start) last_slot,
-              COUNT(*) slot_count,SUM(status IN (
+              MAX(model_version) model_version,COUNT(*) slot_count,SUM(status IN (
                 'PRESERVED_INCOMPLETE_HISTORY','BLOCKED_NO_ACCEPTED_FALLBACK')) unresolved
               FROM ems_gpt_core_consumption_forecasts
               WHERE generated_at=%s AND slot_start>=%s AND slot_start<=%s""",
@@ -630,6 +630,7 @@ def build_materializations(a: MaterializationAdapters):
             latest = cur.fetchone()
             if (latest and latest.get("generated_at") == cutoff
                     and latest.get("last_slot") == last_slot
+                    and latest.get("model_version") == MODEL_VERSION
                     and int(latest.get("slot_count") or 0) >= len(future)
                     and int(latest.get("unresolved") or 0) == 0):
                 return 0
@@ -647,7 +648,7 @@ def build_materializations(a: MaterializationAdapters):
                 ON d.slot_start=s.slot_start
               WHERE s.slot_start>=%s AND s.slot_start<%s
                 AND s.actual_recorded_at IS NOT NULL ORDER BY s.slot_start""",
-              (cutoff - timedelta(days=7), cutoff))
+              (cutoff - timedelta(days=30), cutoff))
             model = build_component_forecast(list(cur.fetchall()),
                 [row["slot_start"] for row in future], now=cutoff,
                 minimum_samples=int(OPTIONS.get("telemetry_min_samples_per_slot", 10)))
@@ -657,35 +658,40 @@ def build_materializations(a: MaterializationAdapters):
                 slot = row["slot_start"]
                 estimate = model["slots"][slot]
                 valid = estimate["house_kwh"] is not None
+                source = str(estimate.get("house_source") or "")
+                low_sample = source.startswith("LOW_SAMPLE")
                 status = "READY" if valid else None
                 evidence = {**metadata,
-                    "house_forecast_source": estimate.get("house_source")}
-                fallback_load = None
-                if not valid:
-                    if row.get("forecast_load_kwh") is not None:
-                        status = "PRESERVED_EXISTING_FORECAST"
-                        preserved += 1
-                    else:
-                        cur.execute("""SELECT p.forecast_load_kwh
-                          FROM ems_gpt_plan_stage_rows p
-                          JOIN ems_gpt_plan_runs r ON r.run_id=p.run_id
-                          WHERE p.slot_start=%s AND r.status='PUBLISHED'
-                            AND p.forecast_load_kwh IS NOT NULL
-                          ORDER BY r.published_at DESC LIMIT 1""", (slot,))
-                        previous = cur.fetchone() or {}
-                        candidate = previous.get("forecast_load_kwh")
-                        if candidate is not None and float(candidate) >= 0:
-                            fallback_load = round(float(candidate), 6)
-                            status = "PRESERVED_LAST_PUBLISHED_PLAN"
-                            evidence["fallback_source"] = "PUBLISHED_PLAN_SAME_SLOT"
-                            cur.execute("""UPDATE ems_gpt_slots SET forecast_load_kwh=%s,
-                              load_correction=1 WHERE slot_start=%s AND actual_recorded_at IS NULL
-                                AND forecast_load_kwh IS NULL""", (fallback_load, slot))
-                            preserved += cur.rowcount
-                        else:
-                            status = "BLOCKED_NO_NEARBY_FALLBACK"
-                            evidence["fallback_source"] = "NONE"
-                            blocked += 1
+                    "house_forecast_source": source or None,
+                    "house_sample_count": estimate.get("house_sample_count", 0)}
+                preserve_slot_forecast = False
+                if (not valid or low_sample) and row.get("forecast_load_kwh") is not None:
+                    status = "PRESERVED_EXISTING_FORECAST"
+                    evidence["fallback_source"] = "EXISTING_SLOT_FORECAST"
+                    preserved += 1
+                    preserve_slot_forecast = True
+                elif not valid or low_sample:
+                    cur.execute("""SELECT p.forecast_load_kwh
+                      FROM ems_gpt_plan_stage_rows p
+                      JOIN ems_gpt_plan_runs r ON r.run_id=p.run_id
+                      WHERE p.slot_start=%s AND r.status='PUBLISHED'
+                        AND p.forecast_load_kwh IS NOT NULL
+                      ORDER BY r.published_at DESC LIMIT 1""", (slot,))
+                    previous = cur.fetchone() or {}
+                    candidate = previous.get("forecast_load_kwh")
+                    if candidate is not None and float(candidate) >= 0:
+                        fallback_load = round(float(candidate), 6)
+                        status = "PRESERVED_LAST_PUBLISHED_PLAN"
+                        evidence["fallback_source"] = "PUBLISHED_PLAN_SAME_SLOT"
+                        cur.execute("""UPDATE ems_gpt_slots SET forecast_load_kwh=%s,
+                          load_correction=1 WHERE slot_start=%s AND actual_recorded_at IS NULL
+                            AND forecast_load_kwh IS NULL""", (fallback_load, slot))
+                        preserved += cur.rowcount
+                        preserve_slot_forecast = True
+                    elif not valid:
+                        status = "BLOCKED_NO_NEARBY_FALLBACK"
+                        evidence["fallback_source"] = "NONE"
+                        blocked += 1
                 cur.execute("""INSERT INTO ems_gpt_core_consumption_forecasts
                   (slot_start,batch_id,model_version,generated_at,house_kwh,dhw_kwh,
                    heat_profile_json,sample_count,status,evidence_json)
@@ -697,7 +703,7 @@ def build_materializations(a: MaterializationAdapters):
                   (slot,batch_id,model["version"],cutoff,estimate["house_kwh"],
                    estimate["dhw_kwh"],json.dumps(model["heat_profile"]),
                    estimate["sample_count"],status,json.dumps(evidence)))
-                if not valid:
+                if not valid or preserve_slot_forecast:
                     continue
                 total = sum(estimate[key] for key in ("house_kwh", "dhw_kwh"))
                 cur.execute("""UPDATE ems_gpt_slots SET forecast_load_kwh=%s,load_correction=1

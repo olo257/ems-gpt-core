@@ -2,6 +2,8 @@
 
 No missing channel is interpreted as zero. Flexible consumers with no energy
 meter invalidate a training slot rather than leaking into battery demand.
+Sparse but complete household observations use an explicitly marked,
+conservative low-sample fallback instead of blocking the full planner horizon.
 """
 from __future__ import annotations
 
@@ -9,7 +11,7 @@ import math
 from datetime import datetime, timedelta
 from statistics import mean, median
 
-MODEL_VERSION = "COMPONENT_LOAD_V1"
+MODEL_VERSION = "COMPONENT_LOAD_V2"
 SLOT = timedelta(minutes=15)
 
 
@@ -97,18 +99,29 @@ def mean_profile(cycles):
 def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
     """One batch supplies all components; incomplete evidence preserves old input."""
     horizon = sorted(horizon)
-    rows = [part for row in raw_rows
-            if now - timedelta(days=7) <= row["slot_start"] < now
-            and (part := split_slot(row, minimum_samples)) is not None]
-    rows.sort(key=lambda item: item["slot_start"])
-    dhw_cycles = complete_cycles(rows, "dhw_kwh")
-    heat_cycles = complete_cycles(rows, "heat_kwh", max_idle_slots=12)
-    dhw_profile = mean_profile(dhw_cycles)
+    recent_rows, historical_rows = [], []
+    for row in raw_rows:
+        if not now - timedelta(days=30) <= row["slot_start"] < now:
+            continue
+        part = split_slot(row, minimum_samples)
+        if part is None:
+            continue
+        (recent_rows if row["slot_start"] >= now - timedelta(days=7)
+         else historical_rows).append(part)
+    recent_rows.sort(key=lambda item: item["slot_start"])
+    historical_rows.sort(key=lambda item: item["slot_start"])
+    dhw_cycles = complete_cycles(recent_rows, "dhw_kwh")
+    historical_dhw_cycles = complete_cycles(historical_rows, "dhw_kwh")
+    heat_cycles = complete_cycles(recent_rows, "heat_kwh", max_idle_slots=12)
+    dhw_profile = mean_profile(dhw_cycles) or mean_profile(historical_dhw_cycles)
     heat_profile = mean_profile(heat_cycles)
-    quarters = {}
-    for row in rows:
+    quarters, historical_quarters = {}, {}
+    for row in recent_rows:
         key = (row["slot_start"].hour, row["slot_start"].minute)
         quarters.setdefault(key, []).append(row)
+    for row in historical_rows:
+        key = (row["slot_start"].hour, row["slot_start"].minute)
+        historical_quarters.setdefault(key, []).append(row)
     reasons = []
     if not dhw_profile:
         reasons.append("INSUFFICIENT_COMPLETE_DHW_CYCLES")
@@ -151,22 +164,61 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
         if house_source is None:
             target_minute = when.hour * 60 + when.minute
             nearby = []
+            low_sample_nearby = []
             for (hour, minute), candidates in quarters.items():
                 distance = abs(((hour * 60 + minute - target_minute + 720) % 1440) - 720)
-                if len(candidates) >= 3 and distance <= 30:
-                    nearby.append((distance, hour * 60 + minute, candidates))
+                if distance <= 30 and candidates:
+                    low_sample_nearby.append((distance, hour * 60 + minute, candidates))
+                    if len(candidates) >= 3:
+                        nearby.append((distance, hour * 60 + minute, candidates))
             if nearby:
                 _, _, house_samples = min(nearby, key=lambda item: (item[0], item[1]))
                 house_source = "NEAREST_QUALIFIED_QUARTER"
+            elif samples:
+                # One or two complete, quality-checked observations are still
+                # better than blocking every future slot. Use the maximum so a
+                # sparse sample cannot lower the forecast below its evidence.
+                house_source = "LOW_SAMPLE_EXACT_QUARTER"
+            elif low_sample_nearby:
+                nearest_distance = min(item[0] for item in low_sample_nearby)
+                nearest = [item for item in low_sample_nearby
+                           if item[0] == nearest_distance]
+                house_samples = [sample for _, _, candidates in nearest
+                                 for sample in candidates]
+                house_source = "LOW_SAMPLE_NEAREST_QUARTER"
+        if house_source is None:
+            hist_samples = historical_quarters.get((when.hour, when.minute), [])
+            if len(hist_samples) >= 3:
+                house_samples, house_source = hist_samples, "HISTORICAL_EXACT_QUARTER"
+            else:
+                target_minute = when.hour * 60 + when.minute
+                hist_nearby = []
+                for (hour, minute), candidates in historical_quarters.items():
+                    distance = abs(((hour * 60 + minute - target_minute + 720) % 1440) - 720)
+                    if distance <= 30 and len(candidates) >= 3:
+                        hist_nearby.append((distance, hour * 60 + minute, candidates))
+                if hist_nearby:
+                    _, _, house_samples = min(hist_nearby, key=lambda item: (item[0], item[1]))
+                    house_source = "HISTORICAL_NEAREST_QUARTER"
+                elif hist_samples:
+                    house_samples, house_source = hist_samples, "HISTORICAL_LOW_SAMPLE_EXACT"
         valid = house_source is not None and dhw_profile is not None
+        if valid and house_(source.startswith("LOW_SAMPLE") or source.startswith("HISTORICAL_LOW_SAMPLE")):
+            house_kwh = max(item["house_kwh"] for item in house_samples)
+        elif valid:
+            house_kwh = mean(item["house_kwh"] for item in house_samples)
+        else:
+            house_kwh = None
         result[when] = {
-            "house_kwh": round(mean(item["house_kwh"] for item in house_samples), 6) if valid else None,
+            "house_kwh": round(house_kwh, 6) if valid else None,
             "dhw_kwh": round(dhw_by_slot[when], 6) if valid else None,
             "sample_count": len(samples),
+            "house_sample_count": len(house_samples) if valid else 0,
             "house_source": house_source if valid else "NO_QUALIFIED_QUARTER",
         }
     return {"version": MODEL_VERSION, "slots": result, "heat_profile": heat_profile,
             "dhw_profile": dhw_profile, "dhw_cycle_count": len(dhw_cycles),
+            "historical_dhw_cycle_count": len(historical_dhw_cycles),
             "heat_cycle_count": len(heat_cycles), "dhw_interval_slots": interval_slots,
             "circulation_effect": "IN_MEASURED_DHW_CYCLES",
             "reasons": reasons}

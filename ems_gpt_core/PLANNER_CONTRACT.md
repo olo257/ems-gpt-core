@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.65. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.66. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -628,20 +628,25 @@ targetu do PV/BUY; reguły BUY, sufitu targetu i ekonomiki nie zmieniają się.
 
 Uczenie korzysta wyłącznie z ostatnich 7 dni zamkniętych slotów Core, minimalnej
 liczby próbek, pokrycia oraz kompletnych źródeł. Brak kanału, nieznany stan
-PV_CWU lub niespójny bilans wykluczają próbkę. Brak minimum 3 próbek kwadransa
-lub 2 kompletnych cykli CWU zachowuje wcześniejszą prognozę tego samego slotu,
-w razie potrzeby z ostatniej opublikowanej migawki planu. Jeśli brak 3 próbek
-tej ćwiartki doby, bazowe zużycie może użyć najbliższej ćwiartki (maksymalnie
-30 minut różnicy) z co najmniej 3 kompletnymi próbkami z tego samego 7-dniowego
-okna. Źródło jest zapisane w metadanych prognozy. Bez wiarygodnej prognozy
-lokalnej lub sąsiedniej wartości pozostaje `NULL` i planer blokuje przebieg.
-Batch niekompletny otrzymuje jedną ponowną próbę, a potem jest buforowany do
-kolejnej zmiany slotu, aby uniknąć nieograniczonego przeliczania. Blokada
-zapisana przez wcześniejszą wersję bez sąsiedniego fallbacku otrzymuje jedną
-ponowną próbę po aktualizacji; bez danych lokalnych kończy jako
-`BLOCKED_NO_NEARBY_FALLBACK`.
-Średnia energii domu zachowuje wpływ rzeczywistych zdarzeń zużycia; nie dodaje
-osobnego arbitralnego bufora AGD.
+PV_CWU lub niespójny bilans wykluczają próbkę. Przy co najmniej 3 kompletnych
+próbkach kwadransa używana jest ich średnia. Gdy estymator ma niską liczbę
+próbek, zachowuje się wcześniejszą prognozę tego samego slotu, a następnie
+prognozę z ostatniej opublikowanej migawki planu. Jeśli ich brak, 1–2
+kompletne próbki lokalne mogą zasilić prognozę oznaczoną
+`LOW_SAMPLE_EXACT_QUARTER`; przy ich braku używa się maksymalnie odległego
+o 30 minut sąsiedniego kwadransa z kompletnymi próbkami, oznaczonego
+`LOW_SAMPLE_NEAREST_QUARTER`. Prognoza o niskiej liczbie próbek przyjmuje
+maksimum zaobserwowanego zużycia domu z wybranych próbek, nie zero ani ich
+średnią. Źródło i liczba użytych próbek są zapisane w metadanych prognozy.
+Brak jakiejkolwiek kompletnej próbki lokalnej lub sąsiedniej, brak profilu CWU
+albo niepewne kanały nadal pozostawiają wartość `NULL` i blokują przebieg —
+fallback nie fabrykuje danych.
+Batch jest ponownie używany w obrębie slotu tylko wtedy, gdy model odpowiada
+bieżącej wersji; po aktualizacji modelu poprzednia blokada otrzymuje jedną
+ponowną próbę, bez ciasnej pętli przy nierozwiązanym braku danych.
+Pełne próbki zachowują średni wpływ rzeczywistych zdarzeń zużycia; przy
+niskiej liczbie próbek używane jest maksimum, aby pojedyncza obserwacja nie
+zaniżała prognozy. Nie dodaje się arbitralnego bufora AGD.
 
 Cykle CWU wymagają poprawnych slotów spoczynku przed i po cyklu. Luki nie są
 uznawane za zakończenie cyklu. Średni profil zachowuje energię całego cyklu,
