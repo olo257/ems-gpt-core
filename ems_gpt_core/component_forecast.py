@@ -203,7 +203,7 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
                 elif hist_samples:
                     house_samples, house_source = hist_samples, "HISTORICAL_LOW_SAMPLE_EXACT"
         valid = house_source is not None and dhw_profile is not None
-        if valid and house_(source.startswith("LOW_SAMPLE") or source.startswith("HISTORICAL_LOW_SAMPLE")):
+        if valid and (house_source.startswith("LOW_SAMPLE") or house_source.startswith("HISTORICAL_LOW_SAMPLE")):
             house_kwh = max(item["house_kwh"] for item in house_samples)
         elif valid:
             house_kwh = mean(item["house_kwh"] for item in house_samples)
