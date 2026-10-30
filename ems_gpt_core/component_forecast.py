@@ -140,10 +140,10 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
             # Continue the observed phase, including only remaining cycle slots.
             recent = [cycle for cycle in dhw_cycles if cycle["start"].date() == day]
             # An open measured cycle is not a training cycle but is valid phase evidence.
-            latest = rows[-1] if rows else None
+            latest = recent_rows[-1] if recent_rows else None
             if latest and latest["slot_start"] == now - SLOT and latest["dhw_kwh"] >= .02 and latest["slot_start"].date() == day:
                 tail = [latest]
-                for prior in reversed(rows[:-1]):
+                for prior in reversed(recent_rows[:-1]):
                     if tail[-1]["slot_start"] - prior["slot_start"] != SLOT or prior["dhw_kwh"] < .02:
                         break
                     tail.append(prior)
