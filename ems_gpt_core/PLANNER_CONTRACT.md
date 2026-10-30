@@ -741,3 +741,8 @@ Cutoff przekazany przez HA może zawierać strefę `Europe/Warsaw`; przed porów
 
 
 Przed otwarciem sąsiedniego slotu BUY należy wykluczyć sloty, które już mają `buy_window=true`; mogą one stanowić istniejącą nieciągłą część okna, ale nie są nowymi uprawnieniami.
+
+
+## Fallback historii prognozy zużycia
+
+Prognoza wykorzystuje najpierw kompletne, zakwalifikowane próbki z ostatnich 7 dni. Jeśli brakuje danych do obciążenia domu lub pełnego profilu CWU, może skorzystać z kompletnych próbek SQL z dni 8–30. Źródło historyczne jest jawnie oznaczane; niekompletne dane nigdy nie są zastępowane zerem. Brak kompletnych próbek pozostaje blokadą prognozy.
