@@ -1,3 +1,8 @@
+## 0.40.68 — poprawka warunku niskiej liczby próbek
+
+- Napraw warunek wyboru wartości konserwatywnej dla niskiej liczby próbek, który powodował NameError: house_ is not defined.
+- Zachowaj działanie fallbacku historii SQL i oznaczanie źródła prognozy.
+
 ## 0.40.67 — poprawka profilu CWU po fallbacku historii
 
 - Napraw odwołania do listy próbek po rozdzieleniu świeżych danych od historii SQL; usuń błąd runtime „name 'rows' is not defined” podczas generowania prognozy.
