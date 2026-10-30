@@ -2,6 +2,8 @@
 
 No missing channel is interpreted as zero. Flexible consumers with no energy
 meter invalidate a training slot rather than leaking into battery demand.
+Sparse but complete household observations use an explicitly marked,
+conservative low-sample fallback instead of blocking the full planner horizon.
 """
 from __future__ import annotations
 
@@ -9,7 +11,7 @@ import math
 from datetime import datetime, timedelta
 from statistics import mean, median
 
-MODEL_VERSION = "COMPONENT_LOAD_V1"
+MODEL_VERSION = "COMPONENT_LOAD_V2"
 SLOT = timedelta(minutes=15)
 
 
@@ -151,18 +153,40 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
         if house_source is None:
             target_minute = when.hour * 60 + when.minute
             nearby = []
+            low_sample_nearby = []
             for (hour, minute), candidates in quarters.items():
                 distance = abs(((hour * 60 + minute - target_minute + 720) % 1440) - 720)
-                if len(candidates) >= 3 and distance <= 30:
-                    nearby.append((distance, hour * 60 + minute, candidates))
+                if distance <= 30 and candidates:
+                    low_sample_nearby.append((distance, hour * 60 + minute, candidates))
+                    if len(candidates) >= 3:
+                        nearby.append((distance, hour * 60 + minute, candidates))
             if nearby:
                 _, _, house_samples = min(nearby, key=lambda item: (item[0], item[1]))
                 house_source = "NEAREST_QUALIFIED_QUARTER"
+            elif samples:
+                # One or two complete, quality-checked observations are still
+                # better than blocking every future slot. Use the maximum so a
+                # sparse sample cannot lower the forecast below its evidence.
+                house_source = "LOW_SAMPLE_EXACT_QUARTER"
+            elif low_sample_nearby:
+                nearest_distance = min(item[0] for item in low_sample_nearby)
+                nearest = [item for item in low_sample_nearby
+                           if item[0] == nearest_distance]
+                house_samples = [sample for _, _, candidates in nearest
+                                 for sample in candidates]
+                house_source = "LOW_SAMPLE_NEAREST_QUARTER"
         valid = house_source is not None and dhw_profile is not None
+        if valid and house_source.startswith("LOW_SAMPLE"):
+            house_kwh = max(item["house_kwh"] for item in house_samples)
+        elif valid:
+            house_kwh = mean(item["house_kwh"] for item in house_samples)
+        else:
+            house_kwh = None
         result[when] = {
-            "house_kwh": round(mean(item["house_kwh"] for item in house_samples), 6) if valid else None,
+            "house_kwh": round(house_kwh, 6) if valid else None,
             "dhw_kwh": round(dhw_by_slot[when], 6) if valid else None,
             "sample_count": len(samples),
+            "house_sample_count": len(house_samples) if valid else 0,
             "house_source": house_source if valid else "NO_QUALIFIED_QUARTER",
         }
     return {"version": MODEL_VERSION, "slots": result, "heat_profile": heat_profile,
