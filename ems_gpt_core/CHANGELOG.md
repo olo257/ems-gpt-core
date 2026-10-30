@@ -1,3 +1,8 @@
+## 0.40.69 — konfigurowalna granica bezpieczeństwa SOC
+
+- Używaj `battery_min_soc_pct` jako minimalnej granicy SOC planera, bez dodatkowego sztywnego minimum 15%.
+- Zachowaj oddzielny bufor prognozy do następnego PV/BUY i niezależne zabezpieczenie ustawione w falowniku.
+
 ## 0.40.68 — poprawka warunku niskiej liczby próbek
 
 - Napraw warunek wyboru wartości konserwatywnej dla niskiej liczby próbek, który powodował NameError: house_ is not defined.
