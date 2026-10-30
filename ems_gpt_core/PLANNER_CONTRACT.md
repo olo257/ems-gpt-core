@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.66. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.69. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -307,11 +307,13 @@ a nie przed północą. Do tego czasu niezależny bilans bezpieczeństwa utrzymu
 zapas na prognozowane zużycie, w tym CWU, do najbliższego PV/BUY; planer nie
 wymusza wcześniejszego zakupu przed tańszym oknem.
 
-Niezależny bilans bezpieczeństwa wymaga co najmniej 15% (lub wyższego minimum
-konfiguracji) plus `soc_replenishment_buffer_pct` (domyślnie 2 p.p.) w każdym
-slocie oraz energii na przyszły deficyt domu i HP. Uwzględnia sprawności i
-`forecast_uncertainty_weight`. Wymaganie końca doby jest maksimum historycznego punktu odniesienia
-i rezerwy wynikającej z bilansu nocnego w dostępnym horyzoncie.
+Niezależny bilans bezpieczeństwa używa skonfigurowanego `battery_min_soc_pct`
+bez dodatkowej, sztywnej granicy 15%. Bufor `soc_replenishment_buffer_pct`
+pozostaje osobnym zapasem do PV/BUY (domyślnie 2 p.p.); wymagany SOC uwzględnia
+też przyszły deficyt domu i HP, sprawności oraz `forecast_uncertainty_weight`.
+Ustawienie minimalnego SOC falownika jest niezależnym zabezpieczeniem sprzętowym.
+Wymaganie końca doby jest maksimum historycznego punktu odniesienia i rezerwy
+wynikającej z bilansu nocnego w dostępnym horyzoncie.
 
 BUY odciąża wcześniejszy bilans wyłącznie o fizycznie dostępną moc i czas
 ładowania poza SELL. PV odciąża go tylko o nadwyżkę po odbiorach, ograniczoną
