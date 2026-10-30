@@ -1,3 +1,10 @@
+## 0.40.66 — odporny fallback prognozy zużycia
+
+- Przy 1–2 kompletnych próbkach kwadransa zachowaj najlepszą lokalną prognozę zamiast blokować cały horyzont.
+- Gdy slot nie ma próbki, użyj najbliższego kwadransa w granicy 30 minut, jeśli zawiera kompletne próbki; niskopróbkowe prognozy przyjmują ich maksimum.
+- Zachowaj blokadę, jeśli brak kompletnych próbek albo profilu CWU; nie zastępuj brakujących danych zerem.
+- Oznacz model jako COMPONENT_LOAD_V2 i zapisz źródło niskopróbkowego fallbacku.
+
 ## 0.40.65 — HP priorytetowo względem SELL
 
 - Pozwól krytycznemu HP kontynuować grzanie w slotach SELL, aby osiągnąć wymagane godziny.
