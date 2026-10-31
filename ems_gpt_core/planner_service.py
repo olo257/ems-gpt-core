@@ -332,11 +332,17 @@ def build_planner(a: PlannerAdapters):
                 horizon_rows, safety_required_soc, daily_required_soc,
                 capacity, reserve, eta_c, eta_d, max_kw,
                 int(OPTIONS["slot_minutes"]), uncertainty_weight)
+            target_charge_caps = economic_buy_charge_caps(
+                horizon_rows, target_contract["charge_targets"], target_cap,
+                capacity, eta_c, eta_d, max_kw,
+                int(OPTIONS["slot_minutes"]))
             target_recovery = validate_recoverable_soc_requirements(
                 horizon_rows, target_contract["raw_required"], soc_now, reserve,
                 target_cap, capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
                 max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
-                soc_step_pct=0.10, max_grid_import_kw=max_grid_import_kw)
+                soc_step_pct=0.10, max_grid_import_kw=max_grid_import_kw,
+                grid_charge_caps=target_charge_caps,
+                minimum_grid_charge_kwh=flow_threshold)
             target_contract = preserve_target_contract_after_reachability(
                 target_contract, target_recovery, daily_close_indices)
             target_contract = preserve_active_buy_window_target(
