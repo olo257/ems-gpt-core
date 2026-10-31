@@ -1,3 +1,9 @@
+## 0.40.74 — zgodność osiągalności SOC z rzeczywistym BUY
+
+- Walidator osiągalności SOC stosuje ten sam pełny wolumen ładowania BUY, limit importu i target ładowania co optymalizator.
+- Uwzględnia limity SOC celu zakupu, aby walidator nie uznawał za wykonalnej ścieżki, którą odrzuci optymalizator.
+- Ujednolica wersję runtime i manifestu do 0.40.74.
+
 ## 0.40.73 — ograniczone okna BUY
 
 - Ogranicz scalony przedział BUY do najtańszego ciągłego okna o długości wymaganej do uzupełnienia baterii.
