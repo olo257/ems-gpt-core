@@ -419,43 +419,34 @@ def extend_buy_capacity_for_minimum_soc(
                 return index
         return None
 
-    original_buy_indices = [i for i, row in enumerate(work)
-                            if flag(row, "buy_window") and not flag(row, "sale_window")]
-    first_original_buy = min(original_buy_indices, default=len(work))
     base_requirement = replenishment_soc_requirements(
         work, capacity, reserve, buffer_pct, eta_charge, eta_discharge,
         max_power, slot_minutes, uncertainty_weight)
     required_before = base_requirement[0] if base_requirement else reserve
-    if initial >= reserve - 1e-9 and initial + 0.01 >= required_before:
+    initial_breach = projected_reserve_breach()
+    if initial_breach is None:
         return {"rows": work, "changed_indices": [],
                 "reports": [{"status": "RESERVE_BRIDGE_COVERED",
                              "initial_soc_pct": round(initial, 3),
                              "required_soc_pct": round(required_before, 3)}]}
 
+    # Add only enough recovery permissions to eliminate projected reserve
+    # breaches. Comparing initial SOC with a whole-horizon requirement here
+    # can keep promoting neutral slots long after a usable path exists.
     for _ in range(len(work)):
-        required = replenishment_soc_requirements(
-            work, capacity, reserve, buffer_pct, eta_charge, eta_discharge,
-            max_power, slot_minutes, uncertainty_weight)
-        required_before = required[0] if required else reserve
-        if changed and initial + 0.01 >= required_before:
-            break
         breach = projected_reserve_breach()
         if breach is None:
-            deadline = max(0, first_original_buy - 1)
-        elif initial < reserve - 1e-9:
-            deadline = max(0, first_original_buy - 1)
-        else:
-            deadline = min(breach, max(0, first_original_buy - 1))
-        candidates = [i for i in range(min(deadline, len(work) - 1) + 1)
-                      if i not in changed and eligible_neutral(i)]
+            break
+        candidates = [
+            i for i in range(min(breach, len(work) - 1) + 1)
+            if i not in changed and eligible_neutral(i)
+        ]
         if not candidates:
             reports.append({
                 "status": "NO_NEUTRAL_BUY_BEFORE_RESERVE_BREACH",
                 "initial_soc_pct": round(initial, 3),
                 "reserve_pct": round(reserve, 3),
-                "required_soc_pct": round(required_before, 3),
-                "reserve_breach_slot": (
-                    str(work[breach]["slot_start"]) if breach is not None else None),
+                "reserve_breach_slot": str(work[breach]["slot_start"]),
             })
             break
         if initial < reserve - 1e-9 and not changed:
@@ -472,20 +463,23 @@ def extend_buy_capacity_for_minimum_soc(
             "price_buy_pln_kwh": float(work[selected]["price_buy_pln_kwh"]),
             "initial_soc_pct": round(initial, 3),
             "reserve_pct": round(reserve, 3),
-            "required_soc_pct": round(required_before, 3),
+            "projected_breach_slot": str(work[breach]["slot_start"]),
         })
 
     final_requirement = replenishment_soc_requirements(
         work, capacity, reserve, buffer_pct, eta_charge, eta_discharge,
         max_power, slot_minutes, uncertainty_weight)
     required_after = final_requirement[0] if final_requirement else reserve
+    final_breach = projected_reserve_breach()
     reports.append({
         "status": ("RESERVE_RECOVERY_BUY_CAPACITY_READY"
-                   if initial + 0.01 >= required_after
+                   if final_breach is None
                    else "RESERVE_RECOVERY_CAPACITY_SHORTFALL"),
         "initial_soc_pct": round(initial, 3),
         "reserve_pct": round(reserve, 3),
         "required_soc_pct": round(required_after, 3),
+        "reserve_breach_slot": (
+            str(work[final_breach]["slot_start"]) if final_breach is not None else None),
         "added_slots": [str(work[i]["slot_start"]) for i in sorted(changed)],
     })
     return {"rows": work, "changed_indices": sorted(changed), "reports": reports}
@@ -514,6 +508,63 @@ def build_ingestion(a: IngestionAdapters):
     ha_service_response, record_event = a.ha_service_response, a.record_event
 
     def ensure_night_buy_capacity(rows: list[dict], cur, initial_soc_pct=None) -> dict:
+        restored_slots = []
+        if hasattr(cur, "fetchone"):
+            # Undo neutral BUY permissions promoted by the prior SOC-recovery
+            # pass. Skip slots whose RCE price has been refreshed afterwards.
+            cur.execute("""SELECT created_at,payload_json FROM ems_gpt_core_events
+              WHERE event_type='night_buy_capacity' ORDER BY created_at DESC LIMIT 1""", ())
+            previous_event = cur.fetchone() or {}
+            previous_payload = previous_event.get("payload_json") or {}
+            if isinstance(previous_payload, str):
+                try:
+                    previous_payload = json.loads(previous_payload)
+                except (TypeError, ValueError):
+                    previous_payload = {}
+            promoted = set()
+            for report in previous_payload.get("reports", []):
+                if not isinstance(report, dict):
+                    continue
+                if report.get("status") == "NEUTRAL_PROMOTED_TO_BUY" and report.get("slot_start"):
+                    promoted.add(str(report["slot_start"]))
+                promoted.update(str(slot) for slot in (report.get("added_slots") or []))
+            event_created_at = previous_event.get("created_at")
+            if isinstance(event_created_at, str):
+                try:
+                    event_created_at = datetime.fromisoformat(event_created_at.replace("Z", "+00:00"))
+                except ValueError:
+                    event_created_at = None
+            if getattr(event_created_at, "tzinfo", None) is not None:
+                event_created_at = event_created_at.replace(tzinfo=None)
+            if event_created_at is not None and promoted:
+                for row in rows:
+                    if (str(row.get("slot_start")) not in promoted
+                            or row.get("actual_recorded_at") is not None
+                            or row.get("price_source") != "PSE_API"
+                            or strict_database_bool(row.get("sale_window", False), "sale_window")
+                            or not strict_database_bool(row.get("buy_window", False), "buy_window")):
+                        continue
+                    fetched_at = row.get("price_fetched_at")
+                    if fetched_at is None:
+                        continue
+                    if isinstance(fetched_at, str):
+                        try:
+                            fetched_at = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+                        except ValueError:
+                            continue
+                    if getattr(fetched_at, "tzinfo", None) is not None:
+                        fetched_at = fetched_at.replace(tzinfo=None)
+                    if fetched_at > event_created_at:
+                        continue
+                    cur.execute("""UPDATE ems_gpt_slots
+                      SET buy_window=0,market_window='NEUTRAL'
+                      WHERE slot_start=%s AND actual_recorded_at IS NULL
+                        AND price_source='PSE_API' AND sale_window=0 AND buy_window=1""",
+                      (row["slot_start"],))
+                    if cur.rowcount != 1:
+                        raise RuntimeError("PRIOR_SOC_RECOVERY_BUY_PERMISSION_CHANGED")
+                    row.update(buy_window=False, market_window="NEUTRAL")
+                    restored_slots.append(str(row["slot_start"]))
         night = extend_night_buy_capacity(
             rows, float(OPTIONS.get('battery_capacity_kwh', 15.)),
             float(OPTIONS.get('battery_min_soc_pct', 15.)),
@@ -550,6 +601,9 @@ def build_ingestion(a: IngestionAdapters):
                                            | set(result['changed_indices'])
                                            | set(recovery['changed_indices']))
         result['reports'] = night['reports'] + result['reports'] + recovery['reports']
+        if restored_slots:
+            result['reports'].append({'status': 'PRIOR_RECOVERY_BUY_WINDOWS_RESTORED',
+                                      'slots': restored_slots})
         if result['changed_indices']:
             for index in result['changed_indices']:
                 cur.execute("""UPDATE ems_gpt_slots SET buy_window=1,market_window='BUY'
@@ -558,7 +612,7 @@ def build_ingestion(a: IngestionAdapters):
                     (result['rows'][index]['slot_start'],))
                 if cur.rowcount != 1:
                     raise RuntimeError('NIGHT_BUY_PERMISSION_CHANGED_DURING_PREPARATION')
-        if result['reports']:
+        if result['reports'] or restored_slots:
             record_event('night_buy_capacity', 'rce_import', {'reports': result['reports']})
         return result
 

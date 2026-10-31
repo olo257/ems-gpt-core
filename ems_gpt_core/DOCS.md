@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.70**.
+Status: obowiązująca. Wersja wydania: **0.40.71**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -443,4 +443,12 @@ minimum SOC, przygotowanie planu rozszerza BUY o najtańsze dostępne sloty
 NEUTRAL przed prognozowanym niedoborem, o dowolnej porze dnia. Gdy bieżący SOC
 jest już poniżej minimum, odzyskiwanie zaczyna się od najbliższego
 kwalifikującego się slotu. Horyzont prognozy pozostaje ciągły, wymagane minimum
-SOC nie jest obniżane, a sloty SELL nie są nadpisywane.
+SOC nie jest obniżane, a sloty SELL nie są nadpisywane. Przy kolejnym przebiegu planer cofa niepotrzebne sloty BUY dodane przez poprzednie odzyskiwanie, o ile od tego czasu nie odświeżono cen RCE.
+
+
+## Ograniczenie rozszerzenia BUY w 0.40.71
+
+Rozszerzanie neutralnych okien BUY kończy się, gdy symulowana ścieżka SOC
+pozostaje nad skonfigurowanym minimum. Nie wolno promować kolejnych slotów
+wyłącznie z powodu różnicy między początkowym SOC a zapotrzebowaniem całego
+horyzontu, jeśli planowane wcześniejsze doładowanie usuwa prognozowany niedobór.
