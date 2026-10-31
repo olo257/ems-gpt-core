@@ -757,4 +757,4 @@ Spadek lub prognozowany spadek SOC poniżej `battery_min_soc_pct` nie może skra
 
 ## Ograniczanie rozszerzenia BUY
 
-Rozszerzanie neutralnych okien BUY kończy się po osiągnięciu wykonalnej ścieżki, która nie schodzi poniżej skonfigurowanego minimum SOC. Nie wolno rozszerzać BUY tylko dlatego, że początkowy SOC nie pokrywa samodzielnie zapotrzebowania całego horyzontu — dostępna energia z późniejszych okien BUY jest częścią tej ścieżki.
+Rozszerzanie neutralnych okien BUY kończy się po osiągnięciu wykonalnej ścieżki, która nie schodzi poniżej skonfigurowanego minimum SOC. Nie wolno rozszerzać BUY tylko dlatego, że początkowy SOC nie pokrywa samodzielnie zapotrzebowania całego horyzontu — dostępna energia z późniejszych okien BUY jest częścią tej ścieżki. W kolejnym przebiegu należy cofnąć nadmiarowe sloty NEUTRAL→BUY dodane przez poprzednie odzyskiwanie, jeśli od chwili ich promocji nie odświeżono dla nich RCE.
