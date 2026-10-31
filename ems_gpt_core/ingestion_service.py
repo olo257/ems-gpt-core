@@ -508,6 +508,63 @@ def build_ingestion(a: IngestionAdapters):
     ha_service_response, record_event = a.ha_service_response, a.record_event
 
     def ensure_night_buy_capacity(rows: list[dict], cur, initial_soc_pct=None) -> dict:
+        # Undo neutral BUY permissions promoted by the prior SOC-recovery pass.
+        # Their source event records the exact slots; skip slots whose RCE price
+        # was refreshed afterwards, because those windows have been re-derived.
+        restored_slots = []
+        cur.execute("""SELECT created_at,payload_json FROM ems_gpt_core_events
+          WHERE event_type='night_buy_capacity' ORDER BY created_at DESC LIMIT 1""")
+        previous_event = cur.fetchone() or {}
+        previous_payload = previous_event.get("payload_json") or {}
+        if isinstance(previous_payload, str):
+            try:
+                previous_payload = json.loads(previous_payload)
+            except (TypeError, ValueError):
+                previous_payload = {}
+        promoted = set()
+        for report in previous_payload.get("reports", []):
+            if not isinstance(report, dict):
+                continue
+            if report.get("status") == "NEUTRAL_PROMOTED_TO_BUY" and report.get("slot_start"):
+                promoted.add(str(report["slot_start"]))
+            promoted.update(str(slot) for slot in (report.get("added_slots") or []))
+        event_created_at = previous_event.get("created_at")
+        if isinstance(event_created_at, str):
+            try:
+                event_created_at = datetime.fromisoformat(event_created_at.replace("Z", "+00:00"))
+            except ValueError:
+                event_created_at = None
+        if getattr(event_created_at, "tzinfo", None) is not None:
+            event_created_at = event_created_at.replace(tzinfo=None)
+        if event_created_at is not None and promoted:
+            for row in rows:
+                if (str(row.get("slot_start")) not in promoted
+                        or row.get("actual_recorded_at") is not None
+                        or row.get("price_source") != "PSE_API"
+                        or strict_database_bool(row.get("sale_window", False), "sale_window")
+                        or not strict_database_bool(row.get("buy_window", False), "buy_window")):
+                    continue
+                fetched_at = row.get("price_fetched_at")
+                if fetched_at is None:
+                    continue
+                if isinstance(fetched_at, str):
+                    try:
+                        fetched_at = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                if getattr(fetched_at, "tzinfo", None) is not None:
+                    fetched_at = fetched_at.replace(tzinfo=None)
+                if fetched_at > event_created_at:
+                    continue
+                cur.execute("""UPDATE ems_gpt_slots
+                  SET buy_window=0,market_window='NEUTRAL'
+                  WHERE slot_start=%s AND actual_recorded_at IS NULL
+                    AND price_source='PSE_API' AND sale_window=0 AND buy_window=1""",
+                  (row["slot_start"],))
+                if cur.rowcount != 1:
+                    raise RuntimeError("PRIOR_SOC_RECOVERY_BUY_PERMISSION_CHANGED")
+                row.update(buy_window=False, market_window="NEUTRAL")
+                restored_slots.append(str(row["slot_start"]))
         night = extend_night_buy_capacity(
             rows, float(OPTIONS.get('battery_capacity_kwh', 15.)),
             float(OPTIONS.get('battery_min_soc_pct', 15.)),
@@ -544,6 +601,9 @@ def build_ingestion(a: IngestionAdapters):
                                            | set(result['changed_indices'])
                                            | set(recovery['changed_indices']))
         result['reports'] = night['reports'] + result['reports'] + recovery['reports']
+        if restored_slots:
+            result['reports'].append({'status': 'PRIOR_RECOVERY_BUY_WINDOWS_RESTORED',
+                                      'slots': restored_slots})
         if result['changed_indices']:
             for index in result['changed_indices']:
                 cur.execute("""UPDATE ems_gpt_slots SET buy_window=1,market_window='BUY'
@@ -552,7 +612,7 @@ def build_ingestion(a: IngestionAdapters):
                     (result['rows'][index]['slot_start'],))
                 if cur.rowcount != 1:
                     raise RuntimeError('NIGHT_BUY_PERMISSION_CHANGED_DURING_PREPARATION')
-        if result['reports']:
+        if result['reports'] or restored_slots:
             record_event('night_buy_capacity', 'rce_import', {'reports': result['reports']})
         return result
 
