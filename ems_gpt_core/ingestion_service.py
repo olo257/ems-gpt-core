@@ -133,6 +133,31 @@ def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
                 right += 1
             buy_candidates.update(range(left, right + 1))
 
+    # A merged BUY valley can otherwise span nearly the whole horizon when
+    # several small local minima overlap. Keep each continuous valley no wider
+    # than the minimum charging duration needed by the configured SOC target;
+    # additional recovery capacity is opened later only when the SOC bridge
+    # requires it. Pick the cheapest contiguous segment, with earliest-slot
+    # tie breaking for deterministic plans.
+    capped_candidates: set[int] = set()
+    index = 0
+    while index < len(prices):
+        if index not in buy_candidates or sale_flags[index]:
+            index += 1
+            continue
+        end = index + 1
+        while (end < len(prices) and end in buy_candidates
+               and not sale_flags[end]):
+            end += 1
+        width = min(max(2, minimum_buy_slots), end - index)
+        start = min(
+            range(index, end - width + 1),
+            key=lambda candidate: (
+                sum(buys[candidate:candidate + width]), candidate))
+        capped_candidates.update(range(start, start + width))
+        index = end
+    buy_candidates = capped_candidates
+
     windows = []
     for index, current in enumerate(prices):
         sale_window = sale_flags[index]
