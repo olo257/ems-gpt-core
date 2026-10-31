@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.70. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.71. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -753,3 +753,8 @@ Prognoza wykorzystuje najpierw kompletne, zakwalifikowane próbki z ostatnich 7 
 ## Ciągłość prognozy przy niedoborze SOC
 
 Spadek lub prognozowany spadek SOC poniżej `battery_min_soc_pct` nie może skracać horyzontu ani obniżać wymaganego minimum. Jeśli istniejące okna BUY nie zapewniają osiągalnej ścieżki, przygotowanie planu ma rozszerzyć BUY o najtańsze dostępne sloty NEUTRAL przed niedoborem, niezależnie od pory dnia. Jeśli SOC jest już poniżej minimum, odzyskiwanie zaczyna się od najbliższego dostępnego slotu. Slotów SELL, zamkniętych i bez ceny nie wolno zmieniać. Jeżeli brak kwalifikującego się neutralnego slotu, planer zachowuje pełną prognozę i raportuje brak dostępnego rozwiązania.
+
+
+## Ograniczanie rozszerzenia BUY
+
+Rozszerzanie neutralnych okien BUY kończy się po osiągnięciu wykonalnej ścieżki, która nie schodzi poniżej skonfigurowanego minimum SOC. Nie wolno rozszerzać BUY tylko dlatego, że początkowy SOC nie pokrywa samodzielnie zapotrzebowania całego horyzontu — dostępna energia z późniejszych okien BUY jest częścią tej ścieżki.
