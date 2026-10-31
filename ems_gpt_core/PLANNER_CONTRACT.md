@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.69. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.70. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -748,3 +748,8 @@ Przed otwarciem sąsiedniego slotu BUY należy wykluczyć sloty, które już maj
 ## Fallback historii prognozy zużycia
 
 Prognoza wykorzystuje najpierw kompletne, zakwalifikowane próbki z ostatnich 7 dni. Jeśli brakuje danych do obciążenia domu lub pełnego profilu CWU, może skorzystać z kompletnych próbek SQL z dni 8–30. Źródło historyczne jest jawnie oznaczane; niekompletne dane nigdy nie są zastępowane zerem. Brak kompletnych próbek pozostaje blokadą prognozy.
+
+
+## Ciągłość prognozy przy niedoborze SOC
+
+Spadek lub prognozowany spadek SOC poniżej `battery_min_soc_pct` nie może skracać horyzontu ani obniżać wymaganego minimum. Jeśli istniejące okna BUY nie zapewniają osiągalnej ścieżki, przygotowanie planu ma rozszerzyć BUY o najtańsze dostępne sloty NEUTRAL przed niedoborem, niezależnie od pory dnia. Jeśli SOC jest już poniżej minimum, odzyskiwanie zaczyna się od najbliższego dostępnego slotu. Slotów SELL, zamkniętych i bez ceny nie wolno zmieniać. Jeżeli brak kwalifikującego się neutralnego slotu, planer zachowuje pełną prognozę i raportuje brak dostępnego rozwiązania.
