@@ -62,7 +62,7 @@ from planner_soc_service import (
     validate_recoverable_soc_requirements,
 )
 
-PLANNER_VERSION = "CORE_0_40_74"
+PLANNER_VERSION = "CORE_0_40_75"
 
 @dataclass(frozen=True)
 class PlannerAdapters:
@@ -547,10 +547,37 @@ def build_planner(a: PlannerAdapters):
                         "reason": str(exc),
                     }, "WARNING")
             if target_seed.get("buy_target_shortfalls"):
-                record_event("buy_charge_target_shortfall_safe_plan", "planner", {
-                    "run_id": run_id, "slots": target_seed["buy_target_shortfalls"],
-                    "action": "REJECT_PLAN_PRESERVE_LAST_PUBLISHED"}, "ERROR")
-                raise RuntimeError("BUY_TARGET_UNREACHABLE_AFTER_WINDOW_EXPANSION")
+                # The seed optimizer only records a shortfall when it can still
+                # satisfy the mandatory SOC floor at that slot. Preserve that
+                # safe path, lower only the optional BUY target to the best
+                # reachable SOC, and disable sales so a later export cannot
+                # undo the recovery path.
+                shortfalls = target_seed["buy_target_shortfalls"]
+                for shortfall in shortfalls:
+                    index = int(shortfall["index"])
+                    required_pct = float(enforced_daily_required[index])
+                    achieved_pct = float(shortfall["achieved_soc_pct"])
+                    if achieved_pct + 1e-9 < required_pct:
+                        raise RuntimeError(
+                            f"BUY_TARGET_SHORTFALL_BELOW_REQUIRED_SOC:{index}")
+                    charge_targets[index] = max(
+                        required_pct,
+                        min(float(charge_targets[index]), achieved_pct))
+                target_contract["charge_targets"] = list(charge_targets)
+                grid_charge_caps = economic_buy_charge_caps(
+                    horizon_rows, charge_targets, target_cap, capacity,
+                    eta_c, eta_d, max_kw, int(OPTIONS["slot_minutes"]))
+                if battery_sales_enabled:
+                    battery_sales_enabled = False
+                    record_event("battery_sales_disabled_for_buy_target_recovery", "planner", {
+                        "reason": "BEST_REACHABLE_SOC_TARGET",
+                        "slots": [item["index"] for item in shortfalls],
+                    }, "WARNING")
+                record_event("buy_charge_target_shortfall_best_effort", "planner", {
+                    "run_id": run_id, "slots": shortfalls,
+                    "effective_targets_pct": charge_targets,
+                    "action": "KEEP_REQUIRED_SOC_PUBLISH_BEST_REACHABLE_PLAN",
+                }, "WARNING")
             if target_seed.get("terminal_shortfall_pct", 0.0) > 1e-9:
                 requested_terminal_soc = terminal_soc
                 terminal_soc = float(target_seed["achieved_terminal_soc_pct"])
