@@ -1,3 +1,9 @@
+## 0.40.73 — ograniczone okna BUY
+
+- Ogranicz scalony przedział BUY do najtańszego ciągłego okna o długości wymaganej do uzupełnienia baterii.
+- Pozostałą neutralną pojemność otwieraj dopiero wtedy, gdy wymaga tego prognozowany most SOC.
+- Ujednolić wersję runtime i manifestu do 0.40.73.
+
 ## 0.40.72 — jednoznaczne źródła rozszerzenia BUY
 
 - Zmień nazwę audytu i metody przygotowania okien BUY na nazwy niezależne od pory dnia.
