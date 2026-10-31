@@ -149,7 +149,7 @@ def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
         while (end < len(prices) and end in buy_candidates
                and not sale_flags[end]):
             end += 1
-        width = min(minimum_buy_slots, end - index)
+        width = min(max(2, minimum_buy_slots), end - index)
         start = min(
             range(index, end - width + 1),
             key=lambda candidate: (
