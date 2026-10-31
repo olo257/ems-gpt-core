@@ -347,6 +347,151 @@ def extend_buy_capacity_before_sell(
     return {'rows': work, 'changed_indices': sorted(changed), 'reports': reports}
 
 
+def extend_buy_capacity_for_minimum_soc(
+        rows: list[dict], initial_soc_pct: float | None, capacity_kwh: float,
+        reserve_pct: float, buffer_pct: float, eta_c: float, eta_d: float,
+        max_power_kw: float, slot_minutes: int, uncertainty_weight: float,
+        grid_import_limit_kw: float = 12.0,
+        earliest_slot_start: datetime | None = None) -> dict:
+    """Promote the cheapest safe NEUTRAL slots to BUY when the SOC bridge is short.
+
+    A shortfall below the configured minimum is not a reason to stop planning or
+    lower the requirement. Open a real BUY permission early enough to recover
+    the reserve, using the cheapest eligible neutral slot before the projected
+    reserve breach. Never overwrite SELL, completed, or price-incomplete slots.
+    """
+    work = [dict(row) for row in rows]
+    if earliest_slot_start is not None and earliest_slot_start.tzinfo is not None:
+        earliest_slot_start = earliest_slot_start.replace(tzinfo=None)
+    if initial_soc_pct is None or not math.isfinite(float(initial_soc_pct)):
+        return {"rows": work, "changed_indices": [],
+                "reports": [{"status": "WAITING_INITIAL_SOC"}]}
+    initial = max(0.0, min(100.0, float(initial_soc_pct)))
+    capacity = max(0.001, float(capacity_kwh))
+    reserve = max(0.0, min(90.0, float(reserve_pct)))
+    eta_charge = max(0.01, float(eta_c))
+    eta_discharge = max(0.01, float(eta_d))
+    max_power = max(0.0, float(max_power_kw))
+    hours = max(0.0, float(slot_minutes) / 60.0)
+    max_import = max(0.0, float(grid_import_limit_kw))
+    uncertainty = max(0.0, min(2.0, float(uncertainty_weight))) * 0.10
+    changed: set[int] = set()
+    reports: list[dict] = []
+
+    def flag(row, key):
+        return strict_database_bool(row.get(key, False), key)
+
+    def load_kwh(row):
+        return (max(0.0, float(row.get("forecast_load_kwh") or 0.0))
+                + max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0)))
+
+    def pv_kwh(row):
+        return max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
+
+    def eligible_neutral(index):
+        row = work[index]
+        start = row["slot_start"]
+        return (
+            (earliest_slot_start is None or start >= earliest_slot_start)
+            and row.get("actual_recorded_at") is None
+            and not flag(row, "buy_window")
+            and not flag(row, "sale_window")
+            and row.get("price_buy_pln_kwh") is not None
+            and math.isfinite(float(row["price_buy_pln_kwh"]))
+        )
+
+    def projected_reserve_breach():
+        soc = initial
+        for index, row in enumerate(work):
+            if ((earliest_slot_start is not None and row["slot_start"] < earliest_slot_start)
+                    or row.get("actual_recorded_at") is not None):
+                continue
+            load = load_kwh(row)
+            pv = pv_kwh(row)
+            if flag(row, "buy_window") and not flag(row, "sale_window"):
+                grid_headroom = max(0.0, max_import * hours - max(0.0, load - pv))
+                charge_input = min(max_power * hours, grid_headroom)
+                soc = min(100.0, soc + charge_input * eta_charge / capacity * 100.0)
+            deficit = max(0.0, load - pv) / eta_discharge * (1.0 + uncertainty)
+            surplus = max(0.0, pv - load) * eta_charge * (1.0 - uncertainty)
+            soc += (surplus - deficit) / capacity * 100.0
+            if soc < reserve - 1e-9:
+                return index
+        return None
+
+    original_buy_indices = [i for i, row in enumerate(work)
+                            if flag(row, "buy_window") and not flag(row, "sale_window")]
+    first_original_buy = min(original_buy_indices, default=len(work))
+    base_requirement = replenishment_soc_requirements(
+        work, capacity, reserve, buffer_pct, eta_charge, eta_discharge,
+        max_power, slot_minutes, uncertainty_weight)
+    required_before = base_requirement[0] if base_requirement else reserve
+    if initial >= reserve - 1e-9 and initial + 0.01 >= required_before:
+        return {"rows": work, "changed_indices": [],
+                "reports": [{"status": "RESERVE_BRIDGE_COVERED",
+                             "initial_soc_pct": round(initial, 3),
+                             "required_soc_pct": round(required_before, 3)}]}
+
+    for _ in range(len(work)):
+        required = replenishment_soc_requirements(
+            work, capacity, reserve, buffer_pct, eta_charge, eta_discharge,
+            max_power, slot_minutes, uncertainty_weight)
+        required_before = required[0] if required else reserve
+        if changed and initial + 0.01 >= required_before:
+            break
+        breach = projected_reserve_breach()
+        if breach is None:
+            deadline = max(0, first_original_buy - 1)
+        elif initial < reserve - 1e-9:
+            deadline = max(0, first_original_buy - 1)
+        else:
+            deadline = min(breach, max(0, first_original_buy - 1))
+        candidates = [i for i in range(min(deadline, len(work) - 1) + 1)
+                      if i not in changed and eligible_neutral(i)]
+        if not candidates:
+            reports.append({
+                "status": "NO_NEUTRAL_BUY_BEFORE_RESERVE_BREACH",
+                "initial_soc_pct": round(initial, 3),
+                "reserve_pct": round(reserve, 3),
+                "required_soc_pct": round(required_before, 3),
+                "reserve_breach_slot": (
+                    str(work[breach]["slot_start"]) if breach is not None else None),
+            })
+            break
+        if initial < reserve - 1e-9 and not changed:
+            selected = min(candidates)
+        else:
+            selected = min(
+                candidates,
+                key=lambda i: (float(work[i]["price_buy_pln_kwh"]), i))
+        work[selected].update(buy_window=True, sale_window=False, market_window="BUY")
+        changed.add(selected)
+        reports.append({
+            "status": "NEUTRAL_PROMOTED_TO_BUY",
+            "slot_start": str(work[selected]["slot_start"]),
+            "price_buy_pln_kwh": float(work[selected]["price_buy_pln_kwh"]),
+            "initial_soc_pct": round(initial, 3),
+            "reserve_pct": round(reserve, 3),
+            "required_soc_pct": round(required_before, 3),
+        })
+
+    final_requirement = replenishment_soc_requirements(
+        work, capacity, reserve, buffer_pct, eta_charge, eta_discharge,
+        max_power, slot_minutes, uncertainty_weight)
+    required_after = final_requirement[0] if final_requirement else reserve
+    reports.append({
+        "status": ("RESERVE_RECOVERY_BUY_CAPACITY_READY"
+                   if initial + 0.01 >= required_after
+                   else "RESERVE_RECOVERY_CAPACITY_SHORTFALL"),
+        "initial_soc_pct": round(initial, 3),
+        "reserve_pct": round(reserve, 3),
+        "required_soc_pct": round(required_after, 3),
+        "added_slots": [str(work[i]["slot_start"]) for i in sorted(changed)],
+    })
+    return {"rows": work, "changed_indices": sorted(changed), "reports": reports}
+
+
+
 @dataclass(frozen=True)
 class IngestionAdapters:
     options: dict
@@ -389,8 +534,22 @@ def build_ingestion(a: IngestionAdapters):
             float(OPTIONS.get('battery_max_power_kw', 5.)), int(OPTIONS.get('slot_minutes', 15)),
             float(OPTIONS.get('forecast_uncertainty_weight', 1.)),
             float(OPTIONS.get('grid_import_limit_kw', 12.)), slot_start())
-        result['changed_indices'] = sorted(set(night['changed_indices']) | set(result['changed_indices']))
-        result['reports'] = night['reports'] + result['reports']
+        recovery = extend_buy_capacity_for_minimum_soc(
+            result['rows'], initial_soc_pct,
+            float(OPTIONS.get('battery_capacity_kwh', 15.)),
+            float(OPTIONS.get('battery_min_soc_pct', 15.)),
+            float(OPTIONS.get('soc_replenishment_buffer_pct', 2.)),
+            float(OPTIONS.get('battery_charge_efficiency', .9)),
+            float(OPTIONS.get('battery_discharge_efficiency', .95)),
+            float(OPTIONS.get('battery_max_power_kw', 5.)),
+            int(OPTIONS.get('slot_minutes', 15)),
+            float(OPTIONS.get('forecast_uncertainty_weight', 1.)),
+            float(OPTIONS.get('grid_import_limit_kw', 12.)), slot_start())
+        result['rows'] = recovery['rows']
+        result['changed_indices'] = sorted(set(night['changed_indices'])
+                                           | set(result['changed_indices'])
+                                           | set(recovery['changed_indices']))
+        result['reports'] = night['reports'] + result['reports'] + recovery['reports']
         if result['changed_indices']:
             for index in result['changed_indices']:
                 cur.execute("""UPDATE ems_gpt_slots SET buy_window=1,market_window='BUY'
