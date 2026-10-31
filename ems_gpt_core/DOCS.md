@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.71**.
+Status: obowiązująca. Wersja wydania: **0.40.72**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -51,11 +51,14 @@ bazy MariaDB `ems_gpt` i nie odczytuje bazy rekordera Home Assistant.
 | Podział wolnego PV na CWU/EV/eksport/ograniczenie, rekomendacja i decyzje procesów | PPD (`ppd_service.py`) | API i wykonawca odczytują |
 | Polecenia i stan wykonania | Wykonawca (`executor_service.py`) | PPD i diagnostyka odczytują |
 
-Od 0.40.56 planer przekazuje gotowe prognozy domu/HP/PV do metody
-`ensure_night_buy_capacity` importera RCE. To importer dobiera dodatkowe
-opłacalne sloty nocne i zapisuje uprawnienia, korzystając z kursora bieżącej
-transakcji planera. Publikacja lub wycofanie obejmuje oba zapisy. Diagnostyka
-`night_buy_capacity` podaje wymaganą i dostępną pojemność oraz ceny i ograniczenia.
+Od 0.40.56 planer przekazuje prognozy domu/HP/PV do metody
+`ensure_buy_window_capacity`. Metoda przygotowuje uprawnienia BUY w jednej
+transakcji planera: dla rezerwy HP w nocy, przed SELL oraz dla odzyskiwania SOC
+z neutralnych slotów o dowolnej porze. Zdarzenie
+`buy_window_capacity_prepared` oznacza każdy raport źródłem
+`NIGHT_HP_RESERVE`, `PRE_SELL_CAPACITY` albo `SOC_RESERVE_RECOVERY`; to samo
+podsumowanie jest zapisywane w logu dodatku. Historyczne zdarzenia
+`night_buy_capacity` nadal są odczytywane podczas sprzątania promocji SOC.
 Audyt `morning_energy_coverage` oraz powód walidacji `MORNING_ENERGY_SHORTFALL`
 ujawniają pozostały deficyt poranka; nie oznaczają go jako pełnego pokrycia `OK`.
 
@@ -446,7 +449,7 @@ kwalifikującego się slotu. Horyzont prognozy pozostaje ciągły, wymagane mini
 SOC nie jest obniżane, a sloty SELL nie są nadpisywane. Przy kolejnym przebiegu planer cofa niepotrzebne sloty BUY dodane przez poprzednie odzyskiwanie, o ile od tego czasu nie odświeżono cen RCE.
 
 
-## Ograniczenie rozszerzenia BUY w 0.40.71
+## Ograniczenie rozszerzenia BUY w 0.40.72
 
 Rozszerzanie neutralnych okien BUY kończy się, gdy symulowana ścieżka SOC
 pozostaje nad skonfigurowanym minimum. Nie wolno promować kolejnych slotów
