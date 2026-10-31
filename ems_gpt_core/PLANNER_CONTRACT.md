@@ -1,6 +1,6 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
-Status: obowiązujący; uaktualniono dla wersji 0.40.71. Ten dokument jest źródłem prawdy dla implementacji,
+Status: obowiązujący; uaktualniono dla wersji 0.40.72. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
 
@@ -758,3 +758,12 @@ Spadek lub prognozowany spadek SOC poniżej `battery_min_soc_pct` nie może skra
 ## Ograniczanie rozszerzenia BUY
 
 Rozszerzanie neutralnych okien BUY kończy się po osiągnięciu wykonalnej ścieżki, która nie schodzi poniżej skonfigurowanego minimum SOC. Nie wolno rozszerzać BUY tylko dlatego, że początkowy SOC nie pokrywa samodzielnie zapotrzebowania całego horyzontu — dostępna energia z późniejszych okien BUY jest częścią tej ścieżki. W kolejnym przebiegu należy cofnąć nadmiarowe sloty NEUTRAL→BUY dodane przez poprzednie odzyskiwanie, jeśli od chwili ich promocji nie odświeżono dla nich RCE.
+
+
+## Audyt rozszerzeń okien BUY
+
+Każde przygotowanie uprawnień BUY zapisuje zdarzenie `buy_window_capacity_prepared`
+z polem źródła: `NIGHT_HP_RESERVE`, `PRE_SELL_CAPACITY` albo
+`SOC_RESERVE_RECOVERY`. To samo podsumowanie trafia do logu dodatku, aby
+wskazywało, która ścieżka zmieniła slot na BUY. Historyczne zdarzenia
+`night_buy_capacity` pozostają obsługiwane przy odczycie poprzednich promocji SOC.
