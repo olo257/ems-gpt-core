@@ -71,6 +71,8 @@ def _soc_reachability_profile(
         max_power_kw: float, slot_minutes: int, soc_step_pct: float = 0.10,
         required_soc_pcts: list[float] | None = None,
         max_grid_import_kw: float = 12.0,
+        grid_charge_caps: list[float] | None = None,
+        minimum_grid_charge_kwh: float = 0.0,
 ) -> dict:
     """Return prefix reachability and a feasible path with minimum floor shortfall.
 
@@ -81,6 +83,8 @@ def _soc_reachability_profile(
     """
     if required_soc_pcts is not None and len(rows) != len(required_soc_pcts):
         raise ValueError("RECOVERY_SOC_REQUIREMENT_LENGTH_MISMATCH")
+    if grid_charge_caps is not None and len(rows) != len(grid_charge_caps):
+        raise ValueError("RECOVERY_SOC_GRID_CAP_LENGTH_MISMATCH")
     capacity = max(0.001, float(capacity_kwh))
     reserve = max(0.0, min(100.0, float(reserve_pct)))
     step = max(0.05, float(soc_step_pct))
@@ -114,6 +118,9 @@ def _soc_reachability_profile(
         )
         next_scores = {}
         next_predecessors = {}
+        grid_cap_unit = (last_unit if grid_charge_caps is None else
+                         int(math.ceil(max(reserve, min(100.0,
+                             float(grid_charge_caps[index]))) / step - 1e-9)))
         for current, score in scores.items():
             lower_state = current if current < first_unit else first_unit
             for following in range(max(lower_state, current-max_down),
@@ -125,6 +132,25 @@ def _soc_reachability_profile(
                     grid_charge = max(0.0, charge_input-pv_to_bat)
                     if grid_charge > 1e-9 and not buy_allowed:
                         continue
+                    # Match the optimizer: a grid BUY is an all-available
+                    # slot charge, bounded by the same SOC ceiling. Partial
+                    # BUY transitions make reachability optimistic and can
+                    # claim a bridge is feasible when dispatch rejects it.
+                    if grid_charge > 1e-9:
+                        if following > max(current, grid_cap_unit):
+                            continue
+                        site_charge_input = surplus + max(
+                            0.0, max_grid_slot_kwh - deficit)
+                        full_internal = min(
+                            max_internal_charge,
+                            site_charge_input * eta_charge)
+                        full_up = int(math.floor(
+                            full_internal / unit_kwh + 1e-9))
+                        full_next = min(
+                            last_unit, current + full_up,
+                            max(current, grid_cap_unit))
+                        if following != full_next:
+                            continue
                     battery_to_load = 0.0
                     grid_load = deficit
                 else:
@@ -143,7 +169,9 @@ def _soc_reachability_profile(
                 # native load as well as the battery. Rejecting that load here
                 # erased every charging transition whenever the house drew
                 # more than one SOC quantum, and collapsed BUY ceilings.
-                grid_load_during_buy_charge = buy_allowed and grid_charge > 1e-9
+                grid_load_during_buy_charge = (
+                    buy_allowed and grid_charge > max(
+                        1e-9, float(minimum_grid_charge_kwh)))
                 if (grid_load > unit_kwh * eta_discharge + 1e-9
                         and not unavoidable_grid_load
                         and not grid_load_during_buy_charge):
@@ -191,7 +219,9 @@ def validate_recoverable_soc_requirements(
         capacity_kwh: float | None = None, eta_c: float = 0.9,
         eta_d: float = 0.95, max_power_kw: float = 5.0,
         slot_minutes: int = 15, soc_step_pct: float = 0.10,
-        max_grid_import_kw: float = 12.0) -> dict:
+        max_grid_import_kw: float = 12.0,
+        grid_charge_caps: list[float] | None = None,
+        minimum_grid_charge_kwh: float = 0.0) -> dict:
     """Recover missed bridges and bound every hard SOC floor to reachability.
 
     A requirement above 100% or above the highest SOC physically reachable at
@@ -207,7 +237,9 @@ def validate_recoverable_soc_requirements(
         profile = _soc_reachability_profile(
             rows, initial_soc_pct, capacity_kwh, reserve_pct,
             eta_c, eta_d, max_power_kw, slot_minutes, soc_step_pct, required,
-            max_grid_import_kw=max_grid_import_kw)
+            max_grid_import_kw=max_grid_import_kw,
+            grid_charge_caps=grid_charge_caps,
+            minimum_grid_charge_kwh=minimum_grid_charge_kwh)
         reachable = profile["reachable_soc_ceiling_pcts"]
         feasible_path = profile["feasible_soc_path_pcts"]
         if len(reachable) != len(required):
