@@ -507,64 +507,79 @@ def build_ingestion(a: IngestionAdapters):
     canonical_slots_for_day, number, ha_state = a.canonical_slots_for_day, a.number, a.ha_state
     ha_service_response, record_event = a.ha_service_response, a.record_event
 
-    def ensure_night_buy_capacity(rows: list[dict], cur, initial_soc_pct=None) -> dict:
+    def ensure_buy_window_capacity(rows: list[dict], cur, initial_soc_pct=None) -> dict:
         restored_slots = []
         if hasattr(cur, "fetchone"):
-            # Undo neutral BUY permissions promoted by the prior SOC-recovery
-            # pass. Skip slots whose RCE price has been refreshed afterwards.
-            cur.execute("""SELECT created_at,payload_json FROM ems_gpt_core_events
-              WHERE event_type='night_buy_capacity' ORDER BY created_at DESC LIMIT 1""", ())
-            previous_event = cur.fetchone() or {}
-            previous_payload = previous_event.get("payload_json") or {}
-            if isinstance(previous_payload, str):
-                try:
-                    previous_payload = json.loads(previous_payload)
-                except (TypeError, ValueError):
-                    previous_payload = {}
-            promoted = set()
-            for report in previous_payload.get("reports", []):
-                if not isinstance(report, dict):
+            # Read recent recovery audit events from both the legacy event name
+            # and the new name. Only SOC-recovery promotions are candidates for
+            # rollback; night and pre-SELL capacity extensions keep their source.
+            cur.execute("""SELECT created_at,payload_json,event_type
+              FROM ems_gpt_core_events
+              WHERE event_type IN ('night_buy_capacity','buy_window_capacity_prepared')
+              ORDER BY created_at DESC LIMIT 100""", ())
+            promotion_times = {}
+            for previous_event in cur.fetchall():
+                payload = previous_event.get("payload_json") or {}
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except (TypeError, ValueError):
+                        payload = {}
+                event_time = previous_event.get("created_at")
+                if isinstance(event_time, str):
+                    try:
+                        event_time = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
+                    except ValueError:
+                        event_time = None
+                if getattr(event_time, "tzinfo", None) is not None:
+                    event_time = event_time.replace(tzinfo=None)
+                if event_time is None:
                     continue
-                if report.get("status") == "NEUTRAL_PROMOTED_TO_BUY" and report.get("slot_start"):
-                    promoted.add(str(report["slot_start"]))
-                promoted.update(str(slot) for slot in (report.get("added_slots") or []))
-            event_created_at = previous_event.get("created_at")
-            if isinstance(event_created_at, str):
-                try:
-                    event_created_at = datetime.fromisoformat(event_created_at.replace("Z", "+00:00"))
-                except ValueError:
-                    event_created_at = None
-            if getattr(event_created_at, "tzinfo", None) is not None:
-                event_created_at = event_created_at.replace(tzinfo=None)
-            if event_created_at is not None and promoted:
-                for row in rows:
-                    if (str(row.get("slot_start")) not in promoted
-                            or row.get("actual_recorded_at") is not None
-                            or row.get("price_source") != "PSE_API"
-                            or strict_database_bool(row.get("sale_window", False), "sale_window")
-                            or not strict_database_bool(row.get("buy_window", False), "buy_window")):
+                for report in payload.get("reports", []):
+                    if not isinstance(report, dict):
                         continue
-                    fetched_at = row.get("price_fetched_at")
-                    if fetched_at is None:
+                    source = report.get("source")
+                    status = str(report.get("status") or "")
+                    legacy_recovery = source is None and (
+                        status == "NEUTRAL_PROMOTED_TO_BUY"
+                        or status.startswith("RESERVE_RECOVERY_"))
+                    if source != "SOC_RESERVE_RECOVERY" and not legacy_recovery:
                         continue
-                    if isinstance(fetched_at, str):
-                        try:
-                            fetched_at = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
-                        except ValueError:
-                            continue
-                    if getattr(fetched_at, "tzinfo", None) is not None:
-                        fetched_at = fetched_at.replace(tzinfo=None)
-                    if fetched_at > event_created_at:
+                    promoted = []
+                    if report.get("slot_start"):
+                        promoted.append(str(report["slot_start"]))
+                    promoted.extend(str(slot) for slot in (report.get("added_slots") or []))
+                    for slot in promoted:
+                        promotion_times[slot] = max(event_time, promotion_times.get(slot, event_time))
+            for row in rows:
+                event_time = promotion_times.get(str(row.get("slot_start")))
+                if (event_time is None
+                        or row.get("actual_recorded_at") is not None
+                        or row.get("price_source") != "PSE_API"
+                        or strict_database_bool(row.get("sale_window", False), "sale_window")
+                        or not strict_database_bool(row.get("buy_window", False), "buy_window")):
+                    continue
+                fetched_at = row.get("price_fetched_at")
+                if fetched_at is None:
+                    continue
+                if isinstance(fetched_at, str):
+                    try:
+                        fetched_at = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+                    except ValueError:
                         continue
-                    cur.execute("""UPDATE ems_gpt_slots
-                      SET buy_window=0,market_window='NEUTRAL'
-                      WHERE slot_start=%s AND actual_recorded_at IS NULL
-                        AND price_source='PSE_API' AND sale_window=0 AND buy_window=1""",
-                      (row["slot_start"],))
-                    if cur.rowcount != 1:
-                        raise RuntimeError("PRIOR_SOC_RECOVERY_BUY_PERMISSION_CHANGED")
-                    row.update(buy_window=False, market_window="NEUTRAL")
-                    restored_slots.append(str(row["slot_start"]))
+                if getattr(fetched_at, "tzinfo", None) is not None:
+                    fetched_at = fetched_at.replace(tzinfo=None)
+                if fetched_at > event_time:
+                    continue
+                cur.execute("""UPDATE ems_gpt_slots
+                  SET buy_window=0,market_window='NEUTRAL'
+                  WHERE slot_start=%s AND actual_recorded_at IS NULL
+                    AND price_source='PSE_API' AND sale_window=0 AND buy_window=1""",
+                  (row["slot_start"],))
+                if cur.rowcount != 1:
+                    raise RuntimeError("PRIOR_SOC_RECOVERY_BUY_PERMISSION_CHANGED")
+                row.update(buy_window=False, market_window="NEUTRAL")
+                restored_slots.append(str(row["slot_start"]))
         night = extend_night_buy_capacity(
             rows, float(OPTIONS.get('battery_capacity_kwh', 15.)),
             float(OPTIONS.get('battery_min_soc_pct', 15.)),
@@ -600,10 +615,17 @@ def build_ingestion(a: IngestionAdapters):
         result['changed_indices'] = sorted(set(night['changed_indices'])
                                            | set(result['changed_indices'])
                                            | set(recovery['changed_indices']))
-        result['reports'] = night['reports'] + result['reports'] + recovery['reports']
+        result['reports'] = (
+            [{**report, 'source': 'NIGHT_HP_RESERVE'} for report in night['reports']]
+            + [{**report, 'source': 'PRE_SELL_CAPACITY'} for report in result['reports']]
+            + [{**report, 'source': 'SOC_RESERVE_RECOVERY'} for report in recovery['reports']]
+        )
         if restored_slots:
-            result['reports'].append({'status': 'PRIOR_RECOVERY_BUY_WINDOWS_RESTORED',
-                                      'slots': restored_slots})
+            result['reports'].append({
+                'status': 'PRIOR_RECOVERY_BUY_WINDOWS_RESTORED',
+                'source': 'SOC_RESERVE_RECOVERY',
+                'slots': restored_slots,
+            })
         if result['changed_indices']:
             for index in result['changed_indices']:
                 cur.execute("""UPDATE ems_gpt_slots SET buy_window=1,market_window='BUY'
@@ -613,7 +635,14 @@ def build_ingestion(a: IngestionAdapters):
                 if cur.rowcount != 1:
                     raise RuntimeError('NIGHT_BUY_PERMISSION_CHANGED_DURING_PREPARATION')
         if result['reports'] or restored_slots:
-            record_event('night_buy_capacity', 'rce_import', {'reports': result['reports']})
+            changed_slots = [
+                str(result['rows'][index]['slot_start'])
+                for index in result['changed_indices']
+            ]
+            record_event('buy_window_capacity_prepared', 'planner', {
+                'reports': result['reports'],
+                'changed_slots': changed_slots,
+            })
         return result
 
     def refresh_pv_forecast() -> dict:
@@ -802,7 +831,8 @@ def build_ingestion(a: IngestionAdapters):
         return result
 
     return SimpleNamespace(
-        ensure_night_buy_capacity=ensure_night_buy_capacity,
+        ensure_buy_window_capacity=ensure_buy_window_capacity,
+        ensure_night_buy_capacity=ensure_buy_window_capacity,
         refresh_pv_forecast=refresh_pv_forecast,
         refresh_weather_forecast=refresh_weather_forecast,
         refresh_rce=refresh_rce,
