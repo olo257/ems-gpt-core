@@ -419,43 +419,34 @@ def extend_buy_capacity_for_minimum_soc(
                 return index
         return None
 
-    original_buy_indices = [i for i, row in enumerate(work)
-                            if flag(row, "buy_window") and not flag(row, "sale_window")]
-    first_original_buy = min(original_buy_indices, default=len(work))
     base_requirement = replenishment_soc_requirements(
         work, capacity, reserve, buffer_pct, eta_charge, eta_discharge,
         max_power, slot_minutes, uncertainty_weight)
     required_before = base_requirement[0] if base_requirement else reserve
-    if initial >= reserve - 1e-9 and initial + 0.01 >= required_before:
+    initial_breach = projected_reserve_breach()
+    if initial_breach is None:
         return {"rows": work, "changed_indices": [],
                 "reports": [{"status": "RESERVE_BRIDGE_COVERED",
                              "initial_soc_pct": round(initial, 3),
                              "required_soc_pct": round(required_before, 3)}]}
 
+    # Add only enough recovery permissions to eliminate projected reserve
+    # breaches. Comparing initial SOC with a whole-horizon requirement here
+    # can keep promoting neutral slots long after a usable path exists.
     for _ in range(len(work)):
-        required = replenishment_soc_requirements(
-            work, capacity, reserve, buffer_pct, eta_charge, eta_discharge,
-            max_power, slot_minutes, uncertainty_weight)
-        required_before = required[0] if required else reserve
-        if changed and initial + 0.01 >= required_before:
-            break
         breach = projected_reserve_breach()
         if breach is None:
-            deadline = max(0, first_original_buy - 1)
-        elif initial < reserve - 1e-9:
-            deadline = max(0, first_original_buy - 1)
-        else:
-            deadline = min(breach, max(0, first_original_buy - 1))
-        candidates = [i for i in range(min(deadline, len(work) - 1) + 1)
-                      if i not in changed and eligible_neutral(i)]
+            break
+        candidates = [
+            i for i in range(min(breach, len(work) - 1) + 1)
+            if i not in changed and eligible_neutral(i)
+        ]
         if not candidates:
             reports.append({
                 "status": "NO_NEUTRAL_BUY_BEFORE_RESERVE_BREACH",
                 "initial_soc_pct": round(initial, 3),
                 "reserve_pct": round(reserve, 3),
-                "required_soc_pct": round(required_before, 3),
-                "reserve_breach_slot": (
-                    str(work[breach]["slot_start"]) if breach is not None else None),
+                "reserve_breach_slot": str(work[breach]["slot_start"]),
             })
             break
         if initial < reserve - 1e-9 and not changed:
@@ -472,20 +463,23 @@ def extend_buy_capacity_for_minimum_soc(
             "price_buy_pln_kwh": float(work[selected]["price_buy_pln_kwh"]),
             "initial_soc_pct": round(initial, 3),
             "reserve_pct": round(reserve, 3),
-            "required_soc_pct": round(required_before, 3),
+            "projected_breach_slot": str(work[breach]["slot_start"]),
         })
 
     final_requirement = replenishment_soc_requirements(
         work, capacity, reserve, buffer_pct, eta_charge, eta_discharge,
         max_power, slot_minutes, uncertainty_weight)
     required_after = final_requirement[0] if final_requirement else reserve
+    final_breach = projected_reserve_breach()
     reports.append({
         "status": ("RESERVE_RECOVERY_BUY_CAPACITY_READY"
-                   if initial + 0.01 >= required_after
+                   if final_breach is None
                    else "RESERVE_RECOVERY_CAPACITY_SHORTFALL"),
         "initial_soc_pct": round(initial, 3),
         "reserve_pct": round(reserve, 3),
         "required_soc_pct": round(required_after, 3),
+        "reserve_breach_slot": (
+            str(work[final_breach]["slot_start"]) if final_breach is not None else None),
         "added_slots": [str(work[i]["slot_start"]) for i in sorted(changed)],
     })
     return {"rows": work, "changed_indices": sorted(changed), "reports": reports}
