@@ -443,7 +443,7 @@ minimum SOC, przygotowanie planu rozszerza BUY o najtańsze dostępne sloty
 NEUTRAL przed prognozowanym niedoborem, o dowolnej porze dnia. Gdy bieżący SOC
 jest już poniżej minimum, odzyskiwanie zaczyna się od najbliższego
 kwalifikującego się slotu. Horyzont prognozy pozostaje ciągły, wymagane minimum
-SOC nie jest obniżane, a sloty SELL nie są nadpisywane.
+SOC nie jest obniżane, a sloty SELL nie są nadpisywane. Przy kolejnym przebiegu planer cofa niepotrzebne sloty BUY dodane przez poprzednie odzyskiwanie, o ile od tego czasu nie odświeżono cen RCE.
 
 
 ## Ograniczenie rozszerzenia BUY w 0.40.71
