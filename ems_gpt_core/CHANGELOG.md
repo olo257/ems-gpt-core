@@ -1,3 +1,9 @@
+## 0.40.75 — wykonalny target BUY przy niedoborze
+
+- Gdy plan osiąga wymagane minimum SOC, ale fizycznie nie może osiągnąć opcjonalnego targetu BUY, obniża wyłącznie ten target do najwyższego osiągalnego poziomu.
+- Zachowuje obowiązkowe minima SOC, wyłącza sprzedaż baterii dla tej ścieżki odzyskiwania i publikuje najlepszy wykonalny plan zamiast blokować prognozę.
+- Ujednolica wersję planera, runtime i manifestu aplikacji.
+
 ## 0.40.74 — zgodność osiągalności SOC z rzeczywistym BUY
 
 - Walidator osiągalności SOC stosuje ten sam pełny wolumen ładowania BUY, limit importu i target ładowania co optymalizator.
