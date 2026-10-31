@@ -1,3 +1,9 @@
+## 0.40.72 — jednoznaczne źródła rozszerzenia BUY
+
+- Zmień nazwę audytu i metody przygotowania okien BUY na nazwy niezależne od pory dnia.
+- Oznacz każdy raport jako NIGHT_HP_RESERVE, PRE_SELL_CAPACITY lub SOC_RESERVE_RECOVERY; zapisuj podsumowanie również w logu dodatku.
+- Zachowaj odczyt starszych zdarzeń night_buy_capacity przy porządkowaniu wcześniejszych promocji SOC.
+
 ## 0.40.71 — ograniczenie rozszerzania okien BUY
 
 - Kończ rozszerzanie BUY, gdy symulowana ścieżka SOC mieści się nad skonfigurowanym minimum.
