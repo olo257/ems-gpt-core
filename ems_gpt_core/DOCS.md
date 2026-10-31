@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.66**.
+Status: obowiązująca. Wersja wydania: **0.40.70**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -434,3 +434,13 @@ Cutoff z Home Assistant jest normalizowany do lokalnego `datetime` używanego pr
 ## Pomijanie istniejącego BUY
 
 Rozszerzanie okna BUY dodaje wyłącznie sloty bez istniejącego uprawnienia BUY. Sąsiednie BUY pozostają częścią dostępnego okna i nie są ponownie zapisywane jako nowe.
+
+
+## Odbudowa SOC w neutralnych slotach w 0.40.70
+
+Gdy istniejące okna BUY nie zapewniają osiągalnej ścieżki nad skonfigurowanym
+minimum SOC, przygotowanie planu rozszerza BUY o najtańsze dostępne sloty
+NEUTRAL przed prognozowanym niedoborem, o dowolnej porze dnia. Gdy bieżący SOC
+jest już poniżej minimum, odzyskiwanie zaczyna się od najbliższego
+kwalifikującego się slotu. Horyzont prognozy pozostaje ciągły, wymagane minimum
+SOC nie jest obniżane, a sloty SELL nie są nadpisywane.
