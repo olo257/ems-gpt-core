@@ -242,6 +242,9 @@ def record_event(event_type: str, module: str, payload: dict, severity: str = "I
             cur.execute("INSERT INTO ems_gpt_core_events(created_at,severity,event_type,module_name,slot_start,payload_json) VALUES(NOW(6),%s,%s,%s,%s,%s)",
                         (severity, event_type, module, slot_start().replace(tzinfo=None),
                          json.dumps(payload, ensure_ascii=False, default=str)))
+        if event_type == "buy_window_capacity_prepared":
+            LOG.info("buy_window_capacity_prepared %s",
+                     json.dumps(payload, ensure_ascii=False, default=str))
     except Exception as exc:
         LOG.error("event write failed: %s", exc)
 
@@ -250,7 +253,7 @@ _PLANNER = build_planner(PlannerAdapters(
     options=OPTIONS, db=db, local_now=local_now, slot_start=slot_start,
     setting=setting, audit_stage=audit_stage, active_tou_program=active_tou_program,
     tou_program_snapshot=tou_program_snapshot, record_event=record_event,
-    prepare_buy_windows=lambda rows, cur, soc=None: _INGESTION.ensure_night_buy_capacity(rows, cur, soc),
+    prepare_buy_windows=lambda rows, cur, soc=None: _INGESTION.ensure_buy_window_capacity(rows, cur, soc),
 ))
 optimize_hp_heating_slots = _PLANNER.optimize_hp_heating_slots
 run_planner = _PLANNER.run_planner
