@@ -1,3 +1,9 @@
+## 0.40.70 — ciągła odbudowa SOC z neutralnych slotów
+
+- Gdy istniejące okna BUY nie zapewniają utrzymania skonfigurowanego minimum SOC, rozszerz BUY o najtańsze dostępne sloty NEUTRAL przed prognozowanym niedoborem, niezależnie od pory dnia.
+- Przy SOC już poniżej minimum zaplanuj odzyskiwanie od najbliższego możliwego slotu; nie obniżaj wymaganego SOC i nie przerywaj horyzontu prognozy.
+- Nie zmieniaj slotów SELL, zamkniętych ani bez ceny; zapisuj rozszerzone uprawnienia BUY przed optymalizacją.
+
 ## 0.40.69 — konfigurowalna granica bezpieczeństwa SOC
 
 - Używaj `battery_min_soc_pct` jako minimalnej granicy SOC planera, bez dodatkowego sztywnego minimum 15%.
