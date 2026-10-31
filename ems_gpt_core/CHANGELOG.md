@@ -2,6 +2,7 @@
 
 - Kończ rozszerzanie BUY, gdy symulowana ścieżka SOC mieści się nad skonfigurowanym minimum.
 - Nie porównuj początkowego SOC z zapotrzebowaniem całego horyzontu jako warunku kontynuowania; usuwa to przypadek, w którym prawie każdy slot neutralny staje się BUY.
+- Przy kolejnym przebiegu przywróć do NEUTRAL sloty rozszerzone przez poprzedni przebieg odzyskiwania, o ile RCE nie zostało od tego czasu ponownie zaimportowane.
 
 ## 0.40.70 — ciągła odbudowa SOC z neutralnych slotów
 
