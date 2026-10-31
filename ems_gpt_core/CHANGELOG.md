@@ -1,3 +1,8 @@
+## 0.40.71 — ograniczenie rozszerzania okien BUY
+
+- Kończ rozszerzanie BUY, gdy symulowana ścieżka SOC mieści się nad skonfigurowanym minimum.
+- Nie porównuj początkowego SOC z zapotrzebowaniem całego horyzontu jako warunku kontynuowania; usuwa to przypadek, w którym prawie każdy slot neutralny staje się BUY.
+
 ## 0.40.70 — ciągła odbudowa SOC z neutralnych slotów
 
 - Gdy istniejące okna BUY nie zapewniają utrzymania skonfigurowanego minimum SOC, rozszerz BUY o najtańsze dostępne sloty NEUTRAL przed prognozowanym niedoborem, niezależnie od pory dnia.
