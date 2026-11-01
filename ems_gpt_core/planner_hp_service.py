@@ -124,9 +124,12 @@ def hp_temperature_eligible(below_threshold_sample_count: int,
 
 
 def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[list[bool], list[dict]]:
-    """Count only known published HP windows; unknown history grants no heat credit."""
-    cur.execute("""SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots
-      WHERE slot_start>=%s AND slot_start<%s ORDER BY slot_start""",
+    """Count committed comfort windows, falling back to published energy plans."""
+    cur.execute("""SELECT s.slot_start,
+      CASE WHEN h.slot_start IS NOT NULL THEN 1 ELSE s.plan_published END plan_published,
+      COALESCE(h.heat_enabled,s.heat_pump_window) heat_pump_window
+      FROM ems_gpt_slots s LEFT JOIN ems_gpt_hp_schedule h ON h.slot_start=s.slot_start
+      WHERE s.slot_start>=%s AND s.slot_start<%s ORDER BY s.slot_start""",
       (day_start, cutoff))
     states, unknown = [], []
     for row in cur.fetchall():
@@ -147,33 +150,12 @@ def elapsed_hp_plan_states(cur, day_start: datetime, cutoff: datetime) -> tuple[
 
 def hp_heating_window_indices(rows: list[dict], day_value,
                               latest_end_hour: int = 19) -> set[int]:
-    """Return heating slots after morning SELL and stop before any later SELL.
-
-    Heat-pump heating may not overlap battery-export SELL windows. A morning
-    SELL delays the start, and an evening SELL closes the heating window.
-    """
+    """Comfort starts at 07:00 and has priority over battery sale windows."""
     day_start = datetime.combine(day_value, datetime.min.time())
-    earliest_start = day_start + timedelta(hours=7)
-    midday = day_start + timedelta(hours=12)
-    latest_end = day_start + timedelta(hours=latest_end_hour)
-    morning_sell_ends = [
-        row.get("slot_end") or (row["slot_start"] + timedelta(minutes=15))
-        for row in rows
-        if row["slot_start"] < midday
-        and strict_database_bool(row.get("sale_window", False), "sale_window")
-    ]
-    window_start = max(earliest_start, max(morning_sell_ends)) \
-        if morning_sell_ends else earliest_start
-    evening_sell_starts = [
-        row["slot_start"] for row in rows
-        if window_start <= row["slot_start"] < latest_end
-        and strict_database_bool(row.get("sale_window", False), "sale_window")
-    ]
-    window_end = min(evening_sell_starts, default=latest_end)
-    return {
-        index for index, row in enumerate(rows)
-        if window_start <= row["slot_start"] < window_end
-    }
+    return {index for index, row in enumerate(rows)
+            if day_start + timedelta(hours=7) <= row['slot_start']
+            and (row.get('slot_end') or row['slot_start']+timedelta(minutes=15))
+                <= day_start+timedelta(hours=latest_end_hour)}
 
 
 def prepare_heat_pump_plan(cur, source: list[dict], rows: list[dict], now,
@@ -298,7 +280,7 @@ def prepare_heat_pump_plan(cur, source: list[dict], rows: list[dict], now,
 
         # Keep the ordinary 19:00 boundary when it can meet the full daily
         # heating requirement. If not, use the remaining time through 20:00,
-        # still stopping before SELL. HP energy then feeds the existing SOC
+        # with comfort taking priority over SELL. HP energy feeds the SOC
         # and BUY-capacity calculations as a required load.
         selected_local = select_with_end_hour(19)
         delivered_slots = sum(past_states) + len(selected_local)
@@ -349,3 +331,37 @@ def prepare_heat_pump_plan(cur, source: list[dict], rows: list[dict], now,
         "previous_loads": previous_loads,
         "component_heat": component_heat,
     }
+
+
+def persist_independent_hp_schedule(db, now, cutoff, options, schedule_id, record_event):
+    """Commit comfort before energy validation; no RCE/forecast completeness gate.
+
+    OFF means the existing DHW-only script, never power-off. A failed HP
+    refresh retains the last committed per-slot schedule and is reported.
+    """
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT * FROM ems_gpt_slots WHERE slot_start>=%s
+          AND slot_start<%s ORDER BY slot_start""",
+          (cutoff, datetime.combine(now.date()+timedelta(days=2), datetime.min.time())))
+        rows = list(cur.fetchall())
+        if not rows:
+            raise RuntimeError("HP_SCHEDULE_NO_SLOTS")
+        # HP must not depend on RCE availability. The price is only a ranking
+        # hint for the existing comfort optimizer when it is available.
+        rows = [dict(row, price_buy_pln_kwh=float(row.get('price_buy_pln_kwh') or 0))
+                for row in rows]
+        context = prepare_heat_pump_plan(cur, rows, rows, now, cutoff, options,
+                                         schedule_id, record_event)
+        selected = context['hp_selected_indices']
+        for i, row in enumerate(rows):
+            cur.execute("""INSERT INTO ems_gpt_hp_schedule
+              (slot_start,schedule_id,heat_enabled,dhw_enabled,created_at,reason_json)
+              VALUES(%s,%s,%s,1,NOW(6),%s) ON DUPLICATE KEY UPDATE
+              schedule_id=VALUES(schedule_id),heat_enabled=VALUES(heat_enabled),
+              dhw_enabled=1,created_at=NOW(6),reason_json=VALUES(reason_json)""",
+              (row['slot_start'], schedule_id, i in selected, json.dumps({
+                  'source':'INDEPENDENT_COMFORT', 'shortfalls':context['hp_shortfalls']}, default=str)))
+        cur.execute("DELETE FROM ems_gpt_hp_schedule WHERE slot_start<%s", (now-timedelta(days=7),))
+    return dict(schedule_id=schedule_id, status='COMMITTED', rows=len(rows),
+                heat_slots=len(selected), dhw_enabled=True,
+                shortfalls=context['hp_shortfalls'])

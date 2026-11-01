@@ -508,7 +508,11 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             max_grid_import_kw: float = 12.0,
                             grid_charge_caps: list[float] | None = None,
                             minimum_grid_charge_kwh: float = 0.0,
-                            allow_buy_target_shortfall: bool = False) -> dict:
+                            allow_buy_target_shortfall: bool = False,
+                            economic_target_selection: bool = False,
+                            forbid_reserve_grid_load: bool = False,
+                            preserve_buy_alternatives: bool = False,
+                            abort_check=None) -> dict:
     """Minimize total energy cost across every available slot and SOC state."""
     if not rows:
         return {"flows": [], "objective_pln": 0.0, "soc_step_pct": soc_step_pct}
@@ -550,6 +554,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     effective_target_pcts: list[float] = []
     buy_target_shortfalls = []
     for index, row in enumerate(rows):
+        if abort_check is not None:
+            abort_check()
         buy_price = float(row.get("price_buy_pln_kwh") or 0.0)
         sell_price = float(row.get("price_sell_pln_kwh") or 0.0)
         pv = max(0.0, float(row.get("forecast_pv_total_kwh") or 0.0))
@@ -599,6 +605,9 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     grid_charge = max(0.0, charge_input-pv_to_bat)
                     if grid_charge > 1e-9 and not grid_charge_allowed:
                         continue
+                    if ((economic_target_selection or preserve_buy_alternatives)
+                            and 1e-9 < grid_charge <= minimum_grid_charge_kwh):
+                        continue
                     # SOC target is the ceiling of deliberate GRID
                     # replenishment only. Free PV remains allowed to fill
                     # the battery up to the physical max SOC.
@@ -609,7 +618,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     # A selected grid purchase must fill this slot's available
                     # charge volume. Retain OFF/discharge alternatives for future
                     # feasibility, rather than reserving headroom with token BUYs.
-                    if grid_charge > 1e-9:
+                    if grid_charge > 1e-9 and not economic_target_selection:
                         site_charge_input = surplus + max(0.0, max_grid_slot_kwh-deficit)
                         full_internal = min(max_internal_charge, site_charge_input*eta_c)
                         full_up = int(math.floor(full_internal/unit_kwh + 1e-9))
@@ -650,6 +659,13 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                         and not unavoidable_grid_load
                         and not grid_load_during_buy_charge):
                     continue
+                if forbid_reserve_grid_load and not grid_load_during_buy_charge:
+                    # Only an actual discharge-power bottleneck is physically
+                    # unavoidable. Reaching reserve after an avoidable cheap
+                    # charge omission must make this route infeasible.
+                    physical_residual = max(0.0, deficit-max_down*unit_kwh*eta_d)
+                    if grid_load > physical_residual + unit_kwh*eta_d + 1e-9:
+                        continue
                 voluntary_grid_load = (
                     0.0 if unavoidable_grid_load else max(0.0, grid_load))
                 # The physical site limit still applies to total imports.
@@ -685,7 +701,7 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 pv_only_up = int(math.floor(
                     min(max_internal_charge, surplus * eta_c) / unit_kwh + 1e-9))
                 pv_reachable_target = min(last_unit, current_unit + pv_only_up)
-                if (minimum_soc_targets is not None and pv_export > 1e-9
+                if ((minimum_soc_targets is not None or economic_target_selection) and pv_export > 1e-9
                         and next_unit < pv_reachable_target):
                     continue
                 # At the end of a replenishment window the calculated energy
@@ -709,7 +725,15 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                         "pv_export_kwh": pv_export, "pv_curtail_kwh": pv_curtail,
                         "slot_cost_pln": slot_cost})
         if not next_costs:
-            raise RuntimeError(f"No feasible SOC state at horizon slot {index}")
+            error = RuntimeError(f"No feasible SOC state at horizon slot {index}")
+            error.planner_evidence = {
+                'slot_index':index,'slot_start':row.get('slot_start'),
+                'incoming_soc_range_pct':[min(costs)*step,max(costs)*step],
+                'required_soc_pct':required_pct,'load_kwh':load,'pv_kwh':pv,
+                'buy_allowed':grid_charge_allowed,'grid_limit_kwh':max_grid_slot_kwh,
+                'max_internal_charge_kwh':max_internal_charge,
+                'max_internal_discharge_kwh':max_internal_discharge}
+            raise error
         future_buy_load = False
         if grid_charge_allowed:
             window_end = index
@@ -722,7 +746,8 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                 > 1e-9
                 for future in range(index + 1, window_end + 1)
             )
-        if grid_charge_allowed and not future_buy_load:
+        if (grid_charge_allowed and not future_buy_load
+                and not economic_target_selection and not preserve_buy_alternatives):
             # Without later household load retain the established maximal
             # BUY frontier. With later load, keep OFF/discharge alternatives
             # for feasibility. Every positive BUY transition was already
@@ -776,7 +801,11 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
     candidates = [(cost, unit) for unit, cost in costs.items() if unit >= terminal_unit]
     if not candidates:
         if not allow_terminal_shortfall:
-            raise RuntimeError("No feasible terminal SOC state for complete horizon")
+            error = RuntimeError("No feasible terminal SOC state for complete horizon")
+            error.planner_evidence = {'required_terminal_soc_pct':terminal_soc_pct,
+                'reachable_terminal_max_pct':max(costs)*step,
+                'shortfall_kwh':max(0.0,(terminal_soc_pct-max(costs)*step)*capacity/100)}
+            raise error
         # A shortfall may be published only when the caller has already
         # exhausted the safer retry without deliberate battery sales and has
         # verified that the horizon ends in the current local day.  Preserve

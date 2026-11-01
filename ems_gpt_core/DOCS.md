@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.72**.
+Status: obowiązująca. Wersja wydania: **0.40.77**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -455,3 +455,67 @@ Rozszerzanie neutralnych okien BUY kończy się, gdy symulowana ścieżka SOC
 pozostaje nad skonfigurowanym minimum. Nie wolno promować kolejnych slotów
 wyłącznie z powodu różnicy między początkowym SOC a zapotrzebowaniem całego
 horyzontu, jeśli planowane wcześniejsze doładowanie usuwa prognozowany niedobór.
+
+
+## Diagnostyka przebiegów planera (0.40.76)
+
+Zakładka **Przebieg planera** pokazuje ostatnie 10 prób, zarówno opublikowanych,
+jak i odrzuconych. Każdy krok ma numer, czas, status i rozwijane dowody.
+`GET /api/planner-diagnostics?attempt_id=<UUID>` zwraca wybraną próbę,
+pełne dane optymalizacji oraz niezależny harmonogram HP. Bez filtra zwraca
+10 ostatnich prób. `missing_stages` wymienia nieukończone etapy; `complete`
+nie jest dowodem ekonomicznej optymalności. Zmiana kosztu jest porównywalna
+wyłącznie przy tych samych wejściach i wymaganiach. Dowody przechowywane są
+7 dni w `ems_gpt_planner_traces`, niezależnie od rollbacku planu.
+Parametry obejmują fizykę baterii, ceny, PV, load z HP, targety, minima,
+terminy, ograniczenia zakupu i sprzedaży. Nie zapisuje się haseł ani tokenów.
+
+Przed planowaniem energii osobna transakcja zapisuje `ems_gpt_hp_schedule`
+dla bieżącego i przyszłych slotów. Ten harmonogram obejmuje decyzję CO+CWU
+oraz dostępność bazowego CWU. HP_DHW nie ma osobnego polecenia wykonawczego:
+OFF procesu HP_HEAT_DHW uruchamia dotychczasowy skrypt trybu DHW-only,
+nie wyłącza zasilania pompy. Ogrzewanie ma pierwszeństwo nad sprzedażą.
+Po błędzie planera/PPD wykonawca pobiera harmonogram komfortu, uwzględnia
+ręczny override i nadal wymaga jawnie włączonego wykonawcy oraz jego mapy
+skryptów. Brak harmonogramu wywołuje alarm i zachowuje stan pompy.
+Błąd odświeżenia HP jest raportowany oddzielnie, a poprzedni zapis dla slotu
+pozostaje dostępny. Zapis nie dowodzi fizycznego wykonania — sprawdza je
+istniejąca telemetria wykonawcy. Niekompletne dane slotów/baza lub błąd
+samego modułu HP nadal wymagają interwencji; nie są ukrywane jako sukces.
+
+
+## Logika planera 0.40.77
+
+Produkcja używa jednego modelu `planner_policy_service`: PRIMARY_BUY →
+(wyłącznie po deficycie) NEUTRAL_CANDIDATES → NEUTRAL_SELECTED → weryfikacja
+wykonania targetów. Cele SOC pozostają niezmienne między próbami. Dzienny
+cel ze średnich historycznych nadal obowiązuje; nie ma awaryjnego obniżania
+celu do rezerwy. Targety importu wyznacza ekonomiczne rozwiązanie całego
+horyzontu. Siatka SOC wynosi 0,1 p.p.; końcówki poniżej kwantu są techniczne.
+Opcjonalna sprzedaż musi poprawiać wynik względem zachowania energii.
+
+`ems_gpt_rce_windows` jest źródłem pierwotnych uprawnień, a `ems_gpt_slots`
+pokazuje opublikowane uprawnienia wykonawcze. Migracja odtwarza brakujące
+pierwotne flagi z cen, bez przejmowania starych rozszerzeń BUY. Każdy replan
+zaczyna od tych pierwotnych flag. Widok Przebieg planera pokazuje odrzucony
+PRIMARY_BUY i jego deficyt, listę kandydatów/wybranych NEUTRAL, przepływy
+oraz wynik replay. Brak wykonalności zachowuje poprzedni plan energii;
+niezależny harmonogram HP pozostaje aktywny.
+
+
+Walidacja przygotowania 0.40.77: 474 testy Core, 32 testy economic-shadow,
+kontrola JS interfejsu prognoz, compileall i git diff --check. Nowe regresje
+obejmują pierwszeństwo pierwotnych BUY, tańsze wcześniejsze ładowanie,
+czasową dostępność NEUTRAL, nienaruszanie SELL i celów SOC, odtworzenie
+wykonania targetów, początkowy SOC poniżej minimum, brak dziedziczenia
+promocji oraz zachowanie planu bez sprzedaży po błędzie etapu opcjonalnego.
+Test z atrapatą kursora weryfikuje także parametry wszystkich zapytań
+pełnego przebiegu i atomową publikację uprawnień BUY.
+
+Dwa obliczeniowe scenariusze 48 h / 192 sloty przy siatce SOC 0,1 p.p.
+zakończyły się w około 4,6 s (sam pierwotny BUY) i 42,5 s (deficyt,
+rozszerzenie NEUTRAL i ocena sprzedaży) w środowisku przygotowania.
+Nie jest to pomiar Raspberry Pi ani walidacja na produkcyjnej bazie HA.
+Opcjonalna sprzedaż jest przerywana przed wyczerpaniem budżetu planowania,
+aby pozostawić czas na publikację wcześniej zaakceptowanego wariantu
+bez sprzedaży. Niepowodzenie obowiązkowego etapu zachowuje poprzedni plan.

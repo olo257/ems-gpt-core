@@ -374,7 +374,7 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertEqual(result["flows"][0]["battery_sell_kwh"], 0.0)
         self.assertGreater(result["flows"][0]["battery_to_load_kwh"], 0.0)
 
-    def test_hp_window_starts_after_morning_sell_and_ignores_buy(self):
+    def test_hp_window_prioritizes_comfort_over_morning_sell(self):
         day = date(2026, 9, 18)
         start = datetime.combine(day, datetime.min.time())
         rows = []
@@ -390,7 +390,7 @@ class PairedArbitrageTests(unittest.TestCase):
         allowed = hp_heating_window_indices(rows, day)
 
         self.assertNotIn(2, allowed)
-        self.assertNotIn(28, allowed)
+        self.assertIn(28, allowed)
         self.assertIn(32, allowed)
         self.assertIn(75, allowed)
         self.assertNotIn(76, allowed)
@@ -427,7 +427,7 @@ class PairedArbitrageTests(unittest.TestCase):
         self.assertNotIn(27, allowed)
         self.assertIn(28, allowed)
 
-    def test_hp_window_stops_before_evening_sell(self):
+    def test_hp_window_prioritizes_comfort_over_evening_sell(self):
         day = date(2026, 9, 18)
         start = datetime.combine(day, datetime.min.time())
         rows = []
@@ -443,7 +443,7 @@ class PairedArbitrageTests(unittest.TestCase):
         allowed = hp_heating_window_indices(rows, day)
 
         self.assertIn(69, allowed)
-        self.assertNotIn(70, allowed)
+        self.assertIn(70, allowed)
 
     def test_48h_soc_contract_closes_every_slot_without_hidden_grid_hold(self):
         rows = []

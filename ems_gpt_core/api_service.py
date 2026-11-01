@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
+from planner_diagnostics_service import diagnostic_rows
+
 from energy_balance_service import calculate_slot_energy_balance
 from economic_shadow_live import inspect_production_slots
 
@@ -234,6 +236,21 @@ def build_handler(a: ApiAdapters):
                 return self.json({"range":chart_range,"unit":"PLN/kWh",
                                   "current_slot":slot_start().replace(tzinfo=None),
                                   "count":len(rows),"rows":rows})
+            if path.endswith('/api/planner-diagnostics'):
+                params = parse_qs(urlparse(self.path).query)
+                attempt_id = (params.get('attempt_id') or [None])[0]
+                with db() as conn, conn.cursor() as cur:
+                    if attempt_id:
+                        cur.execute('SELECT trace_json FROM ems_gpt_planner_traces WHERE attempt_id=%s', (attempt_id,))
+                    else:
+                        cur.execute('SELECT trace_json FROM ems_gpt_planner_traces ORDER BY created_at DESC LIMIT 10')
+                    traces = [json.loads(row['trace_json']) for row in cur.fetchall()]
+                    cur.execute('SELECT * FROM ems_gpt_hp_schedule WHERE slot_start>=%s ORDER BY slot_start',
+                                (slot_start().replace(tzinfo=None),))
+                    hp = list(cur.fetchall())
+                rows = [row for trace in traces for row in diagnostic_rows(trace)]
+                return self.json({'view':'planner-diagnostics', 'count':len(rows),
+                                  'rows':rows, 'traces':traces, 'hp_schedule':hp})
             if path.endswith("/api/rejected-plans") or path == "/api/rejected-plans":
                 try:
                     with db() as conn, conn.cursor() as cur:

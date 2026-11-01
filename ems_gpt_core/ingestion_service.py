@@ -850,6 +850,11 @@ def build_ingestion(a: IngestionAdapters):
                   SET sale_window=%s,buy_window=%s,market_window=%s
                   WHERE slot_start=%s AND actual_recorded_at IS NULL""",
                   (sale_window, buy_window, market_window, row["slot_start"]))
+                cur.execute("""INSERT INTO ems_gpt_rce_windows
+                  (slot_start,buy_window,sale_window,updated_at) VALUES(%s,%s,%s,NOW(6))
+                  ON DUPLICATE KEY UPDATE buy_window=VALUES(buy_window),
+                  sale_window=VALUES(sale_window),updated_at=NOW(6)""",
+                  (row['slot_start'],buy_window,sale_window))
         result={"day":str(target),"rows":len(unique),"expected":expected,
                 "status":"OK" if len(unique)==expected else "PARTIAL","margin":margin}
         record_event("rce_refreshed","core",result)
@@ -862,3 +867,41 @@ def build_ingestion(a: IngestionAdapters):
         refresh_weather_forecast=refresh_weather_forecast,
         refresh_rce=refresh_rce,
     )
+
+
+def original_rce_windows(cur, rows, options):
+    cur.execute("SELECT slot_start,buy_window,sale_window FROM ems_gpt_rce_windows")
+    originals = {r['slot_start']:r for r in cur.fetchall()}
+    missing = [r for r in rows if r['slot_start'] not in originals]
+    if missing:
+        cur.execute("""SELECT slot_start,price_buy_pln_kwh,price_sell_pln_kwh
+          FROM ems_gpt_slots WHERE actual_recorded_at IS NULL AND price_source='PSE_API'
+          AND price_buy_pln_kwh IS NOT NULL AND price_sell_pln_kwh IS NOT NULL
+          ORDER BY slot_start""")
+        prices = list(cur.fetchall())
+        eta_c=float(options.get('battery_charge_efficiency',.9))
+        baseline=deye_program_soc_baselines(options)
+        minimum=max(1,math.ceil(float(options.get('battery_capacity_kwh',15))*max(0,
+            max(baseline.values())-float(options.get('battery_min_soc_pct',15)))/100
+            /max(.001,float(options.get('battery_max_power_kw',5))*float(options.get('slot_minutes',15))/60*eta_c)))
+        flags=derive_price_windows([{'buy':r['price_buy_pln_kwh'],'sell':r['price_sell_pln_kwh']} for r in prices],
+            eta_c,float(options.get('battery_discharge_efficiency',.95)),
+            float(options.get('battery_degradation_cost_pln_kwh',.08)),
+            float(options.get('minimum_arbitrage_margin_pln_kwh',.05)),
+            float(options.get('buy_window_tolerance_pln_kwh',.05)),minimum)
+        for row,(sell,buy) in zip(prices,flags):
+            if row['slot_start'] not in originals:
+                cur.execute("""INSERT IGNORE INTO ems_gpt_rce_windows
+                  (slot_start,buy_window,sale_window,updated_at) VALUES(%s,%s,%s,NOW(6))""",
+                  (row['slot_start'],buy,sell))
+                originals[row['slot_start']]={'buy_window':buy,'sale_window':sell}
+    result=[]
+    for row in rows:
+        original=originals.get(row['slot_start'])
+        if original is None:
+            raise RuntimeError('ORIGINAL_RCE_WINDOW_MISSING:'+str(row['slot_start']))
+        buy=strict_database_bool(original['buy_window'],'buy_window')
+        sell=strict_database_bool(original['sale_window'],'sale_window')
+        result.append(dict(row,buy_window=buy,sale_window=sell,
+                           market_window='SELL' if sell else 'BUY' if buy else 'NEUTRAL'))
+    return result

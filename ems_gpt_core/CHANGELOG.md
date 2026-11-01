@@ -1,3 +1,37 @@
+## 0.40.77 — pierwotne BUY przed ekonomicznym rozszerzeniem NEUTRAL
+
+- Pierwsze pełne rozwiązanie horyzontu wykorzystuje wyłącznie pierwotne
+  uprawnienia RCE BUY. Usunięto wyprzedzające rozszerzanie okien i łańcuch
+  korekt mogących osłabiać kontrakt SOC.
+- Dopiero niewykonalność energetyczna uruchamia drugi przebieg. Wspólny
+  optymalizator wybiera najtańsze użyteczne NEUTRAL w całym horyzoncie.
+  Publikowane są jedynie dodatkowe sloty z rzeczywistym ładowaniem.
+- Ekonomiczny target jest wynikiem optymalizacji cen, PV i obciążenia z HP.
+  Dodatkowy replay weryfikuje pełny wolumen do targetu bez wzrostu kosztu.
+- Konfiguracja minimum SOC, dzienne cele i cel końcowy nie są obniżane przy
+  kolejnych próbach. Osobno raportowany jest powrót z już zmierzonego SOC
+  poniżej minimum. Osiągnięcie rezerwy nie usprawiedliwia zaniechania
+  wcześniejszego ładowania i późniejszego importu na odbiory.
+- Osobna tabela pierwotnych okien RCE zapobiega utrwalaniu rozszerzeń przez
+  kolejne replany. Publikacja atomowo zapisuje wykonawcze okna i przepływy.
+- Opcjonalna sprzedaż musi przejść porównanie całego planu z wariantem bez
+  sprzedaży; nie otwiera dodatkowych NEUTRAL. Błąd tej próby zachowuje
+  wcześniej wykonalny wariant bez sprzedaży.
+- Zachowano niezależne HP i diagnostykę 0.40.76. Logi zawierają także etap
+  pierwotnego deficytu oraz dane granic osiągalnego SOC.
+
+## 0.40.76 — diagnostyka przebiegów i niezależny harmonogram HP
+
+- Widok Przebieg planera oraz `/api/planner-diagnostics`: identyfikatory prób,
+  etapy i brakujące etapy, kompletne wejścia i wyniki optymalizacji, koszt,
+  porównanie kontraktów oraz traceback. Zapis po rollbacku, retencja 7 dni.
+- Harmonogram komfortu zapisany osobną transakcją przed walidacją energii.
+  Błąd planera/PPD nie wymusza HP_HEAT_DHW OFF; HP korzysta z własnego
+  harmonogramu. HP_DHW pozostaje trybem bazowym istniejącego skryptu.
+  Brak harmonogramu jest alarmem i zachowuje stan urządzenia.
+- HP ma pierwszeństwo nad SELL, a jego obciążenie pozostaje w bilansie energii.
+- Usunięto podwójne liczenie PV do baterii w diagnostyce bilansu.
+
 ## 0.40.75 — wykonalny target BUY przy niedoborze
 
 - Gdy plan osiąga wymagane minimum SOC, ale fizycznie nie może osiągnąć opcjonalnego targetu BUY, obniża wyłącznie ten target do najwyższego osiągalnego poziomu.
