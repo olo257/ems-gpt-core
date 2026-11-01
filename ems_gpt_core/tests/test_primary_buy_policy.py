@@ -116,6 +116,16 @@ class PrimaryBuyPolicyTests(unittest.TestCase):
                 executed.append(sql)
                 # All assembled SQL must have a parameter for every placeholder.
                 assert sql.count('%s') == len(params), (sql,len(params))
+                if 'soc_target_source=%s' in sql:
+                    # Mirror the actual legacy MariaDB contract, not a
+                    # permissive mock accepting an arbitrarily long label.
+                    import re
+                    app_source=(pathlib.Path(__file__).resolve().parents[1]/'app.py').read_text()
+                    width=int(re.search(r'soc_target_source VARCHAR\((\d+)\)',app_source).group(1))
+                    index=sql[:sql.index('soc_target_source=%s')].count('%s')
+                    if len(params[index]) > width:
+                        raise ValueError('DATA_TOO_LONG:soc_target_source')
+
             def fetchall(self):
                 if ('FROM ems_gpt_rce_windows' in self.sql
                         or 'SELECT * FROM ems_gpt_slots' in self.sql

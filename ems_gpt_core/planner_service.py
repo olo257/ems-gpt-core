@@ -67,7 +67,7 @@ from planner_soc_service import (
     validate_recoverable_soc_requirements,
 )
 
-PLANNER_VERSION = "CORE_0_40_77"
+PLANNER_VERSION = "CORE_0_40_78"
 
 @dataclass(frozen=True)
 class PlannerAdapters:
@@ -375,7 +375,7 @@ def build_planner(a: PlannerAdapters):
                                   if f['grid_charge_kwh'] > flow_threshold}
             commitment = {
                 'due':[r.get('slot_end') or r['slot_start'] for r in horizon_rows],
-                'source':['ECONOMIC_FULL_HORIZON' for _ in horizon_rows],
+                'source':['ECONOMIC' for _ in horizon_rows],
                 'reserved_pv_kwh':[0.0]*len(horizon_rows)}
             for i,row in enumerate(horizon_rows):
                 rows[i].update(row)
