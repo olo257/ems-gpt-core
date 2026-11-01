@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.77**.
+Status: obowiązująca. Wersja wydania: **0.40.78**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -519,3 +519,13 @@ Nie jest to pomiar Raspberry Pi ani walidacja na produkcyjnej bazie HA.
 Opcjonalna sprzedaż jest przerywana przed wyczerpaniem budżetu planowania,
 aby pozostawić czas na publikację wcześniej zaakceptowanego wariantu
 bez sprzedaży. Niepowodzenie obowiązkowego etapu zachowuje poprzedni plan.
+
+
+## Naprawa publikacji 0.40.78
+
+Potwierdzony w HA błąd MariaDB 1406 zatrzymywał 0.40.77 podczas zapisu
+`soc_target_source`. Kolumna ma VARCHAR(16); kod pochodzenia wynosi teraz
+`ECONOMIC` (8 znaków), a pełne pochodzenie zapisuje ślad diagnostyczny.
+Test całego przebiegu sprawdza długość według deklaracji schematu z app.py.
+Błąd został odtworzony przez ten test przed poprawką. Nie zmieniono schematu,
+parametrów ekonomicznych, wymaganych SOC ani harmonogramów HP.

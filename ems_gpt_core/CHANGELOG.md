@@ -1,3 +1,13 @@
+## 0.40.78 — zapis źródła targetu zgodny ze schematem bazy
+
+- Naprawia `Data too long for column soc_target_source`: identyfikator
+  `ECONOMIC_FULL_HORIZON` przekraczał istniejące VARCHAR(16). Zapisuje krótki
+  kod `ECONOMIC`; pełne pochodzenie pozostaje w diagnostyce przebiegu.
+- Test pełnego przebiegu kontroluje długość parametru według deklaracji
+  rzeczywistego schematu. Odtwarza błąd 0.40.77 i przechodzi po poprawce.
+- Nie wymaga migracji ani zmiany danych i zachowuje logikę BUY/NEUTRAL
+  oraz niezależny harmonogram HP.
+
 ## 0.40.77 — pierwotne BUY przed ekonomicznym rozszerzeniem NEUTRAL
 
 - Pierwsze pełne rozwiązanie horyzontu wykorzystuje wyłącznie pierwotne
