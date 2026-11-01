@@ -54,7 +54,7 @@ class PlannerTrace:
                 comparison['objective_delta_pln'] = result['objective_pln']-previous['optimizer_result']['objective_pln']
             weakened = []
             for key in ('minimum_soc_targets', 'required_soc_pcts', 'target_due_indices',
-                        'hard_target_indices', 'terminal_soc_pct'):
+                        'hard_target_indices', 'terminal_soc_pct', 'full_volume_soc_caps'):
                 old, new = before.get(key), inputs.get(key)
                 if old is None:
                     continue
@@ -111,6 +111,7 @@ def persist_trace(db, payload):
 
 
 STAGE_LABELS = {
+    'BUY_VOLUME_CONTRACT':'Kontrakt pełnego wolumenu zakupu',
     'PRIMARY_BUY':'Pierwsza próba: pierwotne BUY',
     'PRIMARY_DEFICIT':'Deficyt pierwotnych BUY',
     'NEUTRAL_CANDIDATES':'Druga próba: kandydaci NEUTRAL',

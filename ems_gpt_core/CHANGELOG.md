@@ -1,3 +1,21 @@
+## 0.40.79 — pełny wolumen zamiast symbolicznego ładowania
+
+- Usuwa obejście BUY-only przez target wyprowadzony z symbolicznego wzrostu
+  SOC. Pełny wolumen zakupu jest kontrolowany względem niezależnego limitu
+  z pozostałego zużycia, PV i wymaganych SOC, nie względem końca wybranej
+  trajektorii. Ten sam kontrakt obowiązuje w wyborze BUY, NEUTRAL i replay.
+- Przyszłe zakupy nie obniżają limitu wcześniejszego ładowania. Zachowano
+  limity mocy, przyłącza, pojemności i importu. Mały zakup pozostaje legalny,
+  jeśli rzeczywiście kończy ładowanie przy fizycznej granicy lub wyliczonym
+  zapotrzebowaniu. Opcjonalna sprzedaż może budować dodatkowy zapas jedynie
+  pełnymi fizycznymi przejściami i nadal podlega porównaniu całego planu.
+- Odtworzenie odrzuconego ekonomicznie planu 0.40.78 na tych samych 47
+  slotach: osiem zakupów po około 0,031 kWh zastąpiono pełnymi przejściami;
+  koniec doby 40%, minimum 32% zamiast 28,1%. Koszt celu rośnie z 8,631199
+  do 8,741510 zł, ponieważ usunięto niedozwolone zasilanie odbiorów przez
+  symboliczne ładowanie, a nie dlatego że zmieniono ceny lub cele SOC.
+- Diagnostyka zapisuje BUY_VOLUME_CONTRACT i wykrywa utratę tego kontraktu.
+
 ## 0.40.78 — zapis źródła targetu zgodny ze schematem bazy
 
 - Naprawia `Data too long for column soc_target_source`: identyfikator

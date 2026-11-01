@@ -512,12 +512,15 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                             economic_target_selection: bool = False,
                             forbid_reserve_grid_load: bool = False,
                             preserve_buy_alternatives: bool = False,
+                            full_volume_soc_caps: list[float] | None = None,
                             abort_check=None) -> dict:
     """Minimize total energy cost across every available slot and SOC state."""
     if not rows:
         return {"flows": [], "objective_pln": 0.0, "soc_step_pct": soc_step_pct}
     if grid_charge_caps is not None and len(grid_charge_caps) != len(rows):
         raise ValueError("GRID_CHARGE_CAP_LENGTH_MISMATCH")
+    if full_volume_soc_caps is not None and len(full_volume_soc_caps) != len(rows):
+        raise ValueError('FULL_VOLUME_CAP_LENGTH_MISMATCH')
     capacity = max(0.001, float(capacity_kwh))
     reserve = max(0.0, min(100.0, float(reserve_pct)))
     step = max(0.05, float(soc_step_pct))
@@ -618,12 +621,17 @@ def optimize_energy_horizon(rows: list[dict], initial_soc_pct: float,
                     # A selected grid purchase must fill this slot's available
                     # charge volume. Retain OFF/discharge alternatives for future
                     # feasibility, rather than reserving headroom with token BUYs.
-                    if grid_charge > 1e-9 and not economic_target_selection:
+                    if grid_charge > 1e-9 and (not economic_target_selection or full_volume_soc_caps is not None):
                         site_charge_input = surplus + max(0.0, max_grid_slot_kwh-deficit)
                         full_internal = min(max_internal_charge, site_charge_input*eta_c)
                         full_up = int(math.floor(full_internal/unit_kwh + 1e-9))
+                        # The immutable volume contract comes from remaining
+                        # demand, not the selected flow's own end SOC. Otherwise
+                        # a 0.2-point target increase could authorize grid load.
+                        volume_cap_unit = (grid_cap_unit if full_volume_soc_caps is None else
+                            int(math.ceil(float(full_volume_soc_caps[index])/step-1e-9)))
                         full_next = min(last_unit, current_unit+full_up,
-                                        max(current_unit, grid_cap_unit))
+                                        max(current_unit, volume_cap_unit))
                         if next_unit != full_next:
                             continue
                     grid_load = deficit

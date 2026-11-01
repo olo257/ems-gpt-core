@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.78**.
+Status: obowiązująca. Wersja wydania: **0.40.79**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -529,3 +529,21 @@ Potwierdzony w HA błąd MariaDB 1406 zatrzymywał 0.40.77 podczas zapisu
 Test całego przebiegu sprawdza długość według deklaracji schematu z app.py.
 Błąd został odtworzony przez ten test przed poprawką. Nie zmieniono schematu,
 parametrów ekonomicznych, wymaganych SOC ani harmonogramów HP.
+
+
+## 0.40.79 — kontrola pełnego zakupu niezależna od targetu przepływu
+
+`horizon_charge_caps` wylicza kontrakt pełnego wolumenu z pozostałego load
+z HP, PV i obowiązkowych SOC. `full_volume_soc_caps` jest jawnie przekazywany
+we wszystkich obowiązkowych próbach i replay. Optymalizator nie może go
+obniżyć, wyprowadzając target z własnego końcowego SOC. Etap diagnostyczny
+BUY_VOLUME_CONTRACT zapisuje wektor oraz jego źródło. Wariant opcjonalnej
+sprzedaży korzysta z pełnego fizycznego limitu importu/SOC i tego samego
+limitu w swoim replay, aby zachować rzeczywiste, opłacalne cykle BUY/SELL.
+Wymagania SOC i harmonogramy HP pozostają bez zmian.
+
+Odtworzenie zapisanej próby 0.40.78: 47 slotów; osiem sztucznych zakupów
+po około 0,031 kWh znika, końcowy SOC pozostaje 40%, a minimum wynosi 32%.
+Koszt celu zmienia się z 8,631199 na 8,741510 zł przy tych samych cenach
+oraz prognozach; wcześniejszy niższy koszt wynikał z niedozwolonego obejścia
+BUY-only. Dane produkcyjne użyto lokalnie, bez dodawania ich do repozytorium.

@@ -185,3 +185,43 @@ class PrimaryBuyPolicyTests(unittest.TestCase):
             initial_soc_pct=80,sale_floor_pcts=[12,100],optimizer=optimizer)
         self.assertIn(True,attempted)
         self.assertEqual(sum(f['battery_sell_kwh'] for f in result['optimization']['flows']),0)
+
+    def test_selected_buy_cannot_invent_small_target_to_power_house(self):
+        from planner_policy_service import horizon_charge_caps
+        data=rows([('BUY',1+i*.03,.4,0) for i in range(8)]
+                  +[('SELL',2,.4,0)]*20)
+        result=solve(data,initial_soc_pct=95,terminal_soc_pct=40,
+            required_soc_pcts=[12]*27+[40],soc_step_pct=.1)
+        caps=horizon_charge_caps(data,[12]*27+[40],40,15,12,.98,.98,5,15,100,.1)
+        positive=0
+        for i,f in enumerate(result['optimization']['flows']):
+            if f['grid_charge_kwh']<=0:
+                continue
+            positive+=1
+            full_end=min(100,f['soc_start_pct']+8.1,caps[i])
+            self.assertAlmostEqual(f['soc_end_pct'],full_end)
+        self.assertGreater(positive,0)
+
+    def test_small_buy_is_allowed_when_it_really_fills_battery(self):
+        data=rows([('BUY',.5,.2,0)])
+        result=solve(data,initial_soc_pct=99.8,terminal_soc_pct=100,
+            required_soc_pcts=[100],soc_step_pct=.1)
+        first=result['optimization']['flows'][0]
+        self.assertGreater(first['grid_charge_kwh'],0)
+        self.assertLess(first['grid_charge_kwh'],.05)
+        self.assertAlmostEqual(first['soc_end_pct'],100)
+
+    def test_volume_contract_is_identical_across_selection_and_replay(self):
+        trace=PlannerTrace('fixed-volume')
+        solve(rows([('NEUTRAL',.5,0,0),('SELL',2,.8,0)]),initial_soc_pct=12,trace=trace)
+        contracts=[e['optimizer_inputs']['full_volume_soc_caps'] for e in trace.entries if 'optimizer_inputs' in e]
+        self.assertGreater(len(contracts),1)
+        self.assertTrue(all(v==contracts[0] for v in contracts))
+
+    def test_real_sale_inventory_can_still_be_charged_at_full_volume(self):
+        result=solve(rows([('BUY',.5,0,0),('SELL',3,0,0),('BUY',.5,0,0)]),
+            initial_soc_pct=12,sale_floor_pcts=[100,12,100],degradation=0,min_margin=0,soc_step_pct=.1)
+        flows=result['optimization']['flows']
+        self.assertGreater(flows[1]['battery_sell_kwh'],0)
+        self.assertGreater(flows[0]['grid_charge_kwh'],1)
+        self.assertLess(result['optimization']['objective_pln'],0)

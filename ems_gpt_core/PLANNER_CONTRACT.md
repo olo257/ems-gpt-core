@@ -1,5 +1,30 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
+## Uzupełnienie obowiązujące od 0.40.79: pełny wolumen
+
+Ekonomiczny wynik nie może sam uzasadniać limitu pełnego zakupu przez
+ustawienie targetu o 0,2 p.p. wyżej od początku slotu. Wariant 0.40.78
+umożliwiał w ten sposób 0,031 kWh ładowania i znacznie większe zasilanie
+odbiorów z sieci. Limit wolumenu jest teraz osobnym kontraktem obliczanym
+wstecz z pozostałego zużycia domu/HP, PV i obowiązkowych celów SOC.
+Przyszłe zakupy nie są odejmowane od tego zapotrzebowania, więc drogi
+późniejszy BUY nie blokuje tańszego wcześniejszego zakupu.
+
+Każde dodatnie ładowanie z sieci osiąga maksymalne przejście do tego limitu,
+z uwzględnieniem mocy baterii, limitu importu i wolnej pojemności. Kontrakt
+jest identyczny w wyborze pierwotnego BUY, rozszerzeniu NEUTRAL i replay.
+Publikowany target pozostaje sufitem wykonawczym wybranego przejścia,
+ale nie może osłabić niezależnej kontroli pełnego wolumenu.
+
+Małe doładowanie przy rzeczywistym końcu ładowania, np. 99,8% → 100%,
+nie jest zakazane. Nie stosuje się arbitralnego minimum 0,5/1 kWh.
+Opcjonalny wariant sprzedaży może potrzebować dodatkowego zapasu ponad
+zużycie instalacji: dla niego kontraktem pełnego wolumenu jest fizyczny
+limit importu/SOC. Ten limit także jest zachowany w replay sprzedaży;
+nadal obowiązuje porównanie z wariantem bez sprzedaży i zakaz otwierania
+nowych NEUTRAL wyłącznie dla eksportu. Harmonogramy HP są niezależne.
+
+
 ## Obowiązujący przebieg od 0.40.77
 
 Przepływ produkcyjny realizuje `planner_policy_service.solve_buy_policy`.
