@@ -1,3 +1,4 @@
+import json
 import pathlib
 import tempfile
 import unittest
@@ -153,7 +154,7 @@ class ExecutorServiceTests(unittest.TestCase):
             ha_service_response=lambda *args, **kwargs: None,
         ))
 
-    def test_planner_failure_stages_off_for_extra_loads_and_selects_dhw(self):
+    def test_planner_failure_without_hp_schedule_preserves_hp(self):
         executed = []
         class Cursor:
             rowcount = 0
@@ -190,12 +191,61 @@ class ExecutorServiceTests(unittest.TestCase):
         inserts = [row for row in executed
                    if "INSERT IGNORE INTO ems_gpt_core_commands" in row[0]]
         self.assertEqual(result["status"], "PLANNER_FAILURE_FAIL_SAFE")
-        self.assertEqual(result["staged"], 3)
+        self.assertEqual(result["staged"], 2)
         self.assertEqual([row[1][3] for row in inserts],
-                         ["PV_CWU", "PV_EV", "HP_HEAT_DHW"])
+                         ["PV_CWU", "PV_EV"])
         self.assertTrue(all("'OFF'" in row[0] for row in inserts))
         self.assertTrue(all(row[1][6] == "READY_FOR_CONNECTOR" for row in inserts))
         self.assertTrue(all("PLANNER_FAIL_SAFE" in row[0] for row in inserts))
+        self.assertFalse(any("SELECT d.*" in row[0] for row in executed))
+
+    def test_planner_failure_keeps_independent_heating_on(self):
+        executed = []
+        class Cursor:
+            rowcount = 0
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def execute(self, sql, params=()):
+                self.rowcount = 1 if "INSERT IGNORE INTO ems_gpt_core_commands" in sql else 0
+                self.sql = sql
+                executed.append((" ".join(sql.split()), params, self.rowcount))
+            def fetchone(self):
+                if 'FROM ems_gpt_hp_schedule' in self.sql:
+                    return {'heat_enabled':1, 'dhw_enabled':1, 'schedule_id':'hp-run'}
+                if 'FROM ems_gpt_core_process_overrides' in self.sql:
+                    return {}
+                return {"slot_id": "20261003T1900Z"}
+
+        class Connection:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def cursor(self): return Cursor()
+
+        now = datetime.now().replace(second=0, microsecond=0)
+        current_slot = now.replace(minute=(now.minute // 15) * 15)
+        with tempfile.TemporaryDirectory() as directory:
+            service = self.build_service(
+                directory, db=Connection,
+                slot_start_fn=lambda: current_slot)
+            self.options.update({
+                "executor_enabled": True,
+                "executor_dry_run": False,
+                "executor_activation_ack": "EMS_CONNECTOR_ACCEPTED",
+            })
+            self.state.update({
+                "executor": "LIVE",
+                "planner_failure_latched": "SOC_SAFETY_BRIDGE_UNREACHABLE:0",
+            })
+            result = service.stage_executor_commands()
+
+        inserts = [row for row in executed
+                   if "INSERT IGNORE INTO ems_gpt_core_commands" in row[0]]
+        self.assertEqual(result["status"], "PLANNER_FAILURE_FAIL_SAFE")
+        self.assertEqual(result["staged"], 3)
+        hp = [row for row in inserts if "'HP_COMFORT'" in row[0]]
+        self.assertEqual(len(hp), 1)
+        self.assertEqual(hp[0][1][3], 'ON')
+        self.assertTrue(json.loads(hp[0][1][-1])['independent_hp'])
         self.assertFalse(any("SELECT d.*" in row[0] for row in executed))
 
     def test_settings_are_validated_and_persisted(self):

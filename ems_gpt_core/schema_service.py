@@ -109,6 +109,20 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
           slot_start DATETIME(6) NULL, input_watermark VARCHAR(80) NULL,
           output_version VARCHAR(80) NULL, reason TEXT NULL,
           INDEX ix_module_runs(module_name,started_at)) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS ems_gpt_rce_windows (
+          slot_start DATETIME(6) PRIMARY KEY, buy_window BOOLEAN NOT NULL,
+          sale_window BOOLEAN NOT NULL, updated_at DATETIME(6) NOT NULL
+          ) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS ems_gpt_planner_traces (
+          attempt_id VARCHAR(36) PRIMARY KEY, run_id VARCHAR(36) NULL,
+          created_at DATETIME(6) NOT NULL, status VARCHAR(24) NOT NULL,
+          trace_json LONGTEXT NOT NULL,
+          INDEX ix_planner_traces_time(created_at)) ENGINE=InnoDB""",
+        """CREATE TABLE IF NOT EXISTS ems_gpt_hp_schedule (
+          slot_start DATETIME(6) PRIMARY KEY, schedule_id VARCHAR(36) NOT NULL,
+          heat_enabled BOOLEAN NOT NULL, dhw_enabled BOOLEAN NOT NULL,
+          created_at DATETIME(6) NOT NULL, reason_json TEXT NOT NULL
+          ) ENGINE=InnoDB""",
         """CREATE TABLE IF NOT EXISTS ems_gpt_plan_attempts (
           attempt_id VARCHAR(36) PRIMARY KEY, run_id VARCHAR(36) NULL,
           run_type VARCHAR(32) NOT NULL, status VARCHAR(24) NOT NULL,

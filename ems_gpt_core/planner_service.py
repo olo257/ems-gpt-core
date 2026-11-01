@@ -9,6 +9,10 @@ from datetime import datetime, time, timedelta
 from types import SimpleNamespace
 from typing import Callable
 
+from planner_diagnostics_service import PlannerTrace, persist_trace
+from planner_policy_service import solve_buy_policy
+from ingestion_service import original_rce_windows
+
 from config_service import deye_program_soc_baselines
 from planner_hp_service import (
     elapsed_hp_plan_states,
@@ -17,6 +21,7 @@ from planner_hp_service import (
     hp_temperature_eligible,
     optimize_hp_heating_slots,
     prepare_heat_pump_plan,
+    persist_independent_hp_schedule,
 )
 from planner_validation_service import (
     strict_database_bool,
@@ -62,7 +67,7 @@ from planner_soc_service import (
     validate_recoverable_soc_requirements,
 )
 
-PLANNER_VERSION = "CORE_0_40_75"
+PLANNER_VERSION = "CORE_0_40_77"
 
 @dataclass(frozen=True)
 class PlannerAdapters:
@@ -87,6 +92,7 @@ def build_planner(a: PlannerAdapters):
     active_tou_program = a.active_tou_program
     tou_program_snapshot = a.tou_program_snapshot
     record_event = a.record_event
+    solve_energy_horizon = optimize_energy_horizon
 
     def _run_planner(run_type: str, attempt: dict) -> dict:
         """Run the V3 staged planner transactionally in the app-owned database."""
@@ -96,8 +102,22 @@ def build_planner(a: PlannerAdapters):
 
         def ensure_deadline(stage: str) -> None:
             attempt["failed_stage"] = stage
+            attempt["trace"].add(stage, "RUNNING")
             if monotonic_clock.monotonic() - started_monotonic > planning_budget:
                 raise RuntimeError(f"PLANNER_DEADLINE_EXCEEDED:{stage}:{planning_budget:.0f}s")
+
+        def policy_budget_check(stage):
+            elapsed = monotonic_clock.monotonic()-started_monotonic
+            if stage in ('OPTIONAL_SALE','SALE_CONTRACT') and elapsed > planning_budget-10:
+                raise RuntimeError('OPTIONAL_SALE_BUDGET_EXHAUSTED_KEEP_BASELINE')
+            if elapsed > planning_budget:
+                raise RuntimeError(f'PLANNER_DEADLINE_EXCEEDED:{stage}')
+
+        trace = attempt['trace']
+
+        def audit_stage(cur, run_id, stage, status, rows, details=""):
+            trace.add(stage, status, rows=rows, details=details)
+            a.audit_stage(cur, run_id, stage, status, rows, details)
 
         now = local_now().replace(tzinfo=None)
         cutoff = slot_start().replace(tzinfo=None) + timedelta(minutes=int(OPTIONS["slot_minutes"]))
@@ -145,11 +165,36 @@ def build_planner(a: PlannerAdapters):
             attempt["initial_soc_pct"] = float(soc_now)
             record_event("replan_soc_time_alignment", "planner", {
                 "horizon_start": str(cutoff), **projection})
+            cur.execute("""SELECT slot_start,price_buy_pln_kwh,price_sell_pln_kwh,
+              forecast_load_kwh,forecast_pv_total_kwh FROM ems_gpt_slots
+              WHERE slot_start>=%s AND actual_recorded_at IS NULL ORDER BY slot_start""", (cutoff,))
+            coverage_rows = list(cur.fetchall())
+            coverage_issues = []
+            expected_slot = cutoff
+            for coverage_row in coverage_rows:
+                if coverage_row['slot_start'] != expected_slot:
+                    coverage_issues.append({'expected_slot':expected_slot, 'actual_slot':coverage_row['slot_start']})
+                missing = [key for key in ('price_buy_pln_kwh','price_sell_pln_kwh',
+                    'forecast_load_kwh','forecast_pv_total_kwh') if coverage_row.get(key) is None]
+                if missing:
+                    coverage_issues.append({'slot_start':coverage_row['slot_start'], 'missing':missing})
+                expected_slot = coverage_row['slot_start'] + timedelta(minutes=int(OPTIONS['slot_minutes']))
+            if not coverage_rows:
+                coverage_issues.append({'missing':'ALL_HORIZON_INPUTS'})
+            trace.add('INPUT_COVERAGE', 'ERROR' if coverage_issues else 'OK',
+                      rows=coverage_rows, issues=coverage_issues)
             cur.execute("""SELECT * FROM ems_gpt_slots
               WHERE slot_start>=%s AND actual_recorded_at IS NULL
                 AND price_source='PSE_API' AND price_buy_pln_kwh IS NOT NULL AND price_sell_pln_kwh IS NOT NULL
               ORDER BY slot_start""", (cutoff,))
             source = list(cur.fetchall())
+            attempt['candidate_rows'] = [dict(row) for row in source]
+            trace.add('INPUTS', 'OK' if source else 'MISSING', rows=source,
+                      parameters={key: OPTIONS.get(key) for key in (
+                          'battery_capacity_kwh', 'battery_min_soc_pct',
+                          'battery_charge_efficiency', 'battery_discharge_efficiency',
+                          'battery_max_power_kw', 'grid_import_limit_kw')},
+                      initial_soc_pct=soc_now)
             if not source:
                 raise RuntimeError("No open forecast rows for planner horizon")
             validate_pv_forecasts(source)
@@ -178,7 +223,8 @@ def build_planner(a: PlannerAdapters):
             normalized_source = [
                 validate_rce_market_window(row) for row in source
             ]
-            source = normalized_source
+            source = original_rce_windows(cur, normalized_source, OPTIONS)
+            trace.add('ORIGINAL_WINDOWS','OK',rows=source)
             cur.execute("""INSERT INTO ems_gpt_plan_runs
               (run_id,plan_day,run_type,stage_version,expected_slots,status,current_stage,created_at,updated_at)
               VALUES(%s,%s,%s,%s,%s,'RUNNING','RCE_RAW',NOW(6),NOW(6))""",
@@ -216,6 +262,10 @@ def build_planner(a: PlannerAdapters):
             hp_fallback_kw = hp_context["hp_fallback_kw"]
             planned_hp_kw_by_day = hp_context["planned_hp_kw_by_day"]
             hp_selected_indices = hp_context["hp_selected_indices"]
+            if (attempt.get('hp_schedule') or {}).get('status') == 'COMMITTED':
+                cur.execute("SELECT slot_start,heat_enabled FROM ems_gpt_hp_schedule WHERE slot_start>=%s", (cutoff,))
+                hp_windows = {row['slot_start']: bool(row['heat_enabled']) for row in cur.fetchall()}
+                hp_selected_indices = {i for i, row in enumerate(rows) if hp_windows.get(row['slot_start'], False)}
             hp_shortfalls = hp_context["hp_shortfalls"]
             component_rows = hp_context["component_rows"]
             previous_loads = hp_context["previous_loads"]
@@ -265,15 +315,8 @@ def build_planner(a: PlannerAdapters):
                 sale_constraints.append(reserve if work["sale_window"] else 100.0)
                 if index in hp_selected_indices:
                     sale_constraints[-1] = 100.0
-            if a.prepare_buy_windows is not None:
-                night_capacity = a.prepare_buy_windows(horizon_rows, cur, soc_now)
-                horizon_rows = night_capacity["rows"]
-                for index in night_capacity["changed_indices"]:
-                    row = horizon_rows[index]
-                    rows[index].update(buy_window=True, sale_window=False, market_window='BUY')
-                    cur.execute("""UPDATE ems_gpt_plan_stage_rows SET
-                      buy_window=1,sale_window=0,market_window='BUY'
-                      WHERE run_id=%s AND slot_start=%s""", (run_id, row['slot_start']))
+            trace.add('HP_ENERGY_INPUT', 'OK', rows=horizon_rows,
+                      selected_indices=hp_selected_indices, shortfalls=hp_shortfalls)
             planning_days = sorted({row.get("local_day") or row["slot_start"].date()
                                     for row in horizon_rows})
             terminal_day = planning_days[-1]
@@ -307,563 +350,54 @@ def build_planner(a: PlannerAdapters):
                     **terminal_history,
                 })
             terminal_soc = daily_terminal_soc[terminal_day]
-            safety_required_soc = replenishment_soc_requirements(
-                horizon_rows, capacity, reserve,
-                float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
-                eta_c, eta_d, max_kw, int(OPTIONS["slot_minutes"]), uncertainty_weight)
-            recovery = validate_recoverable_soc_requirements(
-                horizon_rows, safety_required_soc, soc_now, reserve, target_cap,
-                capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
-                max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
-                soc_step_pct=0.10, max_grid_import_kw=max_grid_import_kw)
-            safety_required_soc = recovery["required_soc_pcts"]
-            if recovery["relaxed_indices"]:
-                record_event("soc_safety_bridge_recovery", "planner", {
-                    "initial_soc_pct": round(float(soc_now), 3),
-                    "reserve_pct": round(float(reserve), 3),
-                    "recovery_buy_slot": str(
-                        horizon_rows[recovery["recovery_buy_index"]]["slot_start"]),
-                    "relaxed_slot_count": len(recovery["relaxed_indices"]),
-                    "relaxed_until_buy_indices": recovery["relaxed_indices"],
-                }, "WARNING")
+            # Mandatory minima are independent of BUY permissions. Reusing
+            # this immutable vector prevents a retry from weakening the plan.
+            safety_required_soc = [reserve] * len(horizon_rows)
             daily_required_soc, daily_close_indices = daily_close_soc_requirements(
                 horizon_rows, safety_required_soc, daily_terminal_soc)
-            target_contract = deterministic_soc_target_contract(
-                horizon_rows, safety_required_soc, daily_required_soc,
-                capacity, reserve, eta_c, eta_d, max_kw,
-                int(OPTIONS["slot_minutes"]), uncertainty_weight)
-            target_charge_caps = economic_buy_charge_caps(
-                horizon_rows, target_contract["charge_targets"], target_cap,
-                capacity, eta_c, eta_d, max_kw,
-                int(OPTIONS["slot_minutes"]))
-            target_recovery = validate_recoverable_soc_requirements(
-                horizon_rows, target_contract["raw_required"], soc_now, reserve,
-                target_cap, capacity_kwh=capacity, eta_c=eta_c, eta_d=eta_d,
-                max_power_kw=max_kw, slot_minutes=int(OPTIONS["slot_minutes"]),
-                soc_step_pct=0.10, max_grid_import_kw=max_grid_import_kw,
-                grid_charge_caps=target_charge_caps,
-                minimum_grid_charge_kwh=flow_threshold)
-            target_contract = preserve_target_contract_after_reachability(
-                target_contract, target_recovery, daily_close_indices)
-            target_contract = preserve_active_buy_window_target(
-                horizon_rows, active_plan_row, target_contract, target_cap, flow_threshold)
-            active_buy_commitment = target_contract["active_buy_target_preserved"]
-            active_buy_shortfall = False
-            if active_buy_commitment:
-                ceiling = target_recovery["reachable_soc_ceiling_pcts"][active_buy_commitment["end_index"]]
-                active_buy_shortfall = active_buy_commitment["execution_target_pct"] > ceiling + 1e-9
-                record_event("active_buy_target_preserved", "planner", {
-                    **active_buy_commitment, "physical_ceiling_pct": ceiling,
-                    "physical_shortfall_pct": max(0.0, active_buy_commitment["execution_target_pct"] - ceiling),
-                }, "WARNING" if active_buy_shortfall else "INFO")
-            if target_contract["charge_target_shortfalls"] or target_contract["over_capacity_indices"]:
-                record_event("soc_charge_target_physical_limit", "planner", {
-                    "over_capacity_slot_count": len(target_contract["over_capacity_indices"]),
-                    "maximum_raw_required_soc_pct": max(target_contract["raw_required"], default=reserve),
-                    "buy_windows": [
-                        {**shortfall,
-                         "slot_start": str(horizon_rows[shortfall["start_index"]]["slot_start"]),
-                         "slot_end": str(horizon_rows[shortfall["end_index"]]["slot_end"])}
-                        for shortfall in target_contract["charge_target_shortfalls"]],
-                    "action": "EXECUTABLE_BUY_CEILING_KEEP_REQUESTED_SHORTFALL",
-                }, "WARNING")
-            if target_recovery.get("unreachable_indices"):
-                unreachable = target_recovery["unreachable_indices"]
-                close_shortfalls = [
-                    {
-                        "slot_start": str(horizon_rows[index]["slot_start"]),
-                        "requested_soc_pct": round(
-                            target_contract["requested_required"][index], 3),
-                        "reachable_soc_pct": round(
-                            target_contract["reachable_required"][index], 3),
-                        "shortfall_pct": round(max(
-                            0.0,
-                            target_contract["requested_required"][index]
-                            - target_contract["reachable_required"][index]), 3),
-                    }
-                    for index in sorted(daily_close_indices & set(unreachable))
-                ]
-                record_event("soc_target_reachability", "planner", {
-                    "unreachable_slot_count": len(unreachable),
-                    "first_unreachable_slot": str(
-                        horizon_rows[unreachable[0]]["slot_start"]),
-                    "daily_close_shortfalls": close_shortfalls,
-                    "action": "PRESERVE_DAILY_TARGET_MAXIMIZE_REACHABLE_SOC",
-                    "battery_sales_disabled": bool(
-                        target_recovery.get("disable_battery_sales")),
-                }, "WARNING")
-            terminal_soc = max(terminal_soc, target_contract["required"][-1])
-            record_event("replenishment_soc_safety", "planner", {
-                "minimum_soc_pct": reserve,
-                "buffer_pp": float(OPTIONS.get("soc_replenishment_buffer_pct", 2.0)),
-                "maximum_required_soc_pct": max(safety_required_soc),
-                "historical_target_applies": "DAILY_CLOSE_ONLY",
-            })
-            audit_stage(cur,run_id,"WINDOW_CANDIDATES","OK",len(rows),"pass 1: full horizon")
-            audit_stage(cur,run_id,"LOAD","OK",len(rows),"pass 2: native and controllable load")
-            audit_stage(cur,run_id,"PV","OK",len(rows),"pass 3: corrected PV balance")
-            ensure_deadline("PV")
-            # Derive SOC requirements from load, PV and RCE windows before
-            # running any dispatch optimization. The seed below is constrained
-            # by that immutable contract and has battery sales disabled.
+            policy = solve_buy_policy(horizon_rows,
+                initial_soc_pct=soc_now, capacity_kwh=capacity, reserve_pct=reserve,
+                eta_c=eta_c, eta_d=eta_d, degradation=degradation,
+                min_margin=min_margin, max_power_kw=max_kw,
+                slot_minutes=int(OPTIONS['slot_minutes']),
+                terminal_soc_pct=terminal_soc, required_soc_pcts=daily_required_soc,
+                sale_floor_pcts=sale_constraints, max_grid_import_kw=max_grid_import_kw,
+                soc_step_pct=0.1, max_soc_pct=target_cap, trace=trace,
+                checkpoint=ensure_deadline, optimizer=solve_energy_horizon,
+                budget_check=policy_budget_check)
+            horizon_rows = policy['rows']
+            optimization = policy['optimization']
+            required_soc = policy['required']
+            targets = policy['targets']
+            deadline_targets = list(targets)
             optimized_floors = list(sale_constraints)
-            internal_soc_step=0.10
-            # Start from the physically recoverable daily contract. Using the
-            # unbounded historical target here can trigger a fallback that
-            # silently replaces today's close goal with the technical reserve.
-            enforced_daily_required = list(target_contract["required"])
-            waived_daily_closes = set()
-            battery_sales_enabled = not bool(recovery.get("disable_battery_sales")) and not bool(
-                target_recovery.get("disable_battery_sales")) and not active_buy_shortfall
-            if recovery.get("capacity_limited_indices"):
-                record_event("soc_bridge_limited_to_physical_capacity", "planner", {
-                    "physical_soc_cap_pct": 100.0,
-                    "limit_reason": ("UNREACHABLE_REQUIRED_SOC"
-                                     if recovery.get("unreachable_indices")
-                                     else "PHYSICAL_CAPACITY"),
-                    "unreachable_slot_count": len(recovery.get("unreachable_indices") or []),
-                    "limited_slot_count": len(recovery["capacity_limited_indices"]),
-                    "first_limited_slot": str(
-                        horizon_rows[recovery["capacity_limited_indices"][0]]["slot_start"]),
-                    "last_limited_slot": str(
-                        horizon_rows[recovery["capacity_limited_indices"][-1]]["slot_start"]),
-                    "action": "BATTERY_SALES_DISABLED_RESIDUAL_NATIVE_LOAD_TO_GRID",
-                }, "WARNING")
-            terminal_shortfall_allowed = False
-            target_due_indices = set(target_contract["buy_due_indices"])
-            charge_targets = list(target_contract["charge_targets"])
-            grid_charge_caps = economic_buy_charge_caps(
-                horizon_rows, charge_targets, target_cap, capacity, eta_c,
-                eta_d, max_kw, int(OPTIONS["slot_minutes"]))
-            enforced_daily_required = list(target_contract["required"])
-            while True:
-                try:
-                    target_seed = optimize_energy_horizon(
-                        horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,
-                        degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
-                        optimized_floors,terminal_soc,internal_soc_step,target_cap,
-                        minimum_soc_targets=charge_targets,
-                        hard_target_indices=set(),
-                        target_due_indices=target_due_indices,
-                        required_soc_pcts=enforced_daily_required,
-                        battery_sales_enabled=False,
-                        allow_terminal_shortfall=terminal_shortfall_allowed,
-                        max_grid_import_kw=max_grid_import_kw,
-                        grid_charge_caps=grid_charge_caps,
-                        minimum_grid_charge_kwh=flow_threshold,
-                        allow_buy_target_shortfall=True)
-                    break
-                except RuntimeError as exc:
-                    # A BUY due target can be infeasible even though the
-                    # relaxed continuous SOC bridge is feasible. Do not retry
-                    # by lowering the target or publishing a misleading plan.
-                    # Record the physical shortfall and preserve the last
-                    # accepted production plan (the run transaction rolls back).
-                    if str(exc).startswith("BUY_TARGET_UNREACHABLE:"):
-                        parts = str(exc).split(":")
-                        details = dict(part.split("=", 1) for part in parts[1:]
-                                       if "=" in part)
-                        failed_index = int(details["slot"])
-                        record_event("buy_target_unreachable", "planner", {
-                            "slot_start": str(horizon_rows[failed_index]["slot_start"]),
-                            "requested_soc_pct": float(details["requested"]),
-                            "reachable_soc_pct": float(details["reachable"]),
-                            "shortfall_pct": round(
-                                float(details["requested"]) -
-                                float(details["reachable"]), 3),
-                            "action": "KEEP_LAST_ACCEPTED_PLAN_REVIEW_BUY_WINDOWS",
-                            "battery_sales_disabled": True,
-                            "rce_windows_unchanged": True,
-                        }, "ERROR")
-                        raise RuntimeError(
-                            "BUY_TARGET_UNREACHABLE_PRESERVED_PLAN:"
-                            f"slot={horizon_rows[failed_index]['slot_start']}:"
-                            f"requested={details['requested']}:"
-                            f"reachable={details['reachable']}"
-                        ) from exc
-                    terminal_failure = (
-                        str(exc) == "No feasible terminal SOC state for complete horizon"
-                    )
-                    if terminal_failure:
-                        if battery_sales_enabled:
-                            battery_sales_enabled = False
-                            record_event("battery_sales_disabled_for_terminal_soc", "planner", {
-                                "terminal_day": str(terminal_day),
-                                "requested_soc_pct": terminal_soc,
-                                "reason": str(exc),
-                            }, "WARNING")
-                            continue
-                        recovery_action, recovered_terminal = terminal_soc_recovery(
-                            terminal_soc, safety_required_soc[-1], battery_sales_enabled,
-                            current_day=terminal_day == local_now().date())
-                        if recovery_action == "RELAX_HISTORICAL_TARGET":
-                            record_event("historical_terminal_soc_relaxed_for_feasibility", "planner", {
-                                "terminal_day": str(terminal_day),
-                                "requested_soc_pct": terminal_soc,
-                                "safety_soc_pct": safety_required_soc[-1],
-                                "reason": str(exc),
-                            }, "WARNING")
-                            terminal_soc = recovered_terminal
-                            continue
-                        if terminal_day != local_now().date():
-                            raise
-                        terminal_shortfall_allowed = True
-                        record_event("current_day_terminal_soc_best_effort", "planner", {
-                            "terminal_day": str(terminal_day),
-                            "requested_soc_pct": terminal_soc,
-                            "reason": str(exc),
-                        }, "WARNING")
-                        continue
-                    prefix = "No feasible SOC state at horizon slot "
-                    if not str(exc).startswith(prefix):
-                        raise
-                    failed_index = int(str(exc)[len(prefix):])
-                    if battery_sales_enabled:
-                        battery_sales_enabled = False
-                        record_event("battery_sales_disabled_for_daily_soc", "planner", {
-                            "slot_start": str(horizon_rows[failed_index]["slot_start"]),
-                            "requested_soc_pct": daily_required_soc[failed_index],
-                            "reason": str(exc),
-                        }, "WARNING")
-                        continue
-                    requested_required = enforced_daily_required[failed_index]
-                    reachable_required = target_contract["reachable_required"][failed_index]
-                    recoverable_required = relax_soc_requirement_to_reachable(
-                        requested_required, reachable_required, reserve)
-                    if recoverable_required >= requested_required - 1e-9:
-                        raise RuntimeError(f"SOC_SAFETY_BRIDGE_UNREACHABLE:{failed_index}") from exc
-                    enforced_daily_required[failed_index] = recoverable_required
-                    is_daily_close = failed_index in daily_close_indices
-                    daily_close_indices.discard(failed_index)
-                    waived_daily_closes.add(failed_index)
-                    record_event("soc_bridge_requirement_unreachable", "planner", {
-                        "slot_start": str(horizon_rows[failed_index]["slot_start"]),
-                        "requested_soc_pct": round(requested_required, 3),
-                        "safety_soc_pct": round(safety_required_soc[failed_index], 3),
-                        "reachable_soc_pct": round(recoverable_required, 3),
-                        "shortfall_pct": round(max(
-                            0.0, requested_required - recoverable_required), 3),
-                        "daily_close": is_daily_close,
-                        "reason": str(exc),
-                    }, "WARNING")
-            if target_seed.get("buy_target_shortfalls"):
-                # The seed optimizer only records a shortfall when it can still
-                # satisfy the mandatory SOC floor at that slot. Preserve that
-                # safe path, lower only the optional BUY target to the best
-                # reachable SOC, and disable sales so a later export cannot
-                # undo the recovery path.
-                shortfalls = target_seed["buy_target_shortfalls"]
-                for shortfall in shortfalls:
-                    index = int(shortfall["index"])
-                    required_pct = float(enforced_daily_required[index])
-                    achieved_pct = float(shortfall["achieved_soc_pct"])
-                    if achieved_pct + 1e-9 < required_pct:
-                        raise RuntimeError(
-                            f"BUY_TARGET_SHORTFALL_BELOW_REQUIRED_SOC:{index}")
-                    charge_targets[index] = max(
-                        required_pct,
-                        min(float(charge_targets[index]), achieved_pct))
-                target_contract["charge_targets"] = list(charge_targets)
-                grid_charge_caps = economic_buy_charge_caps(
-                    horizon_rows, charge_targets, target_cap, capacity,
-                    eta_c, eta_d, max_kw, int(OPTIONS["slot_minutes"]))
-                if battery_sales_enabled:
-                    battery_sales_enabled = False
-                    record_event("battery_sales_disabled_for_buy_target_recovery", "planner", {
-                        "reason": "BEST_REACHABLE_SOC_TARGET",
-                        "slots": [item["index"] for item in shortfalls],
-                    }, "WARNING")
-                record_event("buy_charge_target_shortfall_best_effort", "planner", {
-                    "run_id": run_id, "slots": shortfalls,
-                    "effective_targets_pct": charge_targets,
-                    "action": "KEEP_REQUIRED_SOC_PUBLISH_BEST_REACHABLE_PLAN",
-                }, "WARNING")
-            if target_seed.get("terminal_shortfall_pct", 0.0) > 1e-9:
-                requested_terminal_soc = terminal_soc
-                terminal_soc = float(target_seed["achieved_terminal_soc_pct"])
-                record_event("current_day_terminal_soc_unreachable", "planner", {
-                    "terminal_day": str(terminal_day),
-                    "requested_soc_pct": requested_terminal_soc,
-                    "achieved_soc_pct": terminal_soc,
-                    "shortfall_pct": target_seed["terminal_shortfall_pct"],
-                    "battery_sales_enabled": battery_sales_enabled,
-                }, "WARNING")
-
-            def optimize_remaining_pass(
-                    pass_name: str, floors: list[float],
-                    minimum_targets: list[float] | None = None,
-                    hard_indices: set[int] | None = None,
-                    due_indices: set[int] | None = None,
-                    required_pcts: list[float] | None = None) -> dict:
-                """Apply the terminal-SOC recovery contract to every later pass."""
-                nonlocal battery_sales_enabled, terminal_shortfall_allowed, terminal_soc
-                requested_terminal_soc = terminal_soc
-                target_commitment_fallback_level = 0
-                # Never downgrade a failed BUY commitment into a lower target.
-                # Keep the previously accepted plan if no physically feasible
-                # allocation exists under the immutable RCE permissions.
-                original_import_caps = (None if minimum_targets is None
-                                        else list(minimum_targets))
-                original_required_pcts = (None if required_pcts is None
-                                          else list(required_pcts))
-                while True:
-                    try:
-                        result = optimize_energy_horizon(
-                            horizon_rows,soc_now,capacity,reserve,eta_c,eta_d,
-                            degradation,min_margin,max_kw,int(OPTIONS["slot_minutes"]),
-                            floors,terminal_soc,internal_soc_step,target_cap,
-                            minimum_targets,hard_indices,due_indices,required_pcts,
-                            battery_sales_enabled=battery_sales_enabled,
-                            allow_terminal_shortfall=terminal_shortfall_allowed,
-                            max_grid_import_kw=max_grid_import_kw,
-                            grid_charge_caps=grid_charge_caps,
-                            minimum_grid_charge_kwh=flow_threshold,
-                            allow_buy_target_shortfall=True)
-                        break
-                    except RuntimeError as exc:
-                        slot_error_prefix = "No feasible SOC state at horizon slot "
-                        # A failed SOC bridge must not be repaired by removing
-                        # BUY deadlines or lowering the required energy.
-                        # This preserves the last accepted plan rather than
-                        # publishing a horizon that buys too little.
-                        if (pass_name == "TARGET_COMMITMENT"
-                                and battery_sales_enabled
-                                and str(exc).startswith(slot_error_prefix)):
-                            battery_sales_enabled = False
-                            record_event("battery_sales_disabled_for_target_commitment", "planner", {
-                                "stage": pass_name,
-                                "reason": str(exc),
-                            }, "WARNING")
-                            continue
-                        if str(exc) != "No feasible terminal SOC state for complete horizon":
-                            raise
-                        if battery_sales_enabled:
-                            battery_sales_enabled = False
-                            record_event("battery_sales_disabled_for_terminal_soc", "planner", {
-                                "stage": pass_name,
-                                "terminal_day": str(terminal_day),
-                                "requested_soc_pct": terminal_soc,
-                                "reason": str(exc),
-                            }, "WARNING")
-                            continue
-                        recovery_action, recovered_terminal = terminal_soc_recovery(
-                            terminal_soc, safety_required_soc[-1], battery_sales_enabled,
-                            current_day=terminal_day == local_now().date())
-                        if recovery_action == "RELAX_HISTORICAL_TARGET":
-                            record_event("historical_terminal_soc_relaxed_for_feasibility", "planner", {
-                                "stage": pass_name,
-                                "terminal_day": str(terminal_day),
-                                "requested_soc_pct": terminal_soc,
-                                "safety_soc_pct": safety_required_soc[-1],
-                                "reason": str(exc),
-                            }, "WARNING")
-                            terminal_soc = recovered_terminal
-                            continue
-                        if terminal_day != local_now().date():
-                            raise
-                        terminal_shortfall_allowed = True
-                        record_event("current_day_terminal_soc_best_effort", "planner", {
-                            "stage": pass_name,
-                            "terminal_day": str(terminal_day),
-                            "requested_soc_pct": terminal_soc,
-                            "reason": str(exc),
-                        }, "WARNING")
-                if result.get("terminal_shortfall_pct", 0.0) > 1e-9:
-                    terminal_soc = float(result["achieved_terminal_soc_pct"])
-                    record_event("current_day_terminal_soc_unreachable", "planner", {
-                        "stage": pass_name,
-                        "terminal_day": str(terminal_day),
-                        "requested_soc_pct": requested_terminal_soc,
-                        "achieved_soc_pct": terminal_soc,
-                        "shortfall_pct": result["terminal_shortfall_pct"],
-                        "battery_sales_enabled": battery_sales_enabled,
-                    }, "WARNING")
-                # Keep the post-dispatch assertions aligned with recovery.
-                # A retry can remove optional deadlines locally while keeping
-                # the import cap; publishing against the original set would
-                # turn that deliberate recovery into SOC_TARGET_NOT_REACHED.
-                result["effective_target_due_indices"] = set(due_indices or ())
-                result["effective_required_soc_pcts"] = list(
-                    required_pcts if required_pcts is not None
-                    else [reserve] * len(horizon_rows))
-                return result
-            # Convert the immutable TOU baselines into sale-only safety floors.
-            # Iterate once after applying them because a permitted 5/6 bridge
-            # override is valid only while the resulting plan retains its real
-            # near-term battery BUY.
-            for _ in range(2):
-                guarded_floors = tou_sale_safety_floors(
-                    horizon_rows, tou_by_index, target_seed["flows"],
-                    capacity, reserve, eta_d, uncertainty_weight,
-                    int(OPTIONS.get("tou_bridge_override_max_minutes", 180)),
-                    int(OPTIONS["slot_minutes"]), enforced_daily_required)
-                if all(abs(a - b) < 1e-9
-                       for a, b in zip(guarded_floors, optimized_floors)):
-                    break
-                optimized_floors = guarded_floors
-                target_seed = optimize_remaining_pass(
-                    "TOU_GUARD_ITERATION", optimized_floors,
-                    required_pcts=enforced_daily_required)
-            final_guarded = tou_sale_safety_floors(
-                horizon_rows, tou_by_index, target_seed["flows"],
-                capacity, reserve, eta_d, uncertainty_weight,
-                int(OPTIONS.get("tou_bridge_override_max_minutes", 180)),
-                int(OPTIONS["slot_minutes"]), enforced_daily_required)
-            if any(abs(a - b) >= 1e-9
-                   for a, b in zip(final_guarded, optimized_floors)):
-                # A BUY must never validate its own relaxation circularly. If
-                # the two-pass result is not stable, retain the stricter floor.
-                optimized_floors = [max(a, b)
-                                    for a, b in zip(final_guarded, optimized_floors)]
-                target_seed = optimize_remaining_pass(
-                    "TOU_GUARD_FINAL", optimized_floors,
-                    required_pcts=enforced_daily_required)
-            for sale_guard_attempt in range(2):
-                commitment = target_contract
-                required_soc = list(enforced_daily_required)
-                charge_targets = list(target_contract["charge_targets"])
-                # Requested close goals remain in diagnostics. Do not restore
-                # an unreachable BUY ceiling after relaxing a daily floor.
-                target_due_indices = set(target_contract["buy_due_indices"])
-                selected_buy_indices = set(target_contract["selected_buy_indices"])
-                optimization=optimize_remaining_pass(
-                    "TARGET_COMMITMENT", optimized_floors, charge_targets, set(),
-                    target_due_indices, required_soc)
-                target_due_indices = active_soc_target_deadlines(
-                    optimization, target_due_indices)
-                sell_indices = {
-                    index for index, flow in enumerate(optimization["flows"])
-                    if float(flow.get("battery_sell_kwh") or 0.0) > flow_threshold
-                }
-                unbacked_load_indices = voluntary_load_without_charging_indices(
-                    horizon_rows, optimization["flows"],
-                    technical_threshold, flow_threshold)
-                if not sell_indices:
-                    voluntary_import = bool(unbacked_load_indices)
-                    if voluntary_import and battery_sales_enabled:
-                        # A grid supplied native load is an allowed exception
-                        # only when it protects energy for a later sale. If the
-                        # selected route has no sale, replan with that exception
-                        # disabled instead of publishing a hidden house import.
-                        battery_sales_enabled = False
-                        target_seed = optimize_remaining_pass(
-                            "GRID_LOAD_WITHOUT_SALE_GUARD", optimized_floors,
-                            required_pcts=enforced_daily_required)
-                        ensure_deadline("GRID_LOAD_WITHOUT_SALE_GUARD")
-                        continue
-                    if voluntary_import:
-                        record_event("voluntary_native_import_rejected", "planner", {
-                            "slots": [
-                                {"slot_start": str(horizon_rows[index]["slot_start"]),
-                                 "buy_window": horizon_rows[index].get("buy_window"),
-                                 "sale_window": horizon_rows[index].get("sale_window"),
-                                 "grid_charge_kwh": optimization["flows"][index].get("grid_charge_kwh"),
-                                 "voluntary_grid_load_kwh": optimization["flows"][index].get("voluntary_grid_load_kwh")}
-                                for index in sorted(unbacked_load_indices)],
-                            "charge_threshold_kwh": flow_threshold,
-                            "technical_threshold_kwh": technical_threshold,
-                        }, "ERROR")
-                        raise RuntimeError("VOLUNTARY_GRID_LOAD_WITHOUT_SALE")
-                    break
-                voluntary_without_later_sale = any(
-                    index in unbacked_load_indices
-                    and not any(sale_index > index for sale_index in sell_indices)
-                    for index, flow in enumerate(optimization["flows"])
-                )
-                if voluntary_without_later_sale:
-                    battery_sales_enabled = False
-                    target_seed = optimize_remaining_pass(
-                        "GRID_LOAD_AFTER_SALE_GUARD", optimized_floors,
-                        required_pcts=enforced_daily_required)
-                    ensure_deadline("GRID_LOAD_AFTER_SALE_GUARD")
-                    continue
-                try:
-                    no_sale_optimization = optimize_energy_horizon(
-                        horizon_rows, soc_now, capacity, reserve, eta_c, eta_d,
-                        degradation, min_margin, max_kw, int(OPTIONS["slot_minutes"]),
-                        optimized_floors, terminal_soc, internal_soc_step, target_cap,
-                        charge_targets, set(), target_due_indices, required_soc,
-                        battery_sales_enabled=False,
-                        allow_terminal_shortfall=terminal_shortfall_allowed,
-                        max_grid_import_kw=max_grid_import_kw,
-                        grid_charge_caps=grid_charge_caps,
-                        minimum_grid_charge_kwh=flow_threshold,
-                        allow_buy_target_shortfall=True)
-                    sale_assessment = assess_sale_plan_against_no_sale(
-                        optimization, no_sale_optimization, horizon_rows,
-                        min_margin, capacity, eta_c, technical_threshold,
-                        eta_d=eta_d, degradation=degradation)
-                except RuntimeError as exc:
-                    sale_assessment = {"eligible": False, "reason": str(exc)}
-                record_event("battery_sale_counterfactual", "planner", {
-                    "run_id": run_id, **sale_assessment,
-                    "comparison": "same_forecast_and_terminal_target",
-                }, "INFO" if sale_assessment["eligible"] else "WARNING")
-                if sale_assessment["eligible"]:
-                    break
-                battery_sales_enabled = False
-                target_seed = optimize_remaining_pass(
-                    "SALE_GUARD_REPLAN", optimized_floors,
-                    required_pcts=enforced_daily_required)
-                ensure_deadline("SALE_GUARD_REPLAN")
-            else:
-                raise RuntimeError("SALE_GUARD_REPLAN_EXHAUSTED")
-            effective_required = optimization.get("effective_required_soc_pcts")
-            if effective_required is not None:
-                required_soc = effective_required_soc_for_dispatch(
-                    enforced_daily_required, effective_required)
-            targets=list(optimization.get("effective_target_pcts",charge_targets))
-            unreachable_buy_targets = [
-                {
-                    "slot_start": str(horizon_rows[index]["slot_start"]),
-                    "requested_soc_pct": round(float(charge_targets[index]), 3),
-                    "achievable_soc_pct": round(float(optimization["flows"][index]["soc_end_pct"]), 3),
-                    "shortfall_pct": round(max(
-                        0.0, float(charge_targets[index]) - float(optimization["flows"][index]["soc_end_pct"])), 3),
-                    "planned_import_kwh": round(float(
-                        optimization["flows"][index].get("grid_charge_kwh") or 0.0), 3),
-                }
-                for index in sorted(target_due_indices)
-                if float(optimization["flows"][index]["soc_end_pct"]) + 0.01 < float(charge_targets[index])
-            ]
-            if unreachable_buy_targets:
-                record_event("buy_soc_target_shortfall", "planner", {
-                    "slots": unreachable_buy_targets,
-                    "action": "REJECT_PLAN_PRESERVE_LAST_PUBLISHED",
-                }, "ERROR")
-                raise RuntimeError("BUY_TARGET_UNREACHABLE_AFTER_OPTIMIZATION")
-            validated_deadline_targets = validated_buy_deadline_targets(
-                optimization, targets, required_soc, battery_sales_enabled)
-            target_due_indices = validate_active_soc_target_deadlines(
-                optimization, target_due_indices, validated_deadline_targets)
-            physical_buy_audit = validate_physical_buy_commitments(
-                horizon_rows, optimization["flows"], target_due_indices,
-                validated_deadline_targets, max_kw, int(OPTIONS["slot_minutes"]),
-                capacity, eta_c)
-            record_event("buy_physical_commitment_validated", "planner", {
-                "run_id": run_id, **physical_buy_audit,
-            })
-            deadline_targets = list(validated_deadline_targets)
-            targets = planned_buy_execution_targets(
-                horizon_rows, optimization["flows"], targets, flow_threshold)
-            record_event("economic_buy_targets", "planner", {
-                "run_id": run_id,
-                "optional_caps_pct": grid_charge_caps,
-                "execution_targets_pct": targets,
-                "required_deadline_targets_pct": deadline_targets,
-                "policy": "CHEAPER_BUY_REPLACES_DEARER_BUY_SHARED_RUN_TARGET",
-            })
-            audit_stage(cur,run_id,"TARGET_COMMITMENT","OK",len(rows),
-                        f"deterministic SOC contracts; selected_buy_slots={len(selected_buy_indices)}")
-            record_event("daily_plan_variant_selected","planner",{
-                "run_id":run_id,"terminal_soc_pct":round(terminal_soc,3),
-                "selected":"DETERMINISTIC_SOC_CONTRACT_V4",
-                "target_seed_objective_pln":float(target_seed["objective_pln"]),
-                "final_dispatch_objective_pln":float(optimization["objective_pln"]),
-                "target_source":"FORECAST_LOAD_PV_AND_RCE_WINDOWS",
-            })
-            ensure_deadline("TARGET_COMMITMENT")
-            ensure_deadline("DISPATCH")
+            target_due_indices = {i for i,f in enumerate(optimization['flows'])
+                                  if f['grid_charge_kwh'] > flow_threshold}
+            commitment = {
+                'due':[r.get('slot_end') or r['slot_start'] for r in horizon_rows],
+                'source':['ECONOMIC_FULL_HORIZON' for _ in horizon_rows],
+                'reserved_pv_kwh':[0.0]*len(horizon_rows)}
+            for i,row in enumerate(horizon_rows):
+                rows[i].update(row)
+                cur.execute("""UPDATE ems_gpt_plan_stage_rows SET buy_window=%s,
+                  sale_window=%s,market_window=%s,grid_window=%s,forecast_load_kwh=%s,
+                  forecast_pv_total_kwh=%s,forecast_pv1_kwh=%s,forecast_pv2_kwh=%s,forecast_heat_pump_load_kwh=%s
+                  WHERE run_id=%s AND slot_start=%s""",
+                  (row['buy_window'],row['sale_window'],row['market_window'],
+                   'NO_BUY' if row['sale_window'] else 'BUY_ALLOWED' if row['buy_window'] else 'NEUTRAL',
+                   row['forecast_load_kwh'],row['forecast_pv_total_kwh'],
+                   float(row.get('forecast_pv1_kwh') or 0)*(1-0.10*fixed_forecast_correction),
+                   float(row.get('forecast_pv2_kwh') or 0)*(1-0.10*fixed_forecast_correction),
+                   row['forecast_heat_pump_load_kwh'],run_id,row['slot_start']))
+            for stage in ('WINDOW_CANDIDATES','LOAD','PV','TARGET_COMMITMENT'):
+                audit_stage(cur,run_id,stage,'OK',len(rows),
+                            'PRIMARY_BUY_THEN_ECONOMIC_NEUTRAL; immutable requirements')
+            record_event('economic_buy_policy_selected','planner',{
+                'run_id':run_id,'expanded':policy['expanded'],
+                'original_buy_indices':policy['original_buy_indices'],
+                'promoted_indices':sorted(policy['promoted_indices']),
+                'objective_pln':optimization['objective_pln'],
+                'required_soc_pcts':required_soc,'execution_targets_pct':targets})
             attempt["candidate_rows"] = [
                 {
                     "slot_start": horizon_rows[index].get("slot_start"),
@@ -980,8 +514,7 @@ def build_planner(a: PlannerAdapters):
                 pv=float(row.get("forecast_pv_total_kwh") or 0)
                 native_load=float(row.get("forecast_load_kwh") or 0)
                 row_day = row.get("local_day") or row["slot_start"].date()
-                hp_load = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25
-                           if i in hp_selected_indices else 0.0)
+                hp_load = float(row.get('forecast_heat_pump_load_kwh') or 0.0)
                 load=native_load+hp_load
                 pv_surplus=max(0.0,pv-load)
                 pv_to_bat=item["pv_to_bat_kwh"]
@@ -1055,6 +588,7 @@ def build_planner(a: PlannerAdapters):
             ensure_deadline("VALIDATE")
             cur.execute("""UPDATE ems_gpt_slots p JOIN ems_gpt_plan_stage_rows s
               ON s.slot_start=p.slot_start AND s.run_id=%s SET
+              p.buy_window=s.buy_window,p.sale_window=s.sale_window,p.market_window=s.market_window,
               p.forecast_pv1_kwh=s.forecast_pv1_kwh,p.forecast_pv2_kwh=s.forecast_pv2_kwh,
               p.forecast_pv_total_kwh=s.forecast_pv_total_kwh,p.forecast_load_kwh=s.forecast_load_kwh,
               p.forecast_heat_pump_load_kwh=s.forecast_heat_pump_load_kwh,
@@ -1099,15 +633,36 @@ def build_planner(a: PlannerAdapters):
             "failed_stage": "STARTUP",
             "candidate_rows": [],
         }
+        trace = PlannerTrace(attempt['attempt_id'])
+        attempt['trace'] = trace
+        result, failure = None, None
         try:
-            return _run_planner(run_type, attempt)
+            # Separate connection/commit, including the active slot. This runs
+            # before all price, forecast and SOC checks in the energy planner.
+            try:
+                attempt['hp_schedule'] = persist_independent_hp_schedule(
+                    db, local_now().replace(tzinfo=None), slot_start().replace(tzinfo=None),
+                    OPTIONS, attempt['attempt_id'], record_event)
+                trace.add('HP_COMFORT', 'OK', details=attempt['hp_schedule'])
+            except Exception as hp_error:
+                attempt['hp_schedule'] = {'status': 'REFRESH_FAILED', 'error': str(hp_error)}
+                trace.add('HP_COMFORT', 'ERROR', details=attempt['hp_schedule'])
+                record_event('hp_independent_schedule_failed', 'planner',
+                             attempt['hp_schedule'], 'ERROR')
+            result = _run_planner(run_type, attempt)
+            return result
         except Exception as exc:
+            failure = exc
+            import traceback
+            attempt["traceback"] = traceback.format_exc()
+            trace.add(attempt['failed_stage'], 'ERROR', error=str(exc))
             reason = str(exc)[:4000]
             attempt["failure_reason"] = reason
             attempt["status"] = "REJECTED"
             tokens = reason.split(":")
-            failed_index = None
-            if len(tokens) > 1 and tokens[1].isdigit():
+            evidence = getattr(exc,'planner_evidence',None) or getattr(exc.__cause__,'planner_evidence',{})
+            failed_index = evidence.get('slot_index')
+            if failed_index is None and len(tokens) > 1 and tokens[1].isdigit():
                 failed_index = int(tokens[1])
             candidates = attempt.get("candidate_rows") or []
             failed_slot = (
@@ -1142,6 +697,23 @@ def build_planner(a: PlannerAdapters):
                     "original_failure": reason[:1000],
                 }, "ERROR")
             raise
+        finally:
+            status = 'REJECTED' if failure else (
+                'WAITING' if (result or {}).get('status') == 'WAITING' else 'PUBLISHED')
+            payload = trace.payload(attempt, status, result, failure)
+            try:
+                persist_trace(db, payload)
+                record_event('planner_trace_saved', 'planner', {
+                    'attempt_id':attempt['attempt_id'], 'run_id':payload.get('run_id'),
+                    'status':status, 'complete':payload['complete'],
+                    'missing_stages':payload['missing_stages'],
+                    'failed_stage':payload.get('failed_stage'),
+                    'error':payload.get('error'), 'hp':payload.get('hp')},
+                    'INFO' if payload['complete'] else 'WARNING')
+            except Exception as trace_error:
+                record_event('planner_trace_persist_failed', 'planner', {
+                    'attempt_id': attempt['attempt_id'], 'error': str(trace_error),
+                    'original_error': str(failure) if failure else None}, 'ERROR')
 
     return SimpleNamespace(
         optimize_hp_heating_slots=optimize_hp_heating_slots,

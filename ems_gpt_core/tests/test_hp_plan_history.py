@@ -26,6 +26,7 @@ class HeatPumpPlanHistoryTests(unittest.TestCase):
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("CREATE TABLE ems_gpt_slots "
                           "(slot_start TEXT, plan_published INTEGER, heat_pump_window INTEGER)")
+        self.conn.execute("CREATE TABLE ems_gpt_hp_schedule (slot_start TEXT, heat_enabled INTEGER)")
         self.addCleanup(self.conn.close)
         self.start = datetime(2026, 10, 1)
         self.cutoff = datetime(2026, 10, 1, 7, 15)

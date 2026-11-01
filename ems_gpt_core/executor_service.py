@@ -681,8 +681,7 @@ def build_executor(a: ExecutorAdapters):
             if planner_failure:
                 # Do not execute stale PPD from the last published plan after
                 # the planner/PPD has failed. Stage explicit OFF commands for
-                # flexible loads and HP_HEAT_DHW (whose OFF script selects
-                # DHW-only while keeping the heat pump powered).
+                # flexible PV loads. HP follows its independent comfort schedule.
                 cur.execute("SELECT slot_id FROM ems_gpt_slots WHERE slot_start=%s LIMIT 1",
                             (start,))
                 slot = cur.fetchone() or {}
@@ -694,7 +693,7 @@ def build_executor(a: ExecutorAdapters):
                     return {"status": "PLANNER_FAILURE_FAIL_SAFE_SLOT_MISSING", "staged": 0}
                 cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',
                   acknowledgement_json=%s
-                  WHERE slot_start=%s AND process_name IN ('PV_CWU','PV_EV','HP_HEAT_DHW')
+                  WHERE slot_start=%s AND process_name IN ('PV_CWU','PV_EV')
                     AND decision='ON' AND status='READY_FOR_CONNECTOR'""",
                   (json.dumps({"reason": "PLANNER_FAILURE_FAIL_SAFE"}), start))
                 plan_version = "PLANNER_FAIL_SAFE:" + start.strftime("%Y%m%dT%H%M")
@@ -706,7 +705,7 @@ def build_executor(a: ExecutorAdapters):
                     "planner_failure": str(planner_failure)[:500],
                     "fail_safe": True,
                 })
-                for process in ("PV_CWU", "PV_EV", "HP_HEAT_DHW"):
+                for process in ("PV_CWU", "PV_EV"):
                     cur.execute("""INSERT IGNORE INTO ems_gpt_core_commands
                       (command_id,slot_start,slot_id,process_name,decision,plan_version,
                        created_at,expires_at,source,status,safety_json)
@@ -714,6 +713,44 @@ def build_executor(a: ExecutorAdapters):
                       (str(uuid.uuid4()), start, slot_id, process, plan_version, end,
                        "DRY_RUN" if dry_run else "READY_FOR_CONNECTOR", safety))
                     staged += max(0, int(cur.rowcount))
+                # Comfort has its own committed schedule, independent of BUY/SELL.
+                cur.execute("""SELECT * FROM ems_gpt_hp_schedule
+                  WHERE slot_start=%s LIMIT 1""", (start,))
+                hp = cur.fetchone() or {}
+                if 'heat_enabled' in hp:
+                    cur.execute("""SELECT requested_state,override_id
+                      FROM ems_gpt_core_process_overrides
+                      WHERE process_name='HP_HEAT_DHW' AND status='ACTIVE'
+                        AND valid_from<=%s AND valid_until>%s LIMIT 1""", (now, now))
+                    override = cur.fetchone() or {}
+                    requested = override.get('requested_state')
+                    heat = (True if requested == 'FORCE_ON' else False
+                            if requested == 'FORCE_OFF' else database_bool(hp['heat_enabled'], 'heat_enabled'))
+                    hp_decision = 'ON' if heat else 'OFF'
+                    hp_version = str(hp['schedule_id'])+':'+hp_decision+':'+str(override.get('override_id') or 'AUTO')
+                    hp_safety = json.loads(safety)
+                    hp_safety.update(independent_hp=True, override_id=override.get('override_id'))
+                    cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',
+                      acknowledgement_json=%s WHERE slot_start=%s
+                      AND process_name='HP_HEAT_DHW' AND status='READY_FOR_CONNECTOR'
+                      AND plan_version<>%s""",
+                      (json.dumps({'reason':'INDEPENDENT_HP_SCHEDULE'}), start, hp_version))
+                    cur.execute("""INSERT IGNORE INTO ems_gpt_core_commands
+                      (command_id,slot_start,slot_id,process_name,decision,plan_version,
+                       created_at,expires_at,source,status,safety_json)
+                      VALUES(%s,%s,%s,'HP_HEAT_DHW',%s,%s,NOW(6),%s,'HP_COMFORT',%s,%s)""",
+                      (str(uuid.uuid4()), start, slot_id, hp_decision,
+                       hp_version,
+                       end, 'DRY_RUN' if dry_run else 'READY_FOR_CONNECTOR', json.dumps(hp_safety)))
+                    staged += max(0, int(cur.rowcount))
+                else:
+                    cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',
+                      acknowledgement_json=%s WHERE slot_start=%s
+                      AND process_name='HP_HEAT_DHW' AND status='READY_FOR_CONNECTOR'""",
+                      (json.dumps({'reason':'HP_SCHEDULE_MISSING_PRESERVE_STATE'}), start))
+                    record_event('hp_independent_schedule_missing', 'executor', {
+                        'slot_start':str(start), 'action':'PRESERVE_DEVICE_STATE',
+                        'dhw':'NOT_DISABLED'}, 'ERROR')
                 state = "DRY_RUN" if dry_run else "LIVE"
                 with LOCK:
                     STATE["executor"] = state
@@ -721,7 +758,8 @@ def build_executor(a: ExecutorAdapters):
                 if staged:
                     record_event("planner_failure_failsafe_staged", "executor", {
                         "slot_start": str(start), "slot_id": slot_id,
-                        "processes": ["PV_CWU", "PV_EV", "HP_HEAT_DHW"],
+                        "processes": ["PV_CWU", "PV_EV"],
+                        "hp_schedule": hp,
                         "error": str(planner_failure),
                     }, "CRITICAL")
                 return {"status": "PLANNER_FAILURE_FAIL_SAFE", "staged": staged}
@@ -731,7 +769,7 @@ def build_executor(a: ExecutorAdapters):
             # current published plan will be staged below.
             cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',
               acknowledgement_json=%s
-              WHERE slot_start=%s AND source='PLANNER_FAIL_SAFE'
+              WHERE slot_start=%s AND source IN ('PLANNER_FAIL_SAFE','HP_COMFORT')
                 AND status='READY_FOR_CONNECTOR'""",
               (json.dumps({"reason": "PLANNER_RECOVERED_BEFORE_DISPATCH"}), start))
             cur.execute("""SELECT d.*,s.heat_pump_window planner_heat_pump_window,
@@ -952,9 +990,21 @@ def build_executor(a: ExecutorAdapters):
                                 (json.dumps({"reason": "BATTERY_OFF_FAILED"}), command["command_id"]))
                     continue
                 if command["process_name"] == "HP_HEAT_DHW" and command["decision"] == "ON":
-                    cur.execute("""SELECT heat_pump_window FROM ems_gpt_slots
-                      WHERE slot_start=%s AND plan_stage='PUBLISHED' LIMIT 1""",
-                      (current_slot,))
+                    if command.get('source') == 'HP_COMFORT':
+                        cur.execute("""SELECT CASE
+                          WHEN o.requested_state='FORCE_ON' THEN 1
+                          WHEN o.requested_state='FORCE_OFF' THEN 0
+                          ELSE h.heat_enabled END heat_pump_window
+                          FROM ems_gpt_hp_schedule h
+                          LEFT JOIN ems_gpt_core_process_overrides o
+                            ON o.process_name='HP_HEAT_DHW' AND o.status='ACTIVE'
+                            AND o.valid_from<=%s AND o.valid_until>%s
+                          WHERE h.slot_start=%s LIMIT 1""",
+                          (now, now, current_slot))
+                    else:
+                        cur.execute("""SELECT heat_pump_window FROM ems_gpt_slots
+                          WHERE slot_start=%s AND plan_stage='PUBLISHED' LIMIT 1""",
+                          (current_slot,))
                     hp_plan = cur.fetchone() or {}
                     if not database_bool(hp_plan.get("heat_pump_window"), "heat_pump_window"):
                         cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',

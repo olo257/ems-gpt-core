@@ -20,7 +20,7 @@ class ActiveSlotBalanceApiTests(unittest.TestCase):
             "forecast_heat_pump_load_kwh": 0.2,
             "planned_battery_discharge_kwh": 0.0,
             "planned_buy_kwh": 0.0,
-            "planned_battery_charge_kwh": 0.0,
+            "planned_battery_charge_kwh": 0.27,
             "planned_sell_kwh": 0.0,
             "planned_pv_to_bat_kwh": 0.3,
             "planned_pv_to_cwu_kwh": 0.0,

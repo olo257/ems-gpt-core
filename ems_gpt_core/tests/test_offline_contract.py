@@ -80,29 +80,25 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("/api/agent/", api)
         self.assertIn('"ai-runs"', api)
 
-    def test_every_post_economic_optimizer_pass_uses_terminal_recovery(self):
-        planner = MODULE_SOURCES["planner_service.py"]
-        self.assertIn('def optimize_remaining_pass(', planner)
-        self.assertIn('"TOU_GUARD_ITERATION"', planner)
-        self.assertIn('"TOU_GUARD_FINAL"', planner)
-        self.assertIn('"TARGET_COMMITMENT"', planner)
+    def test_policy_uses_one_physical_model_and_no_target_relaxation(self):
+        policy = MODULE_SOURCES['planner_policy_service.py']
+        self.assertIn('required = tuple(float(v) for v in required_soc_pcts)', policy)
+        self.assertIn('allow_terminal_shortfall=False', policy)
+        self.assertIn('forbid_reserve_grid_load=True', policy)
+        self.assertNotIn('terminal_soc_recovery(', policy)
+        self.assertNotIn('relax_soc_requirement_to_reachable(', policy)
 
-    def test_soc_contracts_replace_pv_first_feedback_fallback(self):
-        planner=MODULE_SOURCES["planner_service.py"]
-        self.assertIn("target_contract = deterministic_soc_target_contract", planner)
-        self.assertNotIn("economic_optimization = optimize_energy_horizon", planner)
-        self.assertIn("battery_sales_enabled=False", planner)
-        self.assertIn("required_soc_pcts",planner)
-        self.assertNotIn("pv_first_exc",planner)
+    def test_target_is_output_of_economic_solution(self):
+        planner = MODULE_SOURCES['planner_service.py']
+        self.assertIn('policy = solve_buy_policy(', planner)
+        self.assertIn("targets = policy['targets']", planner)
+        self.assertNotIn('target_contract = deterministic_soc_target_contract(', planner)
 
-    def test_target_path_is_deterministic_without_feedback_loop(self):
-        planner=MODULE_SOURCES["planner_service.py"]
-        self.assertNotIn("base_optimization=optimization",planner)
-        self.assertIn('"DETERMINISTIC_SOC_CONTRACT_V4"',planner)
-        self.assertIn("target_contract = deterministic_soc_target_contract(",planner)
-        self.assertNotIn("seen_target_paths",planner)
-        self.assertNotIn("target_due_indices=set()",planner)
-        self.assertNotIn('raise RuntimeError(\n                        f"SOC_TARGET_PATH_OSCILLATION',planner)
+    def test_primary_policy_replaces_old_feedback_passes(self):
+        planner = MODULE_SOURCES['planner_service.py']
+        self.assertNotIn('def optimize_remaining_pass(', planner)
+        self.assertNotIn('a.prepare_buy_windows(', planner)
+        self.assertIn('original_rce_windows(cur, normalized_source, OPTIONS)', planner)
 
     def test_daily_exposes_soc_means_and_pv_bounds_without_global_counts(self):
         schema=MODULE_SOURCES["schema_service.py"]
@@ -169,9 +165,8 @@ class OfflineContractTests(unittest.TestCase):
             self.assertIn(key, executor)
         self.assertIn("daily_terminal_soc[planning_day] = end_of_day_soc_target(", planner)
         self.assertIn("daily_close_soc_requirements(", planner)
-        self.assertIn("required_soc_pcts=enforced_daily_required", planner)
-        self.assertIn("current_day_terminal_soc_unreachable", planner)
-        self.assertIn("waived_daily_closes", planner)
+        self.assertIn("required_soc_pcts=daily_required_soc", planner)
+        self.assertNotIn("waived_daily_closes", planner)
         self.assertIn("Wagi końcowego SOC 7/14/28 dni muszą sumować się do 100%", executor)
 
     def test_battery_flow_accuracy_is_diagnostic_only(self):
@@ -209,12 +204,12 @@ class OfflineContractTests(unittest.TestCase):
         self.assertNotIn("ems_gpt_core_target_history", planner)
         self.assertNotIn("target_suggested_correction_pct", planner)
 
-    def test_daily_soc_recovery_disables_sales_before_waiving_target(self):
-        planner = MODULE_SOURCES["planner_service.py"]
-        disable = planner.index("if battery_sales_enabled:")
-        waive = planner.index("enforced_daily_required[failed_index] = recoverable_required")
-        self.assertLess(disable, waive)
-        self.assertIn('"battery_sales_disabled_for_daily_soc"', planner)
+    def test_sale_is_optional_and_cannot_expand_buy_permissions(self):
+        policy = MODULE_SOURCES['planner_policy_service.py']
+        self.assertIn("baseline = attempt('PRIMARY_BUY',original)", policy)
+        self.assertIn("except EnergyInfeasible as primary_error:", policy)
+        self.assertIn("assessment['eligible']", policy)
+        self.assertNotIn("enforced_daily_required[failed_index] =", MODULE_SOURCES['planner_service.py'])
 
     def test_executor_scripts_are_explicit_configuration_fields(self):
         config_service = MODULE_SOURCES["config_service.py"]
@@ -632,9 +627,9 @@ class OfflineContractTests(unittest.TestCase):
         hp = MODULE_SOURCES["planner_hp_service.py"]
         self.assertNotIn("ems_gpt_core_process_decisions", planner)
         self.assertNotIn("ems_gpt_core_process_overrides", planner)
-        self.assertIn("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots", hp)
-        hp_history = hp[hp.index("SELECT slot_start,plan_published,heat_pump_window FROM ems_gpt_slots"):]
-        hp_history = hp_history[:hp_history.index("ORDER BY slot_start")]
+        self.assertIn("COALESCE(h.heat_enabled,s.heat_pump_window)", hp)
+        hp_history = hp[hp.index("SELECT s.slot_start,"):]
+        hp_history = hp_history[:hp_history.index("ORDER BY s.slot_start")]
         self.assertNotIn("actual_recorded_at", hp_history)
 
     def test_executor_fails_closed_when_hp_planner_window_is_off(self):
@@ -673,8 +668,11 @@ class OfflineContractTests(unittest.TestCase):
         hp = MODULE_SOURCES["planner_hp_service.py"]
         self.assertIn("hp_heating_window_indices", planner)
         self.assertIn('0 if c == "heat_pump_window" else row.get(c)', planner)
-        self.assertIn('if window_start <= row["slot_start"] < window_end', hp)
-        self.assertIn("allowed_rows", hp)
+        from datetime import datetime
+        from planner_hp_service import hp_heating_window_indices
+        day = datetime(2026,11,1)
+        rows = [{'slot_start':day.replace(hour=h), 'sale_window':True} for h in (6,7,18,19)]
+        self.assertEqual(hp_heating_window_indices(rows, day.date()), {1,2})
 
     def test_hp_cost_replan_cycle_contract(self):
         for marker in ("hp_min_heating_hours", "hp_min_cycle_hours",
@@ -689,7 +687,7 @@ class OfflineContractTests(unittest.TestCase):
         self.assertIn('planned_heating_kwh = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25', SOURCE)
         self.assertIn('work["forecast_heat_pump_load_kwh"] = planned_heating_kwh', SOURCE)
         self.assertIn('work["forecast_heat_pump_dhw_load_kwh"] = historical_dhw_kwh', SOURCE)
-        self.assertIn('hp_load = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25', SOURCE)
+        self.assertIn("hp_load = float(row.get('forecast_heat_pump_load_kwh') or 0.0)", SOURCE)
         self.assertIn('+ max(0.0, float(row.get("forecast_heat_pump_load_kwh") or 0.0))',
                       MODULE_SOURCES["planner_dispatch_service.py"])
         self.assertIn("load=native_load+hp_load", SOURCE)

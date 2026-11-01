@@ -30,7 +30,7 @@ class EnergyBalanceServiceTests(unittest.TestCase):
             "forecast_pv_total_kwh": 1.0, "forecast_load_kwh": 0.5,
             "forecast_heat_pump_load_kwh": 0.2,
             "planned_battery_discharge_kwh": 0, "planned_buy_kwh": 0,
-            "planned_battery_charge_kwh": 0, "planned_sell_kwh": 0,
+            "planned_battery_charge_kwh": 0.27, "planned_sell_kwh": 0,
             "planned_pv_to_bat_kwh": 0.3,
         }
         result = calculate_slot_energy_balance(row, 0.9, 0.98)

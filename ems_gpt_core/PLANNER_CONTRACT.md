@@ -1,5 +1,52 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
+## Obowiązujący przebieg od 0.40.77
+
+Przepływ produkcyjny realizuje `planner_policy_service.solve_buy_policy`.
+Zastępuje wcześniejszą sekwencję deterministycznego targetu i korekt
+reachability/TOU/recovery, opisaną w starszych sekcjach tego dokumentu.
+Te funkcje pomocnicze pozostają dla zgodności i porównań, ale nie sterują
+już produkcyjnym wyborem zakupów.
+
+1. Pierwsza optymalizacja całego horyzontu używa wyłącznie pierwotnych BUY
+   zapisanych przez RCE. PV, dom i HP, sprawności, moc, limit przyłącza,
+   skonfigurowane minimum SOC oraz dzienne/końcowe cele są w jednym modelu.
+2. Wyłącznie niewykonalność fizyczna lub celu końcowego otwiera drugi etap.
+   Błąd kodu lub danych nie jest uprawnieniem do promowania NEUTRAL.
+3. Drugi etap dopuszcza kandydatów NEUTRAL niezależnie od pory dnia i wybiera
+   energię według kosztu całego horyzontu. SELL pozostaje chroniony. Samo
+   rozpatrzenie kandydata nie zmienia uprawnień; publikacja obejmuje tylko
+   sloty z rzeczywistym importem do baterii. Po selekcji jest pełne przeliczenie.
+4. Target ekonomiczny wynika z wybranego przepływu; nie ogranicza wcześniej
+   taniego BUY na podstawie założenia, że później można dokupić drożej.
+   Target dotyczy tylko sieci. PV może ładować baterię do 100% także przy
+   niższym skonfigurowanym limicie importu.
+5. Wybrana trajektoria jest odtwarzana według reguły pełnego dostępnego
+   wolumenu do targetu. Koszt replay nie może wzrosnąć. Target jest publikowany
+   dla konkretnego slotu; nie jest podnoszony przez późniejszą korektę PPD.
+6. Opcjonalna sprzedaż nie rozszerza NEUTRAL, nie obniża wymagań i jest
+   akceptowana tylko po porównaniu całego horyzontu z wariantem bez sprzedaży.
+   Niepowodzenie etapu opcjonalnego pozostawia wariant bez sprzedaży.
+
+Minima SOC i cele dzienne nie są obniżane dla uzyskania sukcesu. Gdy zmierzony
+SOC już jest niższy od minimum, model pokazuje rzeczywistą wartość i wymusza
+najwcześniejszą fizycznie możliwą odbudowę. Ten jawny początkowy korytarz
+odzyskiwania nie zmienia skonfigurowanego minimum. Niedobór możliwy do
+uniknięcia wcześniejszym zakupem nie może być ukryty jako import na odbiory
+przy rezerwie. Dopuszczalny pozostaje fizyczny niedobór mocy rozładowania
+oraz reszta wynikająca z siatki SOC 0,1 punktu procentowego.
+
+Tabela `ems_gpt_rce_windows` przechowuje pierwotne flagi niezależnie od planu.
+Przy migracji brakujące wpisy są rekonstruowane z surowych cen przez tę samą
+funkcję klasyfikacji co importer RCE; późniejsze rozszerzenia nie są źródłem
+następnego przebiegu. Okna wykonawcze i przepływy są publikowane atomowo.
+
+Niewykonalność całego horyzontu zatrzymuje publikację energii, zachowuje
+ostatni zaakceptowany plan i jawny błąd; nie blokuje harmonogramu HP.
+Optymalizacja odbywa się na dyskretnej siatce SOC, więc wynik nie jest
+certyfikatem dokładnego optimum ciągłego.
+
+
 Status: obowiązujący; uaktualniono dla wersji 0.40.72. Ten dokument jest źródłem prawdy dla implementacji,
 testów, diagnostyki i odbioru produkcyjnego. Zmiana sprzeczna z kontraktem nie
 może zostać scalona bez jawnej aktualizacji dokumentu i testów regresyjnych.
@@ -767,3 +814,15 @@ z polem źródła: `NIGHT_HP_RESERVE`, `PRE_SELL_CAPACITY` albo
 `SOC_RESERVE_RECOVERY`. To samo podsumowanie trafia do logu dodatku, aby
 wskazywało, która ścieżka zmieniła slot na BUY. Historyczne zdarzenia
 `night_buy_capacity` pozostają obsługiwane przy odczycie poprzednich promocji SOC.
+
+
+## Niezależność komfortu i ślad diagnostyczny (0.40.76)
+
+Błąd obliczeń energii lub PPD nie wyłącza HP_HEAT_DHW ani bazowego HP_DHW.
+Harmonogram komfortu ma osobny commit przed walidacją cen, prognoz i SOC.
+Wykonawca po błędzie energii korzysta z niego, zachowując manual override.
+HP ma pierwszeństwo nad SELL. Niedobór godzin ogrzewania i brak niezależnego
+harmonogramu są jawnymi alarmami. Przy braku harmonogramu wykonawca
+zachowuje stan pompy zamiast wymuszać OFF.
+Wyniki etapów, kompletność, kontrakty i próby optymalizacji zapisuje się
+poza transakcją energii; rollback nie usuwa dowodów odrzuconego przebiegu.
