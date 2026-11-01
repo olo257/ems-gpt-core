@@ -542,8 +542,8 @@ sprzedaży korzysta z pełnego fizycznego limitu importu/SOC i tego samego
 limitu w swoim replay, aby zachować rzeczywiste, opłacalne cykle BUY/SELL.
 Wymagania SOC i harmonogramy HP pozostają bez zmian.
 
-Odtworzenie zapisanej próby 0.40.78: 47 slotów; osiem sztucznych zakupów
-po około 0,031 kWh znika, końcowy SOC pozostaje 40%, a minimum wynosi 32%.
-Koszt celu zmienia się z 8,631199 na 8,741510 zł przy tych samych cenach
-oraz prognozach; wcześniejszy niższy koszt wynikał z niedozwolonego obejścia
-BUY-only. Dane produkcyjne użyto lokalnie, bez dodawania ich do repozytorium.
+Odtworzenie zapisanej próby 0.40.78 potwierdza usunięcie symbolicznych
+zakupów przy zachowaniu wymagań SOC. Szczegółowe dane produkcyjne i wyniki
+liczbowe pozostają w prywatnej diagnostyce instalacji. Zaostrzenie reguł
+może zwiększyć koszt względem wcześniejszego wariantu naruszającego BUY-only;
+nie oznacza to zmiany cen ani obniżenia wymaganych celów.
