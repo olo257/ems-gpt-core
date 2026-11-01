@@ -17,6 +17,34 @@ class EnergyInfeasible(RuntimeError):
     pass
 
 
+def horizon_charge_caps(rows, required_pcts, terminal_soc_pct, capacity_kwh,
+                        reserve_pct, eta_c, eta_d, max_power_kw,
+                        slot_minutes, max_grid_soc_pct, soc_step_pct):
+    """Ceilings justified by remaining battery demand, never by a chosen flow.
+
+    Future grid purchases are deliberately not subtracted: an expensive later
+    BUY must not block buying sufficient energy cheaply now. The same vector
+    applies to every attempt/replay and cannot be shortened to enable grid load.
+    """
+    capacity = float(capacity_kwh)
+    quantum = capacity*soc_step_pct/100
+    reserve = capacity*reserve_pct/100
+    need = max(reserve,capacity*terminal_soc_pct/100)
+    max_charge = max_power_kw*slot_minutes/60*eta_c
+    max_discharge = max_power_kw*slot_minutes/60/eta_d
+    caps = [0.0]*len(rows)
+    for i in range(len(rows)-1,-1,-1):
+        after = max(need,capacity*float(required_pcts[i])/100)
+        caps[i] = min(max_grid_soc_pct,
+                      math.ceil(after/quantum-1e-9)*soc_step_pct)
+        load = float(rows[i].get('forecast_load_kwh') or 0)+float(rows[i].get('forecast_heat_pump_load_kwh') or 0)
+        pv = float(rows[i].get('forecast_pv_total_kwh') or 0)
+        consumed = min(max_discharge,max(0.0,load-pv)/eta_d)
+        charged = min(max_charge,max(0.0,pv-load)*eta_c)
+        need = max(reserve,after+consumed-charged)
+    return caps
+
+
 def solve_buy_policy(rows, *, initial_soc_pct, capacity_kwh, reserve_pct,
                      eta_c, eta_d, degradation, min_margin, max_power_kw,
                      slot_minutes, terminal_soc_pct, required_soc_pcts,
@@ -27,6 +55,13 @@ def solve_buy_policy(rows, *, initial_soc_pct, capacity_kwh, reserve_pct,
     required = tuple(float(v) for v in required_soc_pcts)
     if len(required) != len(rows):
         raise ValueError('POLICY_REQUIRED_LENGTH_MISMATCH')
+
+    volume_caps = horizon_charge_caps(original, required, terminal_soc_pct,
+        capacity_kwh,reserve_pct,eta_c,eta_d,max_power_kw,slot_minutes,
+        max_soc_pct,soc_step_pct)
+    if trace:
+        trace.add('BUY_VOLUME_CONTRACT','OK',caps_pct=volume_caps,
+                  source='REMAINING_LOAD_PV_AND_HARD_GOALS_WITHOUT_FUTURE_GRID')
 
     def attempt(name, candidates, sales=False, fixed_targets=None):
         checkpoint(name)
@@ -61,7 +96,11 @@ def solve_buy_policy(rows, *, initial_soc_pct, capacity_kwh, reserve_pct,
             max_grid_import_kw=max_grid_import_kw,
             economic_target_selection=fixed_targets is None,
             forbid_reserve_grid_load=True, preserve_buy_alternatives=True,
-            minimum_grid_charge_kwh=0.02, abort_check=lambda:budget_check(name))
+            minimum_grid_charge_kwh=0.02,
+            # Optional export may need additional battery inventory; it still
+            # buys a full physical slot, never a flow-derived token target.
+            full_volume_soc_caps=([max_soc_pct]*len(candidates) if sales else volume_caps),
+            abort_check=lambda:budget_check(name))
         try:
             result = (trace.optimizer(optimizer,name,candidates,**params) if trace
                       else optimizer(candidates,**params))
