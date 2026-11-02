@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.79**.
+Status: obowiązująca. Wersja wydania: **0.40.80**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -547,3 +547,21 @@ zakupów przy zachowaniu wymagań SOC. Szczegółowe dane produkcyjne i wyniki
 liczbowe pozostają w prywatnej diagnostyce instalacji. Zaostrzenie reguł
 może zwiększyć koszt względem wcześniejszego wariantu naruszającego BUY-only;
 nie oznacza to zmiany cen ani obniżenia wymaganych celów.
+
+
+## 0.40.80 — klasyfikacja SELL i migracja źródłowych okien
+
+Przyczyną odtworzonego braku wykonalności był zbyt szeroki chroniony SELL:
+klasyfikator traktował każdy moment opłacalnej sprzedaży jako szczyt.
+Uniemożliwiało to rozszerzenie o NEUTRAL przed niedoborem. Klasyfikacja
+PEAKS_V2 wybiera faktyczne prominentne szczyty w czterogodzinnym sąsiedztwie
+oraz ich przyległe otoczenie w tolerancji ceny. Pozostałe sloty nie otrzymują
+blokady SELL wyłącznie z powodu opłacalności sprzedaży.
+
+`ems_gpt_rce_windows.algorithm_version` jest dodawane przez migrację
+idempotentnie. Importer zapisuje aktualną wersję. Przed planowaniem wpisy
+bez aktualnej wersji są odtwarzane z lokalnych cen. Ten proces nie używa
+wcześniejszych promocji BUY jako źródła i nie czeka na sieciowy import RCE.
+Minimalny SOC, cele dobowe, pełny wolumen oraz niezależność HP są zachowane.
+Regresje weryfikują wykonalność po zmianie klasyfikacji i migrację starych
+wpisów; szczegółowe wejścia i pomiary instalacji nie są publikowane.

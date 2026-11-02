@@ -166,7 +166,7 @@ class PrimaryBuyPolicyTests(unittest.TestCase):
                 self_sql=sql
             def fetchall(self):
                 return [{'slot_start':r['slot_start'],'buy_window':r['buy_window'],
-                         'sale_window':r['sale_window']} for r in original]
+                         'sale_window':r['sale_window'],'algorithm_version':'PEAKS_V2'} for r in original]
         restored=original_rce_windows(Cursor(),first['rows'],{})
         self.assertEqual([r['buy_window'] for r in restored],[True,False,False])
         second=solve(restored,initial_soc_pct=80)
@@ -225,3 +225,46 @@ class PrimaryBuyPolicyTests(unittest.TestCase):
         self.assertGreater(flows[1]['battery_sell_kwh'],0)
         self.assertGreater(flows[0]['grid_charge_kwh'],1)
         self.assertLess(result['optimization']['objective_pln'],0)
+
+    def test_profitable_sell_shoulders_do_not_block_all_safety_buy(self):
+        from ingestion_service import derive_price_windows
+        data=rows([('SELL',2.4+(.6 if i==12 else 0),.4,0) for i in range(32)]
+                  +[('BUY',1.0,.1,0)]*4)
+        with self.assertRaises(EnergyInfeasible):
+            solve(data,initial_soc_pct=30,terminal_soc_pct=40,
+                  required_soc_pcts=[12]*35+[40])
+        flags=derive_price_windows([{'buy':r['price_buy_pln_kwh'],'sell':r['price_sell_pln_kwh']} for r in data],
+                                  .98,.98,.08,.05,.05,3)
+        for r,(sell,buy) in zip(data,flags):
+            r.update(sale_window=sell,buy_window=buy,
+                     market_window='SELL' if sell else 'BUY' if buy else 'NEUTRAL')
+        self.assertTrue(data[12]['sale_window'])
+        self.assertTrue(any(r['market_window']=='NEUTRAL' for r in data[:12]))
+        result=solve(data,initial_soc_pct=30,terminal_soc_pct=40,
+                     required_soc_pcts=[12]*35+[40])
+        self.assertGreaterEqual(result['optimization']['flows'][-1]['soc_end_pct'],40)
+        self.assertTrue(all(not r['sale_window'] for r,f in zip(result['rows'],result['optimization']['flows'])
+                            if f['grid_charge_kwh']>0))
+
+    def test_source_migration_reclassifies_old_broad_sell_without_rce_refresh(self):
+        from ingestion_service import original_rce_windows,PRICE_WINDOW_VERSION
+        data=rows([('SELL',2.4+(.6 if i==12 else 0),0,0) for i in range(32)]
+                  +[('BUY',1,0,0)]*4)
+        for row in data:
+            row['price_source']='PSE_API'
+        writes=[]
+        class Cursor:
+            def execute(self,sql,params=()):
+                self.sql=sql
+                if 'INSERT INTO ems_gpt_rce_windows' in sql:
+                    writes.append(params)
+            def fetchall(self):
+                if 'FROM ems_gpt_rce_windows' in self.sql:
+                    return [dict(r,algorithm_version='') for r in data]
+                return data
+        options={f'deye_program_{i}_soc_pct':10 for i in range(1,7)}
+        migrated=original_rce_windows(Cursor(),data,options)
+        self.assertEqual(len(writes),len(data))
+        self.assertTrue(all(p[-1]==PRICE_WINDOW_VERSION for p in writes))
+        self.assertTrue(migrated[12]['sale_window'])
+        self.assertTrue(any(r['market_window']=='NEUTRAL' for r in migrated[:12]))
