@@ -1,6 +1,6 @@
 # EMS-GPT Core — dokumentacja produkcyjna
 
-Status: obowiązująca. Wersja wydania: **0.40.80**.
+Status: obowiązująca. Wersja wydania: **0.40.81**.
 
 Szczegółowe reguły planowania, bilansu i SOC definiuje
 [`PLANNER_CONTRACT.md`](PLANNER_CONTRACT.md). Historia zmian znajduje się w
@@ -565,3 +565,20 @@ wcześniejszych promocji BUY jako źródła i nie czeka na sieciowy import RCE.
 Minimalny SOC, cele dobowe, pełny wolumen oraz niezależność HP są zachowane.
 Regresje weryfikują wykonalność po zmianie klasyfikacji i migrację starych
 wpisów; szczegółowe wejścia i pomiary instalacji nie są publikowane.
+
+## Uzupełnienie od 0.40.81: wykonanie po błędzie przeliczenia
+
+Awaria planera lub PPD nie unieważnia automatycznie wcześniej zatwierdzonego
+planu. BATTERY_IMPORT może korzystać wyłącznie z opublikowanego i przyjętego
+planu bieżącego slotu, z dodatnim planowanym zakupem, BUY_ALLOWED, BUY bez
+SELL, poprawnym targetem SOC i świeżą telemetrią. FORCE_OFF ma pierwszeństwo.
+FORCE_ON nie tworzy nowego uprawnienia do zakupu w tym trybie.
+
+Polecenia PLAN_FALLBACK wygasają na końcu slotu. Autoryzacja jest powtarzana
+przed wysłaniem ON i przy naprawie rejestrów; odczyt SOC z HA nadal chroni
+przed przekroczeniem celu. Brak uprawnienia daje OFF zamiast arbitralnego
+zakupu. Powtórne cykle nie duplikują aktywnego zamiaru, lecz dopuszczają
+ponowienie po awarii lub zmianie blokady. Sprzedaż baterii i odbiory PV są
+wyłączane, a niezależne harmonogramy HP_HEAT_DHW i HP_DHW pozostają zachowane.
+Zdarzenia published_buy_fallback i published_buy_fallback_blocked pokazują
+plan, decyzję i powód autoryzacji. Stan błędu planera pozostaje widoczny.

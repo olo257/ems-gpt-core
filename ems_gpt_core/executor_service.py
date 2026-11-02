@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from config_service import deye_program_soc_baselines
+from executor_fallback_service import fallback_import_reason
 
 
 def scalar_number(value) -> float | None:
@@ -656,6 +657,77 @@ def build_executor(a: ExecutorAdapters):
                     and command.get("created_at") >= now - timedelta(minutes=30))
     
     
+    def fallback_import_authorization(cur, now, start):
+        cur.execute("""SELECT s.*,r.status published_run_status,
+          o.requested_state,o.override_id FROM ems_gpt_slots s
+          LEFT JOIN ems_gpt_plan_runs r ON r.run_id=s.plan_run_id
+          LEFT JOIN ems_gpt_core_process_overrides o
+            ON o.process_name='BATTERY_IMPORT' AND o.status='ACTIVE'
+            AND o.valid_from<=%s AND o.valid_until>%s
+          WHERE s.slot_start=%s LIMIT 1""", (now,now,start))
+        plan = cur.fetchone() or {}
+        max_age = max(30,int(OPTIONS.get('telemetry_degraded_seconds',120)))
+        cur.execute("""SELECT soc_pct,captured_at FROM ems_gpt_telemetry_snapshots
+          WHERE captured_at>=%s AND captured_at<=%s ORDER BY captured_at DESC LIMIT 1""",
+          (now-timedelta(seconds=max_age),now))
+        live = cur.fetchone() or {}
+        reason = fallback_import_reason(plan,live,now,start,
+            int(OPTIONS.get('slot_minutes',15)),
+            float(OPTIONS.get('planned_flow_threshold_kwh',.02)),max_age)
+        return plan,live,reason
+
+    def stage_fallback_battery(cur, now, start, slot_id, dry_run, failure):
+        plan,live,reason = fallback_import_authorization(cur,now,start)
+        decision = 'OFF' if reason else 'ON'
+        run_id = str(plan.get('plan_run_id') or 'NO_PLAN')
+        # Reuse an active intent, but permit recovery after OFF/stale telemetry
+        # or a failed command instead of permanently deduplicating a retry.
+        cur.execute("""SELECT * FROM ems_gpt_core_commands WHERE slot_start=%s
+          AND process_name='BATTERY_IMPORT' AND source='PLAN_FALLBACK'
+          ORDER BY created_at DESC,command_id DESC LIMIT 1""", (start,))
+        previous = cur.fetchone() or {}
+        same = (previous.get('decision') == decision
+            and str(previous.get('plan_version') or '').split(':',1)[0] == run_id
+            and previous.get('status') in ('READY_FOR_CONNECTOR','DISPATCHED','ACCEPTED','EXECUTED','DRY_RUN')
+            and previous.get('expires_at') is not None and previous['expires_at'] > now)
+        version = previous['plan_version'] if same else run_id+':FB:'+str(uuid.uuid4())[:12]
+        cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',acknowledgement_json=%s
+          WHERE slot_start=%s AND process_name='BATTERY_IMPORT'
+            AND status='READY_FOR_CONNECTOR' AND plan_version<>%s""",
+          (json.dumps({'reason':'CURRENT_FALLBACK_AUTHORIZATION'}),start,version))
+        cur.execute("""UPDATE ems_gpt_core_commands SET status=%s
+          WHERE slot_start=%s AND source='PLAN_FALLBACK' AND process_name='SELL_BAT'
+            AND decision='OFF' AND status='FAILED' AND expires_at>%s""",
+          ('DRY_RUN' if dry_run else 'READY_FOR_CONNECTOR',start,now))
+        safety = dict(executor_enabled=True,dry_run=dry_run,connector_required=True,
+            soc_programs_1_6_write_allowed=True,soc_restore_required=True,
+            planner_failure=str(failure)[:500],plan_run_id=plan.get('plan_run_id'),
+            fallback_reason=reason or 'CONTINUE_ACCEPTED_BUY',
+            target_soc_pct=plan.get('soc_charge_target_pct'),live_soc_pct=live.get('soc_pct'),
+            override_id=plan.get('override_id'))
+        staged = 0
+        for process,state,revision in (
+                ('BATTERY_IMPORT',decision,version),
+                ('SELL_BAT','OFF',version+':SELL_OFF')):
+            if process == 'BATTERY_IMPORT' and same:
+                continue
+            cur.execute("""INSERT IGNORE INTO ems_gpt_core_commands
+              (command_id,slot_start,slot_id,process_name,decision,plan_version,
+               created_at,expires_at,source,status,safety_json)
+              VALUES(%s,%s,%s,%s,%s,%s,NOW(6),%s,'PLAN_FALLBACK',%s,%s)""",
+              (str(uuid.uuid4()),start,slot_id,process,state,revision,
+               start+timedelta(minutes=int(OPTIONS.get('slot_minutes',15))),
+               'DRY_RUN' if dry_run else 'READY_FOR_CONNECTOR',json.dumps(safety)))
+            staged += max(0,int(cur.rowcount))
+        if staged:
+            record_event('published_buy_fallback','executor',{
+                'slot_start':str(start),'plan_run_id':plan.get('plan_run_id'),
+                'decision':decision,'reason':reason or 'CONTINUE_ACCEPTED_BUY',
+                'target_soc_pct':plan.get('soc_charge_target_pct'),
+                'live_soc_pct':live.get('soc_pct'),'failure':str(failure)[:500]},
+                'WARNING' if reason else 'INFO')
+        return staged
+
     def stage_executor_commands() -> dict:
         """Build auditable commands; never call HA unless the guarded executor is explicitly enabled."""
         if not bool(OPTIONS.get("executor_enabled", False)):
@@ -693,7 +765,7 @@ def build_executor(a: ExecutorAdapters):
                     return {"status": "PLANNER_FAILURE_FAIL_SAFE_SLOT_MISSING", "staged": 0}
                 cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',
                   acknowledgement_json=%s
-                  WHERE slot_start=%s AND process_name IN ('PV_CWU','PV_EV')
+                  WHERE slot_start=%s AND process_name IN ('PV_CWU','PV_EV','SELL_BAT')
                     AND decision='ON' AND status='READY_FOR_CONNECTOR'""",
                   (json.dumps({"reason": "PLANNER_FAILURE_FAIL_SAFE"}), start))
                 plan_version = "PLANNER_FAIL_SAFE:" + start.strftime("%Y%m%dT%H%M")
@@ -713,6 +785,7 @@ def build_executor(a: ExecutorAdapters):
                       (str(uuid.uuid4()), start, slot_id, process, plan_version, end,
                        "DRY_RUN" if dry_run else "READY_FOR_CONNECTOR", safety))
                     staged += max(0, int(cur.rowcount))
+                staged += stage_fallback_battery(cur,now,start,slot_id,dry_run,planner_failure)
                 # Comfort has its own committed schedule, independent of BUY/SELL.
                 cur.execute("""SELECT * FROM ems_gpt_hp_schedule
                   WHERE slot_start=%s LIMIT 1""", (start,))
@@ -769,7 +842,7 @@ def build_executor(a: ExecutorAdapters):
             # current published plan will be staged below.
             cur.execute("""UPDATE ems_gpt_core_commands SET status='REJECTED',
               acknowledgement_json=%s
-              WHERE slot_start=%s AND source IN ('PLANNER_FAIL_SAFE','HP_COMFORT')
+              WHERE slot_start=%s AND source IN ('PLANNER_FAIL_SAFE','HP_COMFORT','PLAN_FALLBACK')
                 AND status='READY_FOR_CONNECTOR'""",
               (json.dumps({"reason": "PLANNER_RECOVERED_BEFORE_DISPATCH"}), start))
             cur.execute("""SELECT d.*,s.heat_pump_window planner_heat_pump_window,
@@ -869,8 +942,7 @@ def build_executor(a: ExecutorAdapters):
     def reconcile_battery_import(cur, now, current_slot, service_map) -> None:
         """Repair register drift only while a current, dispatched BUY authorizes it."""
         with LOCK:
-            if STATE.get("planner_failure_latched") or STATE.get("ppd_failure_latched"):
-                return
+            failed = STATE.get("planner_failure_latched") or STATE.get("ppd_failure_latched")
         if now >= current_slot + timedelta(minutes=int(OPTIONS.get("slot_minutes", 15))):
             return
         # Read the latest command including OFF/rejected commands: an older ON
@@ -901,9 +973,16 @@ def build_executor(a: ExecutorAdapters):
                 or database_bool(command.get("sale_window"), "sale_window")
                 or command.get("grid_policy_planned") != "BUY_ALLOWED"):
             return
+        fallback = command.get('source') == 'PLAN_FALLBACK'
+        if failed and not fallback:
+            return
+        if fallback:
+            plan,live,reason = fallback_import_authorization(cur,now,current_slot)
+            if reason or str(plan.get('plan_run_id')) != str(command.get('plan_run_id')):
+                return
         override_on = (command.get("source") == "OVERRIDE"
                        and command.get("requested_state") == "FORCE_ON")
-        if not override_on and (command.get("eligible") is None or not process_decision_is_allowed(
+        if not fallback and not override_on and (command.get("eligible") is None or not process_decision_is_allowed(
                 {"eligible": command.get("eligible"), "decision": command.get("ppd_decision")},
                 "BATTERY_IMPORT")):
             return
@@ -1047,59 +1126,78 @@ def build_executor(a: ExecutorAdapters):
                 restored_targets = []
                 if command["process_name"] == "BATTERY_IMPORT" and command["decision"] == "ON":
                     plan_run_id = str(command.get("plan_version") or "").split(":", 1)[0]
-                    cur.execute("""SELECT soc_charge_target_pct,soc_target_pct,soc_end_plan_pct,planned_buy_kwh FROM ems_gpt_slots
-                      WHERE slot_start=%s AND plan_run_id=%s AND plan_stage='PUBLISHED'
-                      LIMIT 1""", (current_slot, plan_run_id))
-                    plan_target = cur.fetchone() or {}
-                    target = (plan_target.get("soc_charge_target_pct")
-                              if plan_target.get("soc_charge_target_pct") is not None
-                              else plan_target.get("soc_target_pct"))
-                    live_soc = number(ha_state("sensor.inverter_battery"))
-                    planned_buy = scalar_number(plan_target.get("planned_buy_kwh"))
-                    flow_threshold = float(OPTIONS.get("planned_flow_threshold_kwh", 0.02))
-                    guard_buy = (max(flow_threshold * 2.0, 0.001)
-                                 if command.get("source") == "OVERRIDE" else planned_buy)
-                    guard_reason = battery_import_guard_reason(
-                        live_soc, target, guard_buy, flow_threshold)
-                    if guard_reason:
-                        off_entity = process_map.get("OFF")
-                        safe_response = ha_service_response("script", "turn_on", {"entity_id": off_entity}) \
-                            if isinstance(off_entity, str) and off_entity.startswith("script.") else None
+                    if command.get('source') == 'PLAN_FALLBACK':
+                        fallback_plan,live,reason = fallback_import_authorization(cur,now,current_slot)
+                        if reason or str(fallback_plan.get('plan_run_id')) != plan_run_id:
+                            # Replace an obsolete ON with a guarded OFF in this
+                            # dispatch, so a preceding BUY cannot leak past its slot.
+                            cur.execute("UPDATE ems_gpt_core_commands SET decision='OFF' WHERE command_id=%s",
+                                (command['command_id'],))
+                            command = dict(command,decision='OFF')
+                            entity_id = process_map.get('OFF')
+                            if (not isinstance(entity_id,str) or not entity_id.startswith('script.')
+                                    or 'inverter_program_' in entity_id or 'soc' in entity_id.lower()):
+                                cur.execute("UPDATE ems_gpt_core_commands SET status='REJECTED',acknowledgement_json=%s WHERE command_id=%s",
+                                    (json.dumps({'reason':'MISSING_OR_INVALID_FALLBACK_OFF_MAPPING'}),command['command_id']))
+                                continue
+                            record_event('published_buy_fallback_blocked','executor',{
+                                'command_id':command['command_id'],
+                                'slot_start':str(current_slot),
+                                'reason':reason or 'PLAN_VERSION_CHANGED'},'WARNING')
+                    if command['decision'] == 'ON':
+                        cur.execute("""SELECT soc_charge_target_pct,soc_target_pct,soc_end_plan_pct,planned_buy_kwh FROM ems_gpt_slots
+                          WHERE slot_start=%s AND plan_run_id=%s AND plan_stage='PUBLISHED'
+                          LIMIT 1""", (current_slot, plan_run_id))
+                        plan_target = cur.fetchone() or {}
+                        target = (plan_target.get("soc_charge_target_pct")
+                                  if plan_target.get("soc_charge_target_pct") is not None
+                                  else plan_target.get("soc_target_pct"))
+                        live_soc = number(ha_state("sensor.inverter_battery"))
+                        planned_buy = scalar_number(plan_target.get("planned_buy_kwh"))
+                        flow_threshold = float(OPTIONS.get("planned_flow_threshold_kwh", 0.02))
+                        guard_buy = (max(flow_threshold * 2.0, 0.001)
+                                     if command.get("source") == "OVERRIDE" else planned_buy)
+                        guard_reason = battery_import_guard_reason(
+                            live_soc, target, guard_buy, flow_threshold)
+                        if guard_reason:
+                            off_entity = process_map.get("OFF")
+                            safe_response = ha_service_response("script", "turn_on", {"entity_id": off_entity}) \
+                                if isinstance(off_entity, str) and off_entity.startswith("script.") else None
+                            try:
+                                set_active_program_charging(now, "Disabled")
+                            except RuntimeError:
+                                pass
+                            restored_targets = restore_program_targets_if_idle()
+                            cur.execute("UPDATE ems_gpt_core_commands SET status='REJECTED',acknowledgement_json=%s WHERE command_id=%s",
+                                        (json.dumps({"reason": guard_reason, "live_soc": live_soc,
+                                                     "target_soc": target, "planned_buy_kwh": planned_buy,
+                                                     "safe_off_dispatched": safe_response is not None,
+                                                     "tou_targets_restored": restored_targets}), command["command_id"]))
+                            record_event("battery_import_blocked_by_live_target", "executor", {
+                                "reason": guard_reason, "slot_start": current_slot,
+                            }, "WARNING")
+                            continue
                         try:
-                            set_active_program_charging(now, "Disabled")
-                        except RuntimeError:
-                            pass
-                        restored_targets = restore_program_targets_if_idle()
-                        cur.execute("UPDATE ems_gpt_core_commands SET status='REJECTED',acknowledgement_json=%s WHERE command_id=%s",
-                                    (json.dumps({"reason": guard_reason, "live_soc": live_soc,
-                                                 "target_soc": target, "planned_buy_kwh": planned_buy,
-                                                 "safe_off_dispatched": safe_response is not None,
-                                                 "tou_targets_restored": restored_targets}), command["command_id"]))
-                        record_event("battery_import_blocked_by_live_target", "executor", {
-                            "reason": guard_reason, "slot_start": current_slot,
-                        }, "WARNING")
-                        continue
-                    try:
-                        target_update = set_all_program_targets(float(target))
-                        charging_updates = set_all_program_charging("Grid")
-                        target_update = {"programs": target_update,
-                                         "charging": charging_updates}
-                    except (RuntimeError, TypeError, ValueError) as exc:
-                        # Fail closed if any TOU register could not be prepared.
-                        off_entity = process_map.get("OFF")
-                        if isinstance(off_entity, str) and off_entity.startswith("script."):
-                            ha_service_response("script", off_entity.split(".", 1)[1], {})
-                        try:
-                            set_all_program_charging("Disabled")
-                        except RuntimeError:
-                            pass
-                        restore_program_targets(all_programs=True)
-                        cur.execute("UPDATE ems_gpt_core_commands SET status='FAILED',acknowledgement_json=%s WHERE command_id=%s",
-                                    (json.dumps({"reason": str(exc)}), command["command_id"]))
-                        record_event("battery_import_target_failed", "executor", {
-                            "reason": str(exc), "slot_start": current_slot,
-                        }, "ERROR")
-                        continue
+                            target_update = set_all_program_targets(float(target))
+                            charging_updates = set_all_program_charging("Grid")
+                            target_update = {"programs": target_update,
+                                             "charging": charging_updates}
+                        except (RuntimeError, TypeError, ValueError) as exc:
+                            # Fail closed if any TOU register could not be prepared.
+                            off_entity = process_map.get("OFF")
+                            if isinstance(off_entity, str) and off_entity.startswith("script."):
+                                ha_service_response("script", off_entity.split(".", 1)[1], {})
+                            try:
+                                set_all_program_charging("Disabled")
+                            except RuntimeError:
+                                pass
+                            restore_program_targets(all_programs=True)
+                            cur.execute("UPDATE ems_gpt_core_commands SET status='FAILED',acknowledgement_json=%s WHERE command_id=%s",
+                                        (json.dumps({"reason": str(exc)}), command["command_id"]))
+                            record_event("battery_import_target_failed", "executor", {
+                                "reason": str(exc), "slot_start": current_slot,
+                            }, "ERROR")
+                            continue
                 if command["process_name"] == "SELL_BAT" and command["decision"] == "ON":
                     cur.execute("""SELECT soc_floor_pct FROM ems_gpt_slots
                       WHERE slot_start=%s LIMIT 1""", (current_slot,))
