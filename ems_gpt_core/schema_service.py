@@ -111,8 +111,10 @@ def ensure_runtime_schema(*, db, app_version: str) -> None:
           INDEX ix_module_runs(module_name,started_at)) ENGINE=InnoDB""",
         """CREATE TABLE IF NOT EXISTS ems_gpt_rce_windows (
           slot_start DATETIME(6) PRIMARY KEY, buy_window BOOLEAN NOT NULL,
-          sale_window BOOLEAN NOT NULL, updated_at DATETIME(6) NOT NULL
+          sale_window BOOLEAN NOT NULL, updated_at DATETIME(6) NOT NULL,
+          algorithm_version VARCHAR(16) NOT NULL DEFAULT ''
           ) ENGINE=InnoDB""",
+        "ALTER TABLE ems_gpt_rce_windows ADD COLUMN IF NOT EXISTS algorithm_version VARCHAR(16) NOT NULL DEFAULT ''",
         """CREATE TABLE IF NOT EXISTS ems_gpt_planner_traces (
           attempt_id VARCHAR(36) PRIMARY KEY, run_id VARCHAR(36) NULL,
           created_at DATETIME(6) NOT NULL, status VARCHAR(24) NOT NULL,

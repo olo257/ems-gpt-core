@@ -73,6 +73,8 @@ def preserve_stored_pv_forecasts(cur, lower: datetime, upper: datetime) -> dict:
             "slots": len(slots), "missing_slots": len(missing), "recovered_slots": recovered}
 
 
+PRICE_WINDOW_VERSION = "PEAKS_V2"
+
 def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
                          degradation: float, min_margin: float,
                          buy_tolerance: float,
@@ -92,6 +94,23 @@ def derive_price_windows(prices: list[dict], eta_c: float, eta_d: float,
             and required_sell is not None
             and float(current["sell"]) >= required_sell
         ))
+    # Profitability defines eligibility, not an all-day protected SELL window.
+    # Select actual prominent price peaks in the same four-hour neighbourhood
+    # used for BUY valleys. Shoulders remain NEUTRAL for safety replenishment.
+    sells = [float(row['sell']) for row in prices]
+    radius = min(16,max(0,len(prices)-1))
+    peak_slots = set()
+    for index,price in enumerate(sells):
+        neighbourhood = sells[max(0,index-radius):min(len(sells),index+radius+1)]
+        if (sale_flags[index] and price >= max(neighbourhood)-1e-9
+                and price-min(neighbourhood) >= buy_tolerance-1e-9):
+            left = right = index
+            while left > 0 and sale_flags[left-1] and abs(sells[left-1]-price) <= buy_tolerance+1e-9:
+                left -= 1
+            while right+1 < len(sells) and sale_flags[right+1] and abs(sells[right+1]-price) <= buy_tolerance+1e-9:
+                right += 1
+            peak_slots.update(range(left,right+1))
+    sale_flags = [eligible and i in peak_slots for i,eligible in enumerate(sale_flags)]
     buy_candidates: set[int] = set()
     # A 4-hour neighbourhood suppresses insignificant quarter-hour noise.
     # Without this prominence test, every tiny local dip expands by tolerance
@@ -851,10 +870,12 @@ def build_ingestion(a: IngestionAdapters):
                   WHERE slot_start=%s AND actual_recorded_at IS NULL""",
                   (sale_window, buy_window, market_window, row["slot_start"]))
                 cur.execute("""INSERT INTO ems_gpt_rce_windows
-                  (slot_start,buy_window,sale_window,updated_at) VALUES(%s,%s,%s,NOW(6))
+                  (slot_start,buy_window,sale_window,updated_at,algorithm_version)
+                  VALUES(%s,%s,%s,NOW(6),%s)
                   ON DUPLICATE KEY UPDATE buy_window=VALUES(buy_window),
-                  sale_window=VALUES(sale_window),updated_at=NOW(6)""",
-                  (row['slot_start'],buy_window,sale_window))
+                  sale_window=VALUES(sale_window),updated_at=NOW(6),
+                  algorithm_version=VALUES(algorithm_version)""",
+                  (row['slot_start'],buy_window,sale_window,PRICE_WINDOW_VERSION))
         result={"day":str(target),"rows":len(unique),"expected":expected,
                 "status":"OK" if len(unique)==expected else "PARTIAL","margin":margin}
         record_event("rce_refreshed","core",result)
@@ -870,9 +891,10 @@ def build_ingestion(a: IngestionAdapters):
 
 
 def original_rce_windows(cur, rows, options):
-    cur.execute("SELECT slot_start,buy_window,sale_window FROM ems_gpt_rce_windows")
+    cur.execute("SELECT slot_start,buy_window,sale_window,algorithm_version FROM ems_gpt_rce_windows")
     originals = {r['slot_start']:r for r in cur.fetchall()}
-    missing = [r for r in rows if r['slot_start'] not in originals]
+    missing = [r for r in rows if r['slot_start'] not in originals
+               or originals[r['slot_start']].get('algorithm_version') != PRICE_WINDOW_VERSION]
     if missing:
         cur.execute("""SELECT slot_start,price_buy_pln_kwh,price_sell_pln_kwh
           FROM ems_gpt_slots WHERE actual_recorded_at IS NULL AND price_source='PSE_API'
@@ -890,11 +912,16 @@ def original_rce_windows(cur, rows, options):
             float(options.get('minimum_arbitrage_margin_pln_kwh',.05)),
             float(options.get('buy_window_tolerance_pln_kwh',.05)),minimum)
         for row,(sell,buy) in zip(prices,flags):
-            if row['slot_start'] not in originals:
-                cur.execute("""INSERT IGNORE INTO ems_gpt_rce_windows
-                  (slot_start,buy_window,sale_window,updated_at) VALUES(%s,%s,%s,NOW(6))""",
-                  (row['slot_start'],buy,sell))
-                originals[row['slot_start']]={'buy_window':buy,'sale_window':sell}
+            if (row['slot_start'] not in originals or
+                    originals[row['slot_start']].get('algorithm_version') != PRICE_WINDOW_VERSION):
+                cur.execute("""INSERT INTO ems_gpt_rce_windows
+                  (slot_start,buy_window,sale_window,updated_at,algorithm_version)
+                  VALUES(%s,%s,%s,NOW(6),%s) ON DUPLICATE KEY UPDATE
+                  buy_window=VALUES(buy_window),sale_window=VALUES(sale_window),
+                  updated_at=NOW(6),algorithm_version=VALUES(algorithm_version)""",
+                  (row['slot_start'],buy,sell,PRICE_WINDOW_VERSION))
+                originals[row['slot_start']]={'buy_window':buy,'sale_window':sell,
+                                               'algorithm_version':PRICE_WINDOW_VERSION}
     result=[]
     for row in rows:
         original=originals.get(row['slot_start'])
@@ -903,5 +930,6 @@ def original_rce_windows(cur, rows, options):
         buy=strict_database_bool(original['buy_window'],'buy_window')
         sell=strict_database_bool(original['sale_window'],'sale_window')
         result.append(dict(row,buy_window=buy,sale_window=sell,
+                           rce_window_algorithm=PRICE_WINDOW_VERSION,
                            market_window='SELL' if sell else 'BUY' if buy else 'NEUTRAL'))
     return result

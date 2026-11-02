@@ -1,5 +1,22 @@
 # EMS-GPT Core — kanoniczny kontrakt RCE, planera i SOC
 
+## Uzupełnienie od 0.40.80: źródłowe okna SELL
+
+Opłacalność sprzedaży z późniejszym odkupem jest warunkiem koniecznym,
+ale nie wystarczającym do oznaczenia chronionego SELL. Klasyfikator wybiera
+prominentne maksima w czterogodzinnym sąsiedztwie oraz przyległe sloty
+mieszczące się w tolerancji ceny. Niższy lokalny szczyt nie może wchłonąć
+wyższego szczytu poprzez nieograniczoną ekspansję. Odcinki poza wybranym
+szczytem mogą być NEUTRAL albo należeć do pierwotnej doliny BUY.
+
+Rozszerzenie planera nadal dopuszcza tylko NEUTRAL i nigdy nie przełamuje
+wybranego SELL. Brak wykonalności nie jest naprawiany obniżeniem SOC.
+Źródłowa tabela okien ma `algorithm_version=PEAKS_V2`; wpisy starszej wersji
+są odtwarzane z zapisanych cen przed pierwszym planowaniem. Nie ma potrzeby
+ponownego pobierania RCE z sieci. Wersja algorytmu trafia do dowodów etapu
+ORIGINAL_WINDOWS. Opublikowany plan atomowo aktualizuje uprawnienia wykonawcze.
+
+
 ## Uzupełnienie obowiązujące od 0.40.79: pełny wolumen
 
 Ekonomiczny wynik nie może sam uzasadniać limitu pełnego zakupu przez

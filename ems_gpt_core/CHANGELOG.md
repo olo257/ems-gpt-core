@@ -1,3 +1,18 @@
+## 0.40.80 — szczyty SELL zamiast blokady całego drogiego odcinka
+
+- Rozdziela opłacalność sprzedaży od chronionego okna SELL. Samo istnienie
+  późniejszego tańszego zakupu nie zamienia całego droższego odcinka w SELL.
+  Chronione są prominentne szczyty cenowe z sąsiedztwa czterech godzin oraz
+  ich bezpośrednie otoczenie w tolerancji ceny. Pozostałe sloty mogą pozostać
+  NEUTRAL dla drugiego przebiegu planera.
+- Nie rozszerza BUY na nadal wybrane SELL i nie obniża minimum SOC ani celów
+  dobowych. Zachowuje pełny wolumen ładowania i niezależne harmonogramy HP.
+- Wersjonuje źródłowe okna RCE jako PEAKS_V2. Migracja przelicza stare flagi
+  z zapisanych cen przed planowaniem, bez oczekiwania na import RCE z sieci.
+- Regresje obejmują blokadę bezpieczeństwa przez zbyt szerokie SELL oraz
+  odświeżenie starych flag. Odtworzenie zapisanego błędu kończy się wykonalnym
+  wariantem; dane i pomiary produkcyjne pozostają poza repozytorium.
+
 ## 0.40.79 — pełny wolumen zamiast symbolicznego ładowania
 
 - Usuwa obejście BUY-only przez target wyprowadzony z symbolicznego wzrostu
