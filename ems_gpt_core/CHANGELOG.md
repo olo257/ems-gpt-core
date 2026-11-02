@@ -1,3 +1,18 @@
+## 0.40.81 — wykonanie zatwierdzonego BUY mimo błędu przeliczenia
+
+- Błąd planera lub PPD nie pomija już ładowania z zatwierdzonego,
+  opublikowanego planu bieżącego slotu. Polecenie PLAN_FALLBACK nie wymaga
+  działającego PPD, ale wymaga BUY, braku SELL, planowanego zakupu,
+  poprawnego targetu SOC, świeżej telemetrii i braku FORCE_OFF.
+- Warunki są sprawdzane przy utworzeniu, przed wysłaniem i przy naprawie
+  rejestrów falownika. Koniec slotu, osiągnięcie celu lub utrata uprawnienia
+  powodują OFF. Ponowienie jest możliwe po ustąpieniu blokady lub błędzie komendy.
+- Niezależne harmonogramy HP_HEAT_DHW i HP_DHW pozostają aktywne.
+  Elastyczne odbiory PV i sprzedaż baterii są wyłączane w trybie awarii.
+- Diagnostyka zapisuje identyfikator planu, decyzję oraz konkretny powód
+  kontynuacji lub blokady. Regresje obejmują wysyłkę, kontrolę SOC,
+  świeżość danych, ręczne blokady, zmianę planu i ponowienia.
+
 ## 0.40.80 — szczyty SELL zamiast blokady całego drogiego odcinka
 
 - Rozdziela opłacalność sprzedaży od chronionego okna SELL. Samo istnienie

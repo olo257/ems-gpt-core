@@ -2,7 +2,7 @@ import json
 import pathlib
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import RLock
 
 
@@ -191,12 +191,13 @@ class ExecutorServiceTests(unittest.TestCase):
         inserts = [row for row in executed
                    if "INSERT IGNORE INTO ems_gpt_core_commands" in row[0]]
         self.assertEqual(result["status"], "PLANNER_FAILURE_FAIL_SAFE")
-        self.assertEqual(result["staged"], 2)
+        self.assertEqual(result["staged"], 4)
         self.assertEqual([row[1][3] for row in inserts],
-                         ["PV_CWU", "PV_EV"])
-        self.assertTrue(all("'OFF'" in row[0] for row in inserts))
-        self.assertTrue(all(row[1][6] == "READY_FOR_CONNECTOR" for row in inserts))
-        self.assertTrue(all("PLANNER_FAIL_SAFE" in row[0] for row in inserts))
+                         ["PV_CWU", "PV_EV", "BATTERY_IMPORT", "SELL_BAT"])
+        self.assertTrue(all("'OFF'" in row[0] for row in inserts[:2]))
+        self.assertTrue(all(row[1][6] == "READY_FOR_CONNECTOR" for row in inserts[:2]))
+        self.assertTrue(all("PLANNER_FAIL_SAFE" in row[0] for row in inserts[:2]))
+        self.assertTrue(all(row[1][4] == "OFF" for row in inserts[2:]))
         self.assertFalse(any("SELECT d.*" in row[0] for row in executed))
 
     def test_planner_failure_keeps_independent_heating_on(self):
@@ -241,12 +242,61 @@ class ExecutorServiceTests(unittest.TestCase):
         inserts = [row for row in executed
                    if "INSERT IGNORE INTO ems_gpt_core_commands" in row[0]]
         self.assertEqual(result["status"], "PLANNER_FAILURE_FAIL_SAFE")
-        self.assertEqual(result["staged"], 3)
+        self.assertEqual(result["staged"], 5)
         hp = [row for row in inserts if "'HP_COMFORT'" in row[0]]
         self.assertEqual(len(hp), 1)
         self.assertEqual(hp[0][1][3], 'ON')
         self.assertTrue(json.loads(hp[0][1][-1])['independent_hp'])
         self.assertFalse(any("SELECT d.*" in row[0] for row in executed))
+
+    def test_failure_stages_buy_without_ppd_and_retries_after_off_or_failure(self):
+        now=datetime.now().replace(tzinfo=None)
+        start=now.replace(minute=now.minute//15*15,second=0,microsecond=0)
+        plan=dict(slot_id='slot',plan_run_id='accepted',plan_stage='PUBLISHED',
+            published_run_status='PUBLISHED',plan_validation_status='ACCEPTED',
+            plan_published_at=start,slot_start=start,slot_end=start+timedelta(minutes=15),
+            buy_window=1,sale_window=0,grid_policy_planned='BUY_ALLOWED',
+            planned_buy_kwh=1.0,soc_charge_target_pct=40)
+        inserted=[]
+        class Cursor:
+            rowcount=0
+            def __enter__(self): return self
+            def __exit__(self,*_): return False
+            def execute(self,sql,params=()):
+                self.sql=sql
+                self.rowcount=0
+                if "INSERT IGNORE INTO ems_gpt_core_commands" in sql:
+                    self.rowcount=1
+                    if "'PLAN_FALLBACK'" in sql and params[3]=='BATTERY_IMPORT':
+                        inserted.append(dict(decision=params[4],plan_version=params[5],
+                            expires_at=params[6],status=params[7]))
+            def fetchone(self):
+                if 'SELECT s.*,r.status' in self.sql: return plan
+                if 'SELECT soc_pct,captured_at' in self.sql: return dict(soc_pct=20,captured_at=now)
+                if "source='PLAN_FALLBACK'" in self.sql: return inserted[-1] if inserted else None
+                if 'SELECT slot_id' in self.sql: return plan
+                return None
+        class Connection:
+            def __enter__(self): return self
+            def __exit__(self,*_): return False
+            def cursor(self): return Cursor()
+        with tempfile.TemporaryDirectory() as directory:
+            service=self.build_service(directory,db=Connection,slot_start_fn=lambda:start)
+            self.options.update(executor_enabled=True)
+            self.state['ppd_failure_latched']='PPD_FAILED'
+            service.stage_executor_commands()
+            service.stage_executor_commands()
+            self.assertEqual([r['decision'] for r in inserted],['ON'])
+            plan['requested_state']='FORCE_OFF'
+            service.stage_executor_commands()
+            self.assertEqual(inserted[-1]['decision'],'OFF')
+            plan['requested_state']=None
+            service.stage_executor_commands()
+            inserted[-1]['status']='FAILED'
+            service.stage_executor_commands()
+        self.assertEqual([r['decision'] for r in inserted],['ON','OFF','ON','ON'])
+        self.assertEqual(len({r['plan_version'] for r in inserted}),4)
+        self.assertTrue(all(r['expires_at']==plan['slot_end'] for r in inserted))
 
     def test_settings_are_validated_and_persisted(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -420,7 +470,7 @@ class BatteryDispatchConflictTests(unittest.TestCase):
     def dispatch(self, directory, commands, grid_on=False, fail_off=False,
                  authorization=None, live_soc="22", telemetry=True,
                  fail_grid_write=False, latched=False, switch_off_only=False,
-                 registers_match=False):
+                 registers_match=False, fallback_plan=None):
         calls = []
         events = []
         self.events = events
@@ -444,6 +494,10 @@ class BatteryDispatchConflictTests(unittest.TestCase):
             def execute(self, sql, params=()): self.sql = sql
             def fetchall(self): return commands
             def fetchone(self):
+                if "SELECT s.*,r.status" in self.sql:
+                    return fallback_plan
+                if "SELECT soc_pct,captured_at" in self.sql:
+                    return {"soc_pct":22,"captured_at":now} if telemetry else {}
                 if "SELECT c.*,s.plan_run_id" in self.sql:
                     return authorization
                 if "SELECT captured_at FROM" in self.sql:
@@ -490,6 +544,45 @@ class BatteryDispatchConflictTests(unittest.TestCase):
     def command(self, process, decision):
         return {"command_id": process, "process_name": process, "decision": decision,
                 "plan_version": "plan:ppd", "source": "PLAN"}
+
+
+    def fallback_plan(self, **changes):
+        now = datetime(2026,10,14,13)
+        return dict(plan_run_id='plan',plan_stage='PUBLISHED',published_run_status='PUBLISHED',
+                    plan_validation_status='ACCEPTED',plan_published_at=now,
+                    slot_start=now,slot_end=now+timedelta(minutes=15),buy_window=1,sale_window=0,
+                    grid_policy_planned='BUY_ALLOWED',planned_buy_kwh=1.2,
+                    soc_charge_target_pct=32.4,**changes)
+
+    def test_fallback_dispatch_and_repair_ignore_failed_ppd_only(self):
+        for commands in ([],[dict(self.command('BATTERY_IMPORT','ON'),source='PLAN_FALLBACK')]):
+            with self.subTest(commands=commands), tempfile.TemporaryDirectory() as directory:
+                _,states,calls=self.dispatch(directory,commands,latched=True,
+                    fallback_plan=self.fallback_plan(),
+                    authorization=self.authorization(source='PLAN_FALLBACK',eligible=None,ppd_decision=None))
+                self.assertEqual(states['switch.inverter_battery_grid_charging']['state'],'on')
+                self.assertTrue(any(c[1]=='import_on' for c in calls))
+                for p in range(1,7):
+                    self.assertEqual(states[f'select.inverter_program_{p}_charging']['state'],'Grid')
+
+    def test_fallback_is_revalidated_before_dispatch(self):
+        for change in ({'requested_state':'FORCE_OFF'},{'buy_window':0},
+                       {'plan_validation_status':'REJECTED'},{'plan_run_id':'new-plan'}):
+            plan=self.fallback_plan()
+            plan.update(change)
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                _,states,calls=self.dispatch(directory,
+                    [dict(self.command('BATTERY_IMPORT','ON'),source='PLAN_FALLBACK')],
+                    grid_on=True,latched=True,fallback_plan=plan)
+                self.assertFalse(any(c[1]=='import_on' for c in calls))
+                self.assertEqual(states['switch.inverter_battery_grid_charging']['state'],'off')
+
+    def test_fallback_repair_requires_fresh_telemetry_and_live_soc(self):
+        for kwargs in ({'telemetry':False},{'live_soc':'33'}):
+            with self.subTest(kwargs=kwargs), tempfile.TemporaryDirectory() as directory:
+                _,_,calls=self.dispatch(directory,[],latched=True,fallback_plan=self.fallback_plan(),
+                    authorization=self.authorization(source='PLAN_FALLBACK',eligible=None),**kwargs)
+                self.assertFalse(any(c[1]=='import_on' for c in calls))
 
     def test_buy_survives_sell_off_in_same_dispatch(self):
         with tempfile.TemporaryDirectory() as directory:
