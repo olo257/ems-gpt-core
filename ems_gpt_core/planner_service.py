@@ -198,11 +198,17 @@ def build_planner(a: PlannerAdapters):
             if not source:
                 raise RuntimeError("No open forecast rows for planner horizon")
             validate_pv_forecasts(source)
-            missing_load = [str(row["slot_start"]) for row in source
+            missing_load = [(index, row["slot_start"]) for index, row in enumerate(source)
                             if row.get("forecast_load_kwh") is None]
             if missing_load:
-                raise RuntimeError(
-                    f"MISSING_LOAD_FORECAST:{len(missing_load)}:{missing_load[0]}")
+                first_index, first_slot = missing_load[0]
+                error = RuntimeError(
+                    f"MISSING_LOAD_FORECAST:{len(missing_load)}:{first_slot}")
+                error.planner_evidence = {
+                    "slot_index": first_index,
+                    "missing_load_slots": [str(slot) for _, slot in missing_load],
+                }
+                raise error
             continuity = all(
                 source[i]["slot_start"] - source[i - 1]["slot_start"] == timedelta(minutes=15)
                 for i in range(1, len(source))
@@ -655,12 +661,12 @@ def build_planner(a: PlannerAdapters):
             failure = exc
             import traceback
             attempt["traceback"] = traceback.format_exc()
-            trace.add(attempt['failed_stage'], 'ERROR', error=str(exc))
+            evidence = getattr(exc,'planner_evidence',None) or getattr(exc.__cause__,'planner_evidence',{})
+            trace.add(attempt['failed_stage'], 'ERROR', error=str(exc), details=evidence)
             reason = str(exc)[:4000]
             attempt["failure_reason"] = reason
             attempt["status"] = "REJECTED"
             tokens = reason.split(":")
-            evidence = getattr(exc,'planner_evidence',None) or getattr(exc.__cause__,'planner_evidence',{})
             failed_index = evidence.get('slot_index')
             if failed_index is None and len(tokens) > 1 and tokens[1].isdigit():
                 failed_index = int(tokens[1])

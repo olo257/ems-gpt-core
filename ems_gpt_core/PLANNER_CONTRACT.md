@@ -763,6 +763,15 @@ zgodnie z medianą zmierzonych odstępów; przy braku odstępów używa się rob
 założenia 2,5 h. Replan kontynuuje zaobserwowaną fazę i liczy tylko pozostałe
 sloty cyklu. CWU pozostaje uwzględnione podczas pracy CO.
 
+Model `COMPONENT_LOAD_V3` korzysta również z kompletnych próbek SQL z dni
+8–30, w tym z maksimum najbliższych próbek domu przy małej liczbie obserwacji
+w granicy 30 minut. Gdy każdy z dwóch zakresów historii dostarcza po jednym
+pełnym cyklu CWU, profil uśrednia oba cykle. Jeśli dostępny jest tylko jeden
+pełny cykl, jego profil może uzupełnić brakującą prognozę i otrzymuje oznaczenie
+`LOW_SAMPLE_SINGLE_COMPLETE_CYCLE`. Wtedy pierwszeństwo ma zachowana prognoza
+tego samego slotu. Prognoza nadal wymaga wiarygodnych próbek domu i co najmniej
+jednego kompletnego cyklu CWU.
+
 Profil CO opisuje kolejne aktywne sloty, z maksymalnie 3 h przerwy bez ponownego
 naliczania rozruchu. Uczenie sesji CO również łączy takie przerwy. Przy braku
 2 kompletnych sesji zachowuje się wcześniejszą dodatnią prognozę CO; jeżeli
