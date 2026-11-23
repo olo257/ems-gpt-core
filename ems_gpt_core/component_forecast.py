@@ -155,7 +155,8 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
             historical_by_quarter[key] = max(
                 historical_by_quarter.get(key, 0.0), row["dhw_kwh"])
         dhw_slot_envelope = {
-            key: recent_by_quarter.get(key, historical_by_quarter.get(key, 0.0))
+            key: max(recent_by_quarter.get(key, 0.0),
+                     historical_by_quarter.get(key, 0.0))
             for key in set(recent_by_quarter) | set(historical_by_quarter)
         }
         if recent_by_quarter:
