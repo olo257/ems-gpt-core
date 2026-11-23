@@ -618,9 +618,8 @@ def build_materializations(a: MaterializationAdapters):
             if not future:
                 return 0
             last_slot = future[-1]["slot_start"]
-            # A complete batch can be reused during this slot. A legacy
-            # Legacy incomplete and blocked batches get one retry so new
-            # nearby-quarter fallbacks can resolve them after an upgrade.
+            # Reuse the current batch, including terminal blocks. A new model
+            # or a legacy unresolved status permits a retry in the same slot.
             cur.execute("""SELECT MAX(generated_at) generated_at,MAX(slot_start) last_slot,
               MAX(model_version) model_version,COUNT(*) slot_count,SUM(status IN (
                 'PRESERVED_INCOMPLETE_HISTORY','BLOCKED_NO_ACCEPTED_FALLBACK')) unresolved
@@ -659,7 +658,8 @@ def build_materializations(a: MaterializationAdapters):
                 estimate = model["slots"][slot]
                 valid = estimate["house_kwh"] is not None
                 source = str(estimate.get("house_source") or "")
-                low_sample = source.startswith("LOW_SAMPLE")
+                low_sample = (source.startswith(("LOW_SAMPLE", "HISTORICAL_LOW_SAMPLE"))
+                              or model["dhw_profile_source"] == "LOW_SAMPLE_SINGLE_COMPLETE_CYCLE")
                 status = "READY" if valid else None
                 evidence = {**metadata,
                     "house_forecast_source": source or None,

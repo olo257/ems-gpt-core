@@ -96,6 +96,50 @@ class ComponentTests(unittest.TestCase):
         self.assertIsNone(result['slots'][NOW]['house_kwh'])
         self.assertIn('INSUFFICIENT_COMPLETE_DHW_CYCLES',result['reasons'])
 
+    def test_single_historical_dhw_cycle_fills_two_sparse_forecast_gaps(self):
+        first = NOW.replace(hour=14, minute=15)
+        second = NOW.replace(hour=16, minute=0)
+        day = (NOW - timedelta(days=8)).replace(hour=0, minute=0)
+        rows = [raw(day.replace(hour=5, minute=45)), raw(day.replace(hour=6), dhw=.4),
+                raw(day.replace(hour=6, minute=15), dhw=.2),
+                raw(day.replace(hour=6, minute=30)),
+                raw(day.replace(hour=14), house=.3),
+                raw(day.replace(hour=14, minute=30), house=.5),
+                raw(day.replace(hour=16, minute=15), house=.6)]
+        future = [{'slot_start': first, 'forecast_load_kwh': None},
+                  {'slot_start': first + SLOT, 'forecast_load_kwh': .9},
+                  {'slot_start': second, 'forecast_load_kwh': None}]
+        cur = MagicMock()
+        cur.fetchall.side_effect = [future, rows]
+        cur.fetchone.side_effect = [None, {}, {}]
+        context = MagicMock()
+        context.__enter__.return_value.cursor.return_value.__enter__.return_value = cur
+        service = build_materializations(MaterializationAdapters(
+            options={}, app_version='test', db=lambda: context,
+            local_now=lambda: NOW, slot_start=lambda: NOW, record_event=lambda *a: None))
+
+        service.learn_missing_load()
+
+        writes = [call.args[1] for call in cur.execute.call_args_list
+                  if 'SET forecast_load_kwh=%s' in call.args[0]]
+        self.assertEqual(writes, [(.5, first), (1.0, second)])
+        batches = [call.args[1] for call in cur.execute.call_args_list
+                   if 'INSERT INTO ems_gpt_core_consumption_forecasts' in call.args[0]]
+        self.assertEqual([row[8] for row in batches],
+                         ['READY', 'PRESERVED_EXISTING_FORECAST', 'READY'])
+        self.assertIn('LOW_SAMPLE_SINGLE_COMPLETE_CYCLE', batches[0][9])
+        self.assertIn('HISTORICAL_LOW_SAMPLE_NEAREST_QUARTER', batches[0][9])
+
+    def test_dhw_profile_combines_complete_cycles_from_both_history_ranges(self):
+        recent = (NOW - timedelta(days=1)).replace(hour=5, minute=45)
+        older = recent - timedelta(days=7)
+        rows = [raw(start + offset * SLOT, dhw=dhw)
+                for start, energy in ((recent, .4), (older, .8))
+                for offset, dhw in enumerate((0, energy, 0))]
+        model = build_component_forecast(rows, [NOW], now=NOW)
+        self.assertEqual(model['dhw_profile_source'], 'MIXED_COMPLETE_CYCLES')
+        self.assertAlmostEqual(model['dhw_profile'][0], .6)
+
     def test_two_exact_quarter_samples_use_nearest_qualified_quarter(self):
         rows=history()
         exact=[row for row in rows if row['slot_start'].hour==NOW.hour

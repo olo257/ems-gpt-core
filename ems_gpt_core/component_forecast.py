@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timedelta
 from statistics import mean, median
 
-MODEL_VERSION = "COMPONENT_LOAD_V2"
+MODEL_VERSION = "COMPONENT_LOAD_V3"
 SLOT = timedelta(minutes=15)
 
 
@@ -113,7 +113,21 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
     dhw_cycles = complete_cycles(recent_rows, "dhw_kwh")
     historical_dhw_cycles = complete_cycles(historical_rows, "dhw_kwh")
     heat_cycles = complete_cycles(recent_rows, "heat_kwh", max_idle_slots=12)
-    dhw_profile = mean_profile(dhw_cycles) or mean_profile(historical_dhw_cycles)
+    if len(dhw_cycles) >= 2:
+        dhw_profile = mean_profile(dhw_cycles)
+        dhw_profile_source = "RECENT_COMPLETE_CYCLES"
+    elif len(historical_dhw_cycles) >= 2:
+        dhw_profile = mean_profile(historical_dhw_cycles)
+        dhw_profile_source = "HISTORICAL_COMPLETE_CYCLES"
+    elif dhw_cycles and historical_dhw_cycles:
+        dhw_profile = mean_profile(historical_dhw_cycles + dhw_cycles)
+        dhw_profile_source = "MIXED_COMPLETE_CYCLES"
+    elif dhw_cycles or historical_dhw_cycles:
+        dhw_profile = (dhw_cycles or historical_dhw_cycles)[0]["profile"]
+        dhw_profile_source = "LOW_SAMPLE_SINGLE_COMPLETE_CYCLE"
+    else:
+        dhw_profile = None
+        dhw_profile_source = None
     heat_profile = mean_profile(heat_cycles)
     quarters, historical_quarters = {}, {}
     for row in recent_rows:
@@ -195,13 +209,19 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
                 hist_nearby = []
                 for (hour, minute), candidates in historical_quarters.items():
                     distance = abs(((hour * 60 + minute - target_minute + 720) % 1440) - 720)
-                    if distance <= 30 and len(candidates) >= 3:
+                    if distance <= 30 and candidates:
                         hist_nearby.append((distance, hour * 60 + minute, candidates))
-                if hist_nearby:
-                    _, _, house_samples = min(hist_nearby, key=lambda item: (item[0], item[1]))
+                qualified = [item for item in hist_nearby if len(item[2]) >= 3]
+                if qualified:
+                    _, _, house_samples = min(qualified, key=lambda item: (item[0], item[1]))
                     house_source = "HISTORICAL_NEAREST_QUARTER"
                 elif hist_samples:
                     house_samples, house_source = hist_samples, "HISTORICAL_LOW_SAMPLE_EXACT"
+                elif hist_nearby:
+                    nearest_distance = min(item[0] for item in hist_nearby)
+                    house_samples = [sample for distance, _, candidates in hist_nearby
+                                     if distance == nearest_distance for sample in candidates]
+                    house_source = "HISTORICAL_LOW_SAMPLE_NEAREST_QUARTER"
         valid = house_source is not None and dhw_profile is not None
         if valid and (house_source.startswith("LOW_SAMPLE") or house_source.startswith("HISTORICAL_LOW_SAMPLE")):
             house_kwh = max(item["house_kwh"] for item in house_samples)
@@ -213,11 +233,12 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
             "house_kwh": round(house_kwh, 6) if valid else None,
             "dhw_kwh": round(dhw_by_slot[when], 6) if valid else None,
             "sample_count": len(samples),
-            "house_sample_count": len(house_samples) if valid else 0,
-            "house_source": house_source if valid else "NO_QUALIFIED_QUARTER",
+            "house_sample_count": len(house_samples),
+            "house_source": house_source or "NO_QUALIFIED_QUARTER",
         }
     return {"version": MODEL_VERSION, "slots": result, "heat_profile": heat_profile,
-            "dhw_profile": dhw_profile, "dhw_cycle_count": len(dhw_cycles),
+            "dhw_profile": dhw_profile, "dhw_profile_source": dhw_profile_source,
+            "dhw_cycle_count": len(dhw_cycles),
             "historical_dhw_cycle_count": len(historical_dhw_cycles),
             "heat_cycle_count": len(heat_cycles), "dhw_interval_slots": interval_slots,
             "circulation_effect": "IN_MEASURED_DHW_CYCLES",

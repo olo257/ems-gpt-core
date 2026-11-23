@@ -93,7 +93,11 @@ class TraceTests(unittest.TestCase):
         self.assertEqual(payload['status'], 'REJECTED')
         self.assertEqual(payload['hp']['status'], 'COMMITTED')
         self.assertIn('MISSING_LOAD_FORECAST', payload['traceback'])
-        self.assertTrue(payload['stages'])
+        self.assertEqual(payload['stages'][-1]['details'],
+                         {'slot_index': 0, 'missing_load_slots': [str(now)]})
+        rejected = next(params for sql, params in transactions[2]['queries']
+                        if 'INSERT INTO ems_gpt_plan_attempts' in sql)
+        self.assertEqual(rejected[4:6], (0, now))
 
     def test_later_optimizer_exposes_lost_contract(self):
         def solve(rows, minimum_soc_targets=None):
