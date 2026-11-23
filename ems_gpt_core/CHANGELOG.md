@@ -1,3 +1,13 @@
+## 0.40.82 — uzupełnianie brakujących prognoz zużycia
+
+- Gdy dostępny jest jeden kompletny cykl CWU, jego zmierzony profil może
+  uzupełnić brakującą prognozę przy wiarygodnych próbkach zużycia domu.
+- Przy małej liczbie próbek można wykorzystać kompletne pomiary domu z dni
+  8–30 z kwadransa oddalonego najwyżej o 30 minut. Zachowana prognoza
+  tego samego slotu ma pierwszeństwo przed takim oszacowaniem.
+- Diagnostyka zapisuje źródło profilu CWU i wszystkie sloty z brakującą
+  prognozą zużycia. Harmonogram pompy ciepła jest zapisywany niezależnie.
+
 ## 0.40.81 — wykonanie zatwierdzonego BUY mimo błędu przeliczenia
 
 - Błąd planera lub PPD nie pomija już ładowania z zatwierdzonego,
