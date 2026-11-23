@@ -174,6 +174,8 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
     reasons = []
     if not dhw_profile and not dhw_slot_envelope:
         reasons.append("INSUFFICIENT_COMPLETE_DHW_CYCLES")
+    elif dhw_slot_envelope:
+        reasons.append("LOW_SAMPLE_DHW_SLOT_ENVELOPE")
     if not heat_profile:
         reasons.append("INSUFFICIENT_COMPLETE_HEAT_CYCLES")
     intervals = [(b["start"] - a["start"]).total_seconds() / 3600
