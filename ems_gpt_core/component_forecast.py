@@ -1,7 +1,7 @@
 """Versioned household/DHW/heating forecasts from complete measured slots.
 
-No missing channel is interpreted as zero. Flexible consumers with no energy
-meter invalidate a training slot rather than leaking into battery demand.
+No missing channel is interpreted as zero. Unmetered flexible consumption
+invalidates household attribution. HP_DHW learns from its own power channel.
 Sparse but complete household observations use an explicitly marked,
 conservative low-sample fallback instead of blocking the full planner horizon.
 """
@@ -11,8 +11,9 @@ import math
 from datetime import datetime, timedelta
 from statistics import mean, median
 
-MODEL_VERSION = "COMPONENT_LOAD_V3"
+MODEL_VERSION = "COMPONENT_LOAD_V5"
 SLOT = timedelta(minutes=15)
+WIDE_FALLBACK_MINUTES = 120
 
 
 def energy(value):
@@ -23,10 +24,14 @@ def energy(value):
     return number if math.isfinite(number) and number >= 0 else None
 
 
+def _is_observed_slot(row):
+    return (row.get("actual_mode") != "MISSING_OUTAGE"
+            and str(row.get("execution_reason") or "").startswith("CORE_TELEMETRY_"))
+
+
 def split_slot(row, minimum_samples=10):
     """Conserve metered energy and explicitly reject incomplete attribution."""
-    if (row.get("actual_mode") == "MISSING_OUTAGE"
-            or not str(row.get("execution_reason") or "").startswith("CORE_TELEMETRY_")
+    if (not _is_observed_slot(row)
             or int(row.get("sample_count") or 0) < minimum_samples
             or int(row.get("component_samples") or 0) < minimum_samples
             or float(row.get("coverage_pct") or 0) < 100 * minimum_samples / 15):
@@ -100,18 +105,24 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
     """One batch supplies all components; incomplete evidence preserves old input."""
     horizon = sorted(horizon)
     recent_rows, historical_rows = [], []
-    for row in raw_rows:
-        if not now - timedelta(days=30) <= row["slot_start"] < now:
+    recent_dhw, historical_dhw = [], []
+    recent_start = now - timedelta(days=7)
+    history_start = now - timedelta(days=30)
+    for row in sorted(raw_rows, key=lambda item: item["slot_start"]):
+        when = row["slot_start"]
+        if not history_start <= when < now:
             continue
+        recent = when >= recent_start
+        if _is_observed_slot(row) and int(row.get("dhw_samples") or 0) >= minimum_samples:
+            dhw_kwh = energy(row.get("actual_dhw_consumed_kwh"))
+            if dhw_kwh is not None:
+                (recent_dhw if recent else historical_dhw).append(
+                    {"slot_start": when, "dhw_kwh": dhw_kwh})
         part = split_slot(row, minimum_samples)
-        if part is None:
-            continue
-        (recent_rows if row["slot_start"] >= now - timedelta(days=7)
-         else historical_rows).append(part)
-    recent_rows.sort(key=lambda item: item["slot_start"])
-    historical_rows.sort(key=lambda item: item["slot_start"])
-    dhw_cycles = complete_cycles(recent_rows, "dhw_kwh")
-    historical_dhw_cycles = complete_cycles(historical_rows, "dhw_kwh")
+        if part is not None:
+            (recent_rows if recent else historical_rows).append(part)
+    dhw_cycles = complete_cycles(recent_dhw, "dhw_kwh")
+    historical_dhw_cycles = complete_cycles(historical_dhw, "dhw_kwh")
     heat_cycles = complete_cycles(recent_rows, "heat_kwh", max_idle_slots=12)
     if len(dhw_cycles) >= 2:
         dhw_profile = mean_profile(dhw_cycles)
@@ -154,10 +165,10 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
             # Continue the observed phase, including only remaining cycle slots.
             recent = [cycle for cycle in dhw_cycles if cycle["start"].date() == day]
             # An open measured cycle is not a training cycle but is valid phase evidence.
-            latest = recent_rows[-1] if recent_rows else None
+            latest = recent_dhw[-1] if recent_dhw else None
             if latest and latest["slot_start"] == now - SLOT and latest["dhw_kwh"] >= .02 and latest["slot_start"].date() == day:
                 tail = [latest]
-                for prior in reversed(recent_rows[:-1]):
+                for prior in reversed(recent_dhw[:-1]):
                     if tail[-1]["slot_start"] - prior["slot_start"] != SLOT or prior["dhw_kwh"] < .02:
                         break
                     tail.append(prior)
@@ -172,11 +183,12 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
                 start += SLOT * interval_slots
     result = {}
     for when in horizon:
+        target_minute = when.hour * 60 + when.minute
         samples = quarters.get((when.hour, when.minute), [])
         house_source = "EXACT_QUARTER" if len(samples) >= 3 else None
         house_samples = samples
+        wide_fallback_distance = None
         if house_source is None:
-            target_minute = when.hour * 60 + when.minute
             nearby = []
             low_sample_nearby = []
             for (hour, minute), candidates in quarters.items():
@@ -205,7 +217,6 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
             if len(hist_samples) >= 3:
                 house_samples, house_source = hist_samples, "HISTORICAL_EXACT_QUARTER"
             else:
-                target_minute = when.hour * 60 + when.minute
                 hist_nearby = []
                 for (hour, minute), candidates in historical_quarters.items():
                     distance = abs(((hour * 60 + minute - target_minute + 720) % 1440) - 720)
@@ -222,19 +233,33 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
                     house_samples = [sample for distance, _, candidates in hist_nearby
                                      if distance == nearest_distance for sample in candidates]
                     house_source = "HISTORICAL_LOW_SAMPLE_NEAREST_QUARTER"
-        valid = house_source is not None and dhw_profile is not None
-        if valid and (house_source.startswith("LOW_SAMPLE") or house_source.startswith("HISTORICAL_LOW_SAMPLE")):
-            house_kwh = max(item["house_kwh"] for item in house_samples)
-        elif valid:
-            house_kwh = mean(item["house_kwh"] for item in house_samples)
-        else:
+        if house_source is None:
+            # Only use wider observations after exhausting the standard window.
+            # Both lookback ranges contain the same quality-checked house component.
+            wider = []
+            for by_quarter in (quarters, historical_quarters):
+                for (hour, minute), candidates in by_quarter.items():
+                    distance = abs(((hour * 60 + minute - target_minute + 720) % 1440) - 720)
+                    if distance <= WIDE_FALLBACK_MINUTES:
+                        wider.append((distance, candidates))
+            if wider:
+                wide_fallback_distance = min(distance for distance, _ in wider)
+                house_samples = [sample for distance, candidates in wider
+                                 if distance == wide_fallback_distance for sample in candidates]
+                house_source = "LOW_SAMPLE_WIDE_NEAREST_QUARTER"
+        if house_source is None:
             house_kwh = None
+        elif house_source.startswith(("LOW_SAMPLE", "HISTORICAL_LOW_SAMPLE")):
+            house_kwh = max(item["house_kwh"] for item in house_samples)
+        else:
+            house_kwh = mean(item["house_kwh"] for item in house_samples)
         result[when] = {
-            "house_kwh": round(house_kwh, 6) if valid else None,
-            "dhw_kwh": round(dhw_by_slot[when], 6) if valid else None,
+            "house_kwh": round(house_kwh, 6) if house_kwh is not None else None,
+            "dhw_kwh": round(dhw_by_slot[when], 6) if dhw_profile is not None else None,
             "sample_count": len(samples),
             "house_sample_count": len(house_samples),
             "house_source": house_source or "NO_QUALIFIED_QUARTER",
+            "house_wide_fallback_distance_minutes": wide_fallback_distance,
         }
     return {"version": MODEL_VERSION, "slots": result, "heat_profile": heat_profile,
             "dhw_profile": dhw_profile, "dhw_profile_source": dhw_profile_source,

@@ -17,7 +17,7 @@ def raw(when, house=.2, dhw=0, heat=0, **changes):
                actual_heating_consumed_kwh=heat,actual_dhw_consumed_kwh=dhw,
                actual_cooling_consumed_kwh=0,actual_ev_kwh=0,pv_cwu_on=0,
                actual_mode='AUTO',execution_reason='CORE_TELEMETRY_15_SAMPLES',
-               sample_count=15,component_samples=15,coverage_pct=100)
+               sample_count=15,component_samples=15,dhw_samples=15,coverage_pct=100)
     row.update(changes)
     return row
 
@@ -96,6 +96,50 @@ class ComponentTests(unittest.TestCase):
         self.assertIsNone(result['slots'][NOW]['house_kwh'])
         self.assertIn('INSUFFICIENT_COMPLETE_DHW_CYCLES',result['reasons'])
 
+    def test_dhw_uses_its_own_samples_when_flexible_load_telemetry_is_incomplete(self):
+        start = NOW.replace(hour=6, minute=0)
+        rows = history()
+        for row in rows:
+            row.update(actual_ev_kwh=None, component_samples=0, pv_cwu_on=None)
+        for row in rows[::2]:
+            row["pv_cwu_on"] = 1
+        horizon = [start, start + SLOT]
+
+        result = build_component_forecast(rows, horizon, now=start)
+
+        self.assertEqual(result['dhw_profile_source'], 'RECENT_COMPLETE_CYCLES')
+        self.assertEqual([result['slots'][when]['dhw_kwh'] for when in horizon], [.4, .2])
+        self.assertTrue(all(result['slots'][when]['house_kwh'] is None for when in horizon))
+
+        for row in rows:
+            if row['actual_dhw_consumed_kwh'] > 0:
+                row['dhw_samples'] = 9
+        result = build_component_forecast(rows, horizon, now=start)
+        self.assertIsNone(result['slots'][start]['dhw_kwh'])
+
+    def test_materialization_saves_dhw_without_overwriting_preserved_total(self):
+        start = NOW.replace(hour=6, minute=0)
+        rows = history()
+        for row in rows:
+            row.update(pv_cwu_on=1)
+        cur = MagicMock()
+        cur.fetchall.side_effect = [[{'slot_start': start, 'forecast_load_kwh': .9}], rows]
+        cur.fetchone.return_value = None
+        context = MagicMock()
+        context.__enter__.return_value.cursor.return_value.__enter__.return_value = cur
+        service = build_materializations(MaterializationAdapters(
+            options={}, app_version='test', db=lambda: context,
+            local_now=lambda: start, slot_start=lambda: start, record_event=lambda *a: None))
+
+        service.learn_missing_load()
+
+        params = next(call.args[1] for call in cur.execute.call_args_list
+                      if 'INSERT INTO ems_gpt_core_consumption_forecasts' in call.args[0])
+        self.assertEqual((params[4], params[5], params[8]),
+                         (None, .4, 'PRESERVED_EXISTING_FORECAST'))
+        self.assertFalse(any('SET forecast_load_kwh=%s' in call.args[0]
+                             for call in cur.execute.call_args_list))
+
     def test_single_historical_dhw_cycle_fills_two_sparse_forecast_gaps(self):
         first = NOW.replace(hour=14, minute=15)
         second = NOW.replace(hour=16, minute=0)
@@ -139,6 +183,38 @@ class ComponentTests(unittest.TestCase):
         model = build_component_forecast(rows, [NOW], now=NOW)
         self.assertEqual(model['dhw_profile_source'], 'MIXED_COMPLETE_CYCLES')
         self.assertAlmostEqual(model['dhw_profile'][0], .6)
+
+    def test_wide_fallback_uses_measured_house_load_to_fill_missing_slot(self):
+        target = NOW.replace(hour=16, minute=0)
+        day = (NOW - timedelta(days=8)).replace(hour=0, minute=0)
+        rows = [raw(day.replace(hour=5, minute=45)), raw(day.replace(hour=6), dhw=.181467),
+                raw(day.replace(hour=6, minute=15)),
+                raw(day.replace(hour=13, minute=45), house=.8),
+                raw(day.replace(hour=14), house=.390217),
+                raw(day.replace(hour=16), house=.9, component_samples=0)]
+        future = [{'slot_start': target - SLOT, 'forecast_load_kwh': .91},
+                  {'slot_start': target, 'forecast_load_kwh': None},
+                  {'slot_start': target + SLOT, 'forecast_load_kwh': None}]
+        cur = MagicMock()
+        cur.fetchall.side_effect = [future, rows]
+        cur.fetchone.side_effect = [None, {}, {}]
+        context = MagicMock()
+        context.__enter__.return_value.cursor.return_value.__enter__.return_value = cur
+        service = build_materializations(MaterializationAdapters(
+            options={}, app_version='test', db=lambda: context,
+            local_now=lambda: NOW, slot_start=lambda: NOW, record_event=lambda *a: None))
+
+        service.learn_missing_load()
+
+        writes = [call.args[1] for call in cur.execute.call_args_list
+                  if 'SET forecast_load_kwh=%s' in call.args[0]]
+        self.assertEqual(writes, [(.571684, target)])
+        batches = [call.args[1] for call in cur.execute.call_args_list
+                   if 'INSERT INTO ems_gpt_core_consumption_forecasts' in call.args[0]]
+        self.assertEqual([row[8] for row in batches],
+                         ['PRESERVED_EXISTING_FORECAST', 'READY', 'BLOCKED_NO_NEARBY_FALLBACK'])
+        self.assertIn('LOW_SAMPLE_WIDE_NEAREST_QUARTER', batches[1][9])
+        self.assertIn('"house_wide_fallback_distance_minutes": 120', batches[1][9])
 
     def test_two_exact_quarter_samples_use_nearest_qualified_quarter(self):
         rows=history()

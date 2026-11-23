@@ -636,6 +636,8 @@ def build_materializations(a: MaterializationAdapters):
             cur.execute("""SELECT s.slot_start,s.actual_load_kwh,s.actual_mode,
               s.execution_reason,s.actual_heating_consumed_kwh,s.actual_dhw_consumed_kwh,
               s.actual_cooling_consumed_kwh,d.actual_ev_kwh,d.sample_count,d.coverage_pct,d.complete_source_samples,
+              (SELECT COUNT(t.dhw_power_w) FROM ems_gpt_telemetry_snapshots t
+                WHERE t.slot_start=s.slot_start) dhw_samples,
               (SELECT COUNT(*) FROM ems_gpt_telemetry_snapshots t
                WHERE t.slot_start=s.slot_start AND t.load_power_w IS NOT NULL AND t.ev_power_w IS NOT NULL
               AND t.dhw_power_w IS NOT NULL AND t.hp_heat_consumption_w IS NOT NULL
@@ -656,7 +658,7 @@ def build_materializations(a: MaterializationAdapters):
             for row in future:
                 slot = row["slot_start"]
                 estimate = model["slots"][slot]
-                valid = estimate["house_kwh"] is not None
+                valid = estimate["house_kwh"] is not None and estimate["dhw_kwh"] is not None
                 source = str(estimate.get("house_source") or "")
                 low_sample = (source.startswith(("LOW_SAMPLE", "HISTORICAL_LOW_SAMPLE"))
                               or model["dhw_profile_source"] == "LOW_SAMPLE_SINGLE_COMPLETE_CYCLE")
@@ -664,6 +666,9 @@ def build_materializations(a: MaterializationAdapters):
                 evidence = {**metadata,
                     "house_forecast_source": source or None,
                     "house_sample_count": estimate.get("house_sample_count", 0)}
+                if estimate["house_wide_fallback_distance_minutes"] is not None:
+                    evidence["house_wide_fallback_distance_minutes"] = estimate[
+                        "house_wide_fallback_distance_minutes"]
                 preserve_slot_forecast = False
                 if (not valid or low_sample) and row.get("forecast_load_kwh") is not None:
                     status = "PRESERVED_EXISTING_FORECAST"

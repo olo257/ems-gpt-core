@@ -734,9 +734,9 @@ Jedna wersjonowana partia `COMPONENT_LOAD_V1` w tabeli
 ponownie do CO. Oba składniki są następnie wejściem dotychczasowego obliczenia
 targetu do PV/BUY; reguły BUY, sufitu targetu i ekonomiki nie zmieniają się.
 
-Uczenie korzysta wyłącznie z ostatnich 7 dni zamkniętych slotów Core, minimalnej
-liczby próbek, pokrycia oraz kompletnych źródeł. Brak kanału, nieznany stan
-PV_CWU lub niespójny bilans wykluczają próbkę. Przy co najmniej 3 kompletnych
+Uczenie zużycia domu korzysta z zamkniętych slotów Core, minimalnej liczby
+próbek, pokrycia oraz kompletnych źródeł. Brak kanału, nieznany stan PV_CWU
+lub niespójny bilans wykluczają próbkę domu. Przy co najmniej 3 kompletnych
 próbkach kwadransa używana jest ich średnia. Gdy estymator ma niską liczbę
 próbek, zachowuje się wcześniejszą prognozę tego samego slotu, a następnie
 prognozę z ostatniej opublikowanej migawki planu. Jeśli ich brak, 1–2
@@ -769,8 +769,20 @@ w granicy 30 minut. Gdy każdy z dwóch zakresów historii dostarcza po jednym
 pełnym cyklu CWU, profil uśrednia oba cykle. Jeśli dostępny jest tylko jeden
 pełny cykl, jego profil może uzupełnić brakującą prognozę i otrzymuje oznaczenie
 `LOW_SAMPLE_SINGLE_COMPLETE_CYCLE`. Wtedy pierwszeństwo ma zachowana prognoza
-tego samego slotu. Prognoza nadal wymaga wiarygodnych próbek domu i co najmniej
-jednego kompletnego cyklu CWU.
+tego samego slotu. Nowa prognoza łącznego zużycia wymaga wiarygodnych próbek
+domu i co najmniej jednego kompletnego cyklu CWU.
+
+Gdy w granicy 30 minut brakuje kompletnych próbek domu, model
+`COMPONENT_LOAD_V4` szuka najbliższego kwadransa w granicy 120 minut
+w obu zakresach historii. Z równorzędnych pomiarów bierze maksimum, a CWU
+wylicza dla docelowego slotu. Zapisuje źródło
+`LOW_SAMPLE_WIDE_NEAREST_QUARTER`, odległość w minutach i liczbę próbek.
+Zachowana prognoza tego samego slotu ma pierwszeństwo przed tym oszacowaniem.
+
+Model `COMPONENT_LOAD_V5` kwalifikuje próbki HP_DHW na podstawie liczby
+odczytów mocy CWU pompy ciepła. Prognoza HP_DHW jest zapisywana również
+wtedy, gdy brakuje prognozy domu. PV_CWU i PV_EV wpływają na kwalifikowanie
+pomiarów do prognozy domu. Ich telemetria nie jest wymagana do uczenia HP_DHW.
 
 Profil CO opisuje kolejne aktywne sloty, z maksymalnie 3 h przerwy bez ponownego
 naliczania rozruchu. Uczenie sesji CO również łączy takie przerwy. Przy braku
