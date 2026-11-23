@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timedelta
 from statistics import mean, median
 
-MODEL_VERSION = "COMPONENT_LOAD_V5"
+MODEL_VERSION = "COMPONENT_LOAD_V6"
 SLOT = timedelta(minutes=15)
 WIDE_FALLBACK_MINUTES = 120
 
@@ -139,6 +139,30 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
     else:
         dhw_profile = None
         dhw_profile_source = None
+    # If valid HP_DHW meter samples exist but cannot be assembled into a
+    # fully idle-bracketed cycle, retain the measured time-of-day envelope.
+    # This fallback uses only the independent HP_DHW energy channel; PV_CWU
+    # state and energy never contribute to it. The envelope keeps the higher
+    # measured value across recent and older observations for each quarter.
+    dhw_slot_envelope = {}
+    if dhw_profile is None:
+        recent_by_quarter, historical_by_quarter = {}, {}
+        for row in recent_dhw:
+            key = (row["slot_start"].hour, row["slot_start"].minute)
+            recent_by_quarter[key] = max(recent_by_quarter.get(key, 0.0), row["dhw_kwh"])
+        for row in historical_dhw:
+            key = (row["slot_start"].hour, row["slot_start"].minute)
+            historical_by_quarter[key] = max(
+                historical_by_quarter.get(key, 0.0), row["dhw_kwh"])
+        dhw_slot_envelope = {
+            key: max(recent_by_quarter.get(key, 0.0),
+                     historical_by_quarter.get(key, 0.0))
+            for key in set(recent_by_quarter) | set(historical_by_quarter)
+        }
+        if recent_by_quarter:
+            dhw_profile_source = "LOW_SAMPLE_RECENT_DHW_SLOT_ENVELOPE"
+        elif historical_by_quarter:
+            dhw_profile_source = "HISTORICAL_LOW_SAMPLE_DHW_SLOT_ENVELOPE"
     heat_profile = mean_profile(heat_cycles)
     quarters, historical_quarters = {}, {}
     for row in recent_rows:
@@ -148,8 +172,10 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
         key = (row["slot_start"].hour, row["slot_start"].minute)
         historical_quarters.setdefault(key, []).append(row)
     reasons = []
-    if not dhw_profile:
+    if not dhw_profile and not dhw_slot_envelope:
         reasons.append("INSUFFICIENT_COMPLETE_DHW_CYCLES")
+    elif dhw_slot_envelope:
+        reasons.append("LOW_SAMPLE_DHW_SLOT_ENVELOPE")
     if not heat_profile:
         reasons.append("INSUFFICIENT_COMPLETE_HEAT_CYCLES")
     intervals = [(b["start"] - a["start"]).total_seconds() / 3600
@@ -181,6 +207,10 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
                     if when in dhw_by_slot:
                         dhw_by_slot[when] += value
                 start += SLOT * interval_slots
+    elif dhw_slot_envelope:
+        for when in horizon:
+            dhw_by_slot[when] = dhw_slot_envelope.get(
+                (when.hour, when.minute), 0.0)
     result = {}
     for when in horizon:
         target_minute = when.hour * 60 + when.minute
@@ -265,6 +295,7 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
             "dhw_profile": dhw_profile, "dhw_profile_source": dhw_profile_source,
             "dhw_cycle_count": len(dhw_cycles),
             "historical_dhw_cycle_count": len(historical_dhw_cycles),
+            "dhw_fallback_slot_count": len(dhw_slot_envelope),
             "heat_cycle_count": len(heat_cycles), "dhw_interval_slots": interval_slots,
             "circulation_effect": "IN_MEASURED_DHW_CYCLES",
             "reasons": reasons}

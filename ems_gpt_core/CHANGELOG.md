@@ -1,3 +1,10 @@
+## 0.40.84 — prognoza HP_DHW z zapisanych pomiarów
+
+- Gdy historyczne pomiary HP_DHW są wiarygodne, lecz nie tworzą pełnego cyklu,
+  prognoza korzysta z konserwatywnej obwiedni maksymalnego poboru w kwadransie.
+- Fallback pozostaje niezależny od PV_CWU, zapisuje źródło i jest wersjonowany
+  jako COMPONENT_LOAD_V6, aby po aktualizacji odtworzyć prognozy z historii.
+
 ## 0.40.83 — niezależna prognoza CWU pompy ciepła
 
 - HP_DHW uczy się na podstawie własnych próbek mocy. Brak telemetrii PV_EV
