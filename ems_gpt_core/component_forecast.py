@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timedelta
 from statistics import mean, median
 
-MODEL_VERSION = "COMPONENT_LOAD_V5"
+MODEL_VERSION = "COMPONENT_LOAD_V6"
 SLOT = timedelta(minutes=15)
 WIDE_FALLBACK_MINUTES = 120
 
