@@ -1,3 +1,13 @@
+## 0.40.83 — niezależna prognoza CWU pompy ciepła
+
+- HP_DHW uczy się na podstawie własnych próbek mocy. Brak telemetrii PV_EV
+  lub stan grzałki PV_CWU wpływają wyłącznie na kwalifikację próbek zużycia domu.
+- EMS zapisuje prognozę CWU również bez oszacowania domu. Gdy brakuje
+  składnika do obliczenia sumy, nadal może użyć wcześniejszej prognozy łącznej.
+- Przy braku kompletnych odczytów domu w granicy 30 minut model może uzupełnić
+  lukę z najbliższego kwadransa w granicy 120 minut. Diagnostyka zapisuje
+  odległość i liczbę próbek.
+
 ## 0.40.82 — uzupełnianie brakujących prognoz zużycia
 
 - Gdy dostępny jest jeden kompletny cykl CWU, jego zmierzony profil może

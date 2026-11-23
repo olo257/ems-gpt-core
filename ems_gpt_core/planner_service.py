@@ -67,7 +67,7 @@ from planner_soc_service import (
     validate_recoverable_soc_requirements,
 )
 
-PLANNER_VERSION = "CORE_0_40_82"
+PLANNER_VERSION = "CORE_0_40_83"
 
 @dataclass(frozen=True)
 class PlannerAdapters:
@@ -294,7 +294,7 @@ def build_planner(a: PlannerAdapters):
                 planned_heating_kwh = (planned_hp_kw_by_day.get(row_day, hp_fallback_kw) * 0.25
                                        if index in hp_selected_indices else 0.0)
                 component = component_rows.get(row["slot_start"]) or {}
-                if component.get("status") == "READY":
+                if component.get("dhw_kwh") is not None:
                     historical_dhw_kwh = float(component["dhw_kwh"])
                 if index in hp_selected_indices:
                     if row["slot_start"] in component_heat:
