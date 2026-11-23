@@ -874,7 +874,7 @@ Przed otwarciem sąsiedniego slotu BUY należy wykluczyć sloty, które już maj
 
 ## Fallback historii prognozy zużycia
 
-Prognoza wykorzystuje najpierw kompletne, zakwalifikowane próbki z ostatnich 7 dni. Jeśli brakuje danych do obciążenia domu lub pełnego profilu CWU, może skorzystać z kompletnych próbek SQL z dni 8–30. Źródło historyczne jest jawnie oznaczane; niekompletne dane nigdy nie są zastępowane zerem. Brak kompletnych próbek pozostaje blokadą prognozy.
+Prognoza wykorzystuje najpierw kompletne, zakwalifikowane próbki z ostatnich 7 dni. Jeśli brakuje danych do obciążenia domu lub pełnego profilu CWU, może skorzystać z kompletnych próbek SQL z dni 8–30. Źródło historyczne jest jawnie oznaczane; niekompletne dane nigdy nie są zastępowane zerem. Jeżeli istnieją wiarygodne próbki zużycia HP_DHW, lecz nie da się z nich zbudować pełnego cyklu, model używa konserwatywnej obwiedni maksymalnego zmierzonego poboru w danym kwadransie doby; najpierw uwzględnia pomiary z ostatnich 7 dni, a starsze pomiary uzupełniają kwadranse bez obserwacji. Fallback korzysta wyłącznie z licznika HP_DHW i pozostaje niezależny od PV_CWU. Brak jakichkolwiek wiarygodnych próbek HP_DHW lub domu nadal pozostawia lukę jawną i wymaga zachowania zaakceptowanej prognozy tego samego slotu; model nie fabrykuje zerowej prognozy.
 
 
 ## Ciągłość prognozy przy niedoborze SOC
