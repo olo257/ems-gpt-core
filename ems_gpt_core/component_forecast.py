@@ -142,8 +142,8 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
     # If valid HP_DHW meter samples exist but cannot be assembled into a
     # fully idle-bracketed cycle, retain the measured time-of-day envelope.
     # This fallback uses only the independent HP_DHW energy channel; PV_CWU
-    # state and energy never contribute to it. Recent observations take
-    # precedence, while older observations fill unobserved quarters.
+    # state and energy never contribute to it. The envelope keeps the higher
+    # measured value across recent and older observations for each quarter.
     dhw_slot_envelope = {}
     if dhw_profile is None:
         recent_by_quarter, historical_by_quarter = {}, {}
