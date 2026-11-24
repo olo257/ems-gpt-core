@@ -1,3 +1,8 @@
+## 0.40.87 — niezależność prognoz od odbiorników PV
+
+- PV_CWU i PV_EV nie są składnikami prognozy zużycia domu ani HP_DHW. Brak ich telemetrii nie blokuje próbek; ich energia nie jest dopisywana do prognozy bazowej.
+- Wersja modelu COMPONENT_LOAD_V7 wymusza ponowne przeliczenie zapisanych prognoz.
+
 ## 0.40.86 — prognoza bazowego zużycia
 
 - PV_CWU i PV_EV pozostają poza prognozą HP_DHW i bazowym celem zużycia. Brak telemetrii EV lub chłodzenia nie blokuje kwalifikacji pomiarów domu; gdy energii elastycznej nie można przypisać, nie tworzy ona osobnej prognozy.
