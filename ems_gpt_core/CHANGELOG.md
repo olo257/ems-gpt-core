@@ -1,6 +1,6 @@
 ## 0.40.86 — prognoza bazowego zużycia
 
-- Brak telemetrii EV lub chłodzenia nie blokuje już wykorzystania kompletnych pomiarów domu i pompy. Nieprzypisane zużycie pozostaje konserwatywnie w prognozie bazowej.
+- PV_CWU i PV_EV pozostają poza prognozą HP_DHW i bazowym celem zużycia. Brak telemetrii EV lub chłodzenia nie blokuje kwalifikacji pomiarów domu; gdy energii elastycznej nie można przypisać, nie tworzy ona osobnej prognozy.
 
 ## 0.40.85 — dostępność prognozy CWU
 
