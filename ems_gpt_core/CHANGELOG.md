@@ -1,3 +1,11 @@
+## 0.40.88 — HP_DHW z trwałych pomiarów slotów
+
+- Prognoza używa zapisanej energii HP_DHW i jakości zamkniętego slotu, nawet
+  gdy surowe rekordy telemetrii nie są już dostępne.
+- Surowe próbki pozostają potrzebne do potwierdzania pełnych cykli; fallback
+  z historii używa wyłącznie dodatnich, wiarygodnych pomiarów HP_DHW.
+- Model COMPONENT_LOAD_V8 przelicza istniejące prognozy ponownie.
+
 ## 0.40.87 — niezależność prognoz od odbiorników PV
 
 - PV_CWU i PV_EV nie są składnikami prognozy zużycia domu ani HP_DHW. Brak ich telemetrii nie blokuje próbek; ich energia nie jest dopisywana do prognozy bazowej.
