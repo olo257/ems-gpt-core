@@ -31,9 +31,11 @@ def _is_observed_slot(row):
 
 def split_slot(row, minimum_samples=10):
     """Conserve metered energy and explicitly reject incomplete attribution."""
+    # EV and cooling telemetry are optional channels: if unavailable while those loads are inactive,
+    # do not discard otherwise complete house/HP measurements. Their measured energy remains
+    # conservatively embedded in the aggregate load whenever attribution is not available.
     if (not _is_observed_slot(row)
             or int(row.get("sample_count") or 0) < minimum_samples
-            or int(row.get("component_samples") or 0) < minimum_samples
             or float(row.get("coverage_pct") or 0) < 100 * minimum_samples / 15):
         return None
     keys = ("actual_load_kwh", "actual_heating_consumed_kwh",
