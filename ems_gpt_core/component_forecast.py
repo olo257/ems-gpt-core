@@ -285,7 +285,8 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
             house_kwh = mean(item["house_kwh"] for item in house_samples)
         result[when] = {
             "house_kwh": round(house_kwh, 6) if house_kwh is not None else None,
-            "dhw_kwh": round(dhw_by_slot[when], 6) if dhw_profile is not None else None,
+            "dhw_kwh": round(dhw_by_slot[when], 6)
+                if dhw_profile is not None or dhw_slot_envelope else None,
             "sample_count": len(samples),
             "house_sample_count": len(house_samples),
             "house_source": house_source or "NO_QUALIFIED_QUARTER",
