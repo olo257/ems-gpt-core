@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timedelta
 from statistics import mean, median
 
-MODEL_VERSION = "COMPONENT_LOAD_V7"
+MODEL_VERSION = "COMPONENT_LOAD_V8"
 SLOT = timedelta(minutes=15)
 WIDE_FALLBACK_MINUTES = 120
 
@@ -27,6 +27,25 @@ def energy(value):
 def _is_observed_slot(row):
     return (row.get("actual_mode") != "MISSING_OUTAGE"
             and str(row.get("execution_reason") or "").startswith("CORE_TELEMETRY_"))
+
+
+def _has_qualified_dhw_slot(row, minimum_samples):
+    """Check persisted slot quality, without depending on raw snapshot retention."""
+    sample_count = int(row.get("sample_count") or 0)
+    if sample_count < minimum_samples:
+        reason = str(row.get("execution_reason") or "")
+        prefix, suffix = "CORE_TELEMETRY_", "_SAMPLES"
+        if reason.startswith(prefix) and reason.endswith(suffix):
+            try:
+                sample_count = max(sample_count, int(reason[len(prefix):-len(suffix)]))
+            except ValueError:
+                pass
+    if sample_count < minimum_samples:
+        return False
+    coverage = energy(row.get("coverage_pct"))
+    if coverage is None:
+        coverage = min(100.0, sample_count * 100.0 / 15.0)
+    return coverage >= 100.0 * minimum_samples / 15.0
 
 
 def split_slot(row, minimum_samples=10):
@@ -101,6 +120,7 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
     horizon = sorted(horizon)
     recent_rows, historical_rows = [], []
     recent_dhw, historical_dhw = [], []
+    recent_dhw_slots, historical_dhw_slots = [], []
     recent_start = now - timedelta(days=7)
     history_start = now - timedelta(days=30)
     for row in sorted(raw_rows, key=lambda item: item["slot_start"]):
@@ -108,11 +128,17 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
         if not history_start <= when < now:
             continue
         recent = when >= recent_start
-        if _is_observed_slot(row) and int(row.get("dhw_samples") or 0) >= minimum_samples:
+        if (_is_observed_slot(row)
+                and _has_qualified_dhw_slot(row, minimum_samples)):
             dhw_kwh = energy(row.get("actual_dhw_consumed_kwh"))
             if dhw_kwh is not None:
-                (recent_dhw if recent else historical_dhw).append(
+                (recent_dhw_slots if recent else historical_dhw_slots).append(
                     {"slot_start": when, "dhw_kwh": dhw_kwh})
+                # Raw per-sample values are used only to bracket complete
+                # cycles. The fallback envelope above uses durable slot data.
+                if int(row.get("dhw_samples") or 0) >= minimum_samples:
+                    (recent_dhw if recent else historical_dhw).append(
+                        {"slot_start": when, "dhw_kwh": dhw_kwh})
         part = split_slot(row, minimum_samples)
         if part is not None:
             (recent_rows if recent else historical_rows).append(part)
@@ -142,10 +168,14 @@ def build_component_forecast(raw_rows, horizon, *, now, minimum_samples=10):
     dhw_slot_envelope = {}
     if dhw_profile is None:
         recent_by_quarter, historical_by_quarter = {}, {}
-        for row in recent_dhw:
+        for row in recent_dhw_slots:
+            if row["dhw_kwh"] <= 0:
+                continue
             key = (row["slot_start"].hour, row["slot_start"].minute)
             recent_by_quarter[key] = max(recent_by_quarter.get(key, 0.0), row["dhw_kwh"])
-        for row in historical_dhw:
+        for row in historical_dhw_slots:
+            if row["dhw_kwh"] <= 0:
+                continue
             key = (row["slot_start"].hour, row["slot_start"].minute)
             historical_by_quarter[key] = max(
                 historical_by_quarter.get(key, 0.0), row["dhw_kwh"])
