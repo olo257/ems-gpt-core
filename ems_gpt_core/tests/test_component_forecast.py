@@ -39,21 +39,23 @@ def history():
 
 class ComponentTests(unittest.TestCase):
     def test_energy_conservation_and_flexible_exclusion(self):
-        row=raw(NOW,actual_load_kwh=2,actual_ev_kwh=.3,pv_cwu_on=1,
-                pv_cwu_kwh=.4,actual_dhw_consumed_kwh=.5,
-                actual_heating_consumed_kwh=.2)
+        row=raw(NOW,actual_load_kwh=2,actual_ev_kwh=.3,pv_cwu_on=0,
+                actual_dhw_consumed_kwh=.5,actual_heating_consumed_kwh=.2)
         result=split_slot(row)
-        self.assertAlmostEqual(result['house_kwh'],.6)
-        self.assertAlmostEqual(sum(result[k] for k in ('house_kwh','heat_kwh','dhw_kwh')),2-.3-.4)
+        self.assertAlmostEqual(result['house_kwh'],1.0)
+        self.assertAlmostEqual(sum(result[k] for k in ('house_kwh','heat_kwh','dhw_kwh')),2-.3)
+        self.assertIsNone(split_slot(raw(NOW,actual_load_kwh=2,pv_cwu_on=1)))
 
     def test_missing_quality_and_unmetered_flexible_load_do_not_become_zero(self):
-        for changes in ({'actual_ev_kwh':None},{'pv_cwu_on':1}, {'pv_cwu_on':None},
-                        {'actual_dhw_consumed_kwh':None},{'sample_count':3},
-                        {'coverage_pct':20},{'component_samples':2},{'actual_mode':'MISSING_OUTAGE'},
+        for changes in ({'pv_cwu_on':1},{'actual_dhw_consumed_kwh':None},
+                        {'sample_count':3},{'coverage_pct':20},
+                        {'actual_mode':'MISSING_OUTAGE'},
                         {'actual_load_kwh':float('nan')}, {'execution_reason':'LEGACY'},
                         {'actual_heating_consumed_kwh':100}):
             with self.subTest(changes=changes):
                 self.assertIsNone(split_slot(raw(NOW,**changes)))
+        self.assertEqual(split_slot(raw(NOW,actual_ev_kwh=None))['house_kwh'],.2)
+        self.assertEqual(split_slot(raw(NOW,pv_cwu_on=None))['house_kwh'],.2)
 
     def test_circulation_losses_stay_in_dhw_without_an_extra_energy_margin(self):
         result=split_slot(raw(NOW))
@@ -100,7 +102,8 @@ class ComponentTests(unittest.TestCase):
         start = NOW.replace(hour=6, minute=0)
         rows = history()
         for row in rows:
-            row.update(actual_ev_kwh=None, component_samples=0, pv_cwu_on=None)
+            row.update(actual_ev_kwh=None, actual_cooling_consumed_kwh=None,
+                       component_samples=0, pv_cwu_on=None)
         for row in rows[::2]:
             row["pv_cwu_on"] = 1
         horizon = [start, start + SLOT]
@@ -113,7 +116,17 @@ class ComponentTests(unittest.TestCase):
 
         for row in rows:
             if row['actual_dhw_consumed_kwh'] > 0:
-                row['dhw_samples'] = 9
+                row['dhw_samples'] = 0
+        result = build_component_forecast(rows, horizon, now=start)
+        self.assertEqual(result['dhw_profile_source'],
+                         'LOW_SAMPLE_RECENT_DHW_SLOT_ENVELOPE')
+        self.assertEqual([result['slots'][when]['dhw_kwh'] for when in horizon], [.4, .2])
+
+        for row in rows:
+            if row['actual_dhw_consumed_kwh'] > 0:
+                row['sample_count'] = 9
+                row['coverage_pct'] = 60
+                row['execution_reason'] = 'CORE_TELEMETRY_9_SAMPLES'
         result = build_component_forecast(rows, horizon, now=start)
         self.assertIsNone(result['slots'][start]['dhw_kwh'])
 
@@ -191,7 +204,8 @@ class ComponentTests(unittest.TestCase):
                 raw(day.replace(hour=6, minute=15)),
                 raw(day.replace(hour=13, minute=45), house=.8),
                 raw(day.replace(hour=14), house=.390217),
-                raw(day.replace(hour=16), house=.9, component_samples=0)]
+                raw(day.replace(hour=16), house=.9,
+                    actual_cooling_consumed_kwh=None)]
         future = [{'slot_start': target - SLOT, 'forecast_load_kwh': .91},
                   {'slot_start': target, 'forecast_load_kwh': None},
                   {'slot_start': target + SLOT, 'forecast_load_kwh': None}]
@@ -261,7 +275,10 @@ class ComponentTests(unittest.TestCase):
             row.update(actual_load_kwh=row['actual_load_kwh']+1.4,
                        actual_ev_kwh=.8,pv_cwu_on=1,pv_cwu_kwh=.6)
         other=build_component_forecast(metered,times,now=start)
-        self.assertEqual(model['slots'],other['slots'])
+        for when in times:
+            self.assertEqual(model['slots'][when]['dhw_kwh'],
+                             other['slots'][when]['dhw_kwh'])
+            self.assertIsNone(other['slots'][when]['house_kwh'])
 
     def test_new_rce_horizon_in_same_slot_is_not_skipped(self):
         cur=MagicMock()
