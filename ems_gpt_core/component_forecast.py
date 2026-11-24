@@ -11,7 +11,7 @@ import math
 from datetime import datetime, timedelta
 from statistics import mean, median
 
-MODEL_VERSION = "COMPONENT_LOAD_V6"
+MODEL_VERSION = "COMPONENT_LOAD_V7"
 SLOT = timedelta(minutes=15)
 WIDE_FALLBACK_MINUTES = 120
 
@@ -30,37 +30,30 @@ def _is_observed_slot(row):
 
 
 def split_slot(row, minimum_samples=10):
-    """Conserve metered energy and explicitly reject incomplete attribution."""
-    # EV and cooling telemetry are optional channels: if unavailable while those loads are inactive,
-    # do not discard otherwise complete house/HP measurements. Their measured energy remains
-    # conservatively embedded in the aggregate load whenever attribution is not available.
+    """Build base household demand without requiring flexible-load telemetry."""
     if (not _is_observed_slot(row)
             or int(row.get("sample_count") or 0) < minimum_samples
             or float(row.get("coverage_pct") or 0) < 100 * minimum_samples / 15):
         return None
     keys = ("actual_load_kwh", "actual_heating_consumed_kwh",
-            "actual_dhw_consumed_kwh", "actual_cooling_consumed_kwh", "actual_ev_kwh")
+            "actual_dhw_consumed_kwh", "actual_cooling_consumed_kwh")
     values = [energy(row.get(key)) for key in keys]
     if any(value is None for value in values):
         return None
-    total, heat, dhw, cool, ev = values
-    # PV_CWU has a state sensor but no dedicated energy channel in existing
-    # telemetry. Never subtract the HP's DHW channel as if it metered a heater.
-    flex = energy(row.get("pv_cwu_kwh"))
-    if flex is None:
-        if row.get("pv_cwu_on") is None or bool(row["pv_cwu_on"]):
-            return None
-        flex = 0.0
-    # Circulation cools the tank and causes HP_DHW reheating. Those losses
-    # already appear in measured DHW cycles; never add them a second time.
-    # The circulation pump's own electricity remains in household demand.
-    house = total - heat - dhw - ev - flex
+    total, heat, dhw, cool = values
+    # Flexible PV_CWU and PV_EV are not forecast components. Exclude measured
+    # EV energy from the base when available; its absence does not block a row.
+    ev = energy(row.get("actual_ev_kwh")) or 0.0
+    # PV_CWU has no energy channel. Skip known-on periods to avoid learning its
+    # load, but an unavailable state must not invalidate the home's forecast.
+    if bool(row.get("pv_cwu_on")):
+        return None
+    house = total - heat - dhw - ev
     if house < 0:
         return None
     return {"slot_start": row["slot_start"], "house_kwh": max(0.0, house),
             "dhw_kwh": dhw, "heat_kwh": heat,
             "cooling_in_house_kwh": cool}
-
 
 def complete_cycles(rows, channel, *, threshold=0.02, max_idle_slots=0):
     """Learn whole cycles bracketed by valid idle slots; discard gap fragments.
