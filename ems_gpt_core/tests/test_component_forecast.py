@@ -113,7 +113,17 @@ class ComponentTests(unittest.TestCase):
 
         for row in rows:
             if row['actual_dhw_consumed_kwh'] > 0:
-                row['dhw_samples'] = 9
+                row['dhw_samples'] = 0
+        result = build_component_forecast(rows, horizon, now=start)
+        self.assertEqual(result['dhw_profile_source'],
+                         'LOW_SAMPLE_RECENT_DHW_SLOT_ENVELOPE')
+        self.assertEqual([result['slots'][when]['dhw_kwh'] for when in horizon], [.4, .2])
+
+        for row in rows:
+            if row['actual_dhw_consumed_kwh'] > 0:
+                row['sample_count'] = 9
+                row['coverage_pct'] = 60
+                row['execution_reason'] = 'CORE_TELEMETRY_9_SAMPLES'
         result = build_component_forecast(rows, horizon, now=start)
         self.assertIsNone(result['slots'][start]['dhw_kwh'])
 
