@@ -1,3 +1,7 @@
+## 0.40.86 — prognoza bazowego zużycia
+
+- Brak telemetrii EV lub chłodzenia nie blokuje już wykorzystania kompletnych pomiarów domu i pompy. Nieprzypisane zużycie pozostaje konserwatywnie w prognozie bazowej.
+
 ## 0.40.85 — dostępność prognozy CWU
 
 - Prognoza HP_DHW korzysta z pomiarów dostępnych w obwiedni slotów, także gdy dane nie tworzą pełnego cyklu.
