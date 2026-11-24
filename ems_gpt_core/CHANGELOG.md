@@ -1,3 +1,7 @@
+## 0.40.85 — dostępność prognozy CWU
+
+- Prognoza HP_DHW korzysta z pomiarów dostępnych w obwiedni slotów, także gdy dane nie tworzą pełnego cyklu.
+
 ## 0.40.84 — prognoza HP_DHW z zapisanych pomiarów
 
 - Gdy historyczne pomiary HP_DHW są wiarygodne, lecz nie tworzą pełnego cyklu,
