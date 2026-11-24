@@ -639,9 +639,9 @@ def build_materializations(a: MaterializationAdapters):
               (SELECT COUNT(t.dhw_power_w) FROM ems_gpt_telemetry_snapshots t
                 WHERE t.slot_start=s.slot_start) dhw_samples,
               (SELECT COUNT(*) FROM ems_gpt_telemetry_snapshots t
-               WHERE t.slot_start=s.slot_start AND t.load_power_w IS NOT NULL AND t.ev_power_w IS NOT NULL
+               WHERE t.slot_start=s.slot_start AND t.load_power_w IS NOT NULL
               AND t.dhw_power_w IS NOT NULL AND t.hp_heat_consumption_w IS NOT NULL
-              AND t.hp_cool_consumption_w IS NOT NULL AND t.pv_cwu_on IS NOT NULL) component_samples,
+              AND t.pv_cwu_on IS NOT NULL) component_samples,
               (SELECT CASE WHEN COUNT(t.pv_cwu_on)=COUNT(*) THEN MAX(t.pv_cwu_on) ELSE NULL END
                 FROM ems_gpt_telemetry_snapshots t
                 WHERE t.slot_start=s.slot_start) pv_cwu_on
